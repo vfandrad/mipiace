@@ -190,10 +190,6 @@ def cart_empty_on_close() -> str:
 # Entrega e endereço
 # ---------------------------------------------------------------------------
 
-def ask_fulfillment() -> str:
-    return "Vai ser *entrega* ou *retirada* na loja?"
-
-
 _FIELD_LABELS = {
     "rua": "o nome da rua",
     "numero": "o número",
@@ -237,10 +233,6 @@ def format_address(address: dict[str, Any] | None) -> str:
     return text
 
 
-def pickup_info() -> str:
-    return "Combinado, *retirada na loja*! 🏪"
-
-
 # ---------------------------------------------------------------------------
 # Confirmação, Pix e pós-pagamento
 # ---------------------------------------------------------------------------
@@ -250,19 +242,16 @@ def final_summary(
     *,
     delivery_fee: Decimal,
     address: dict[str, Any] | None,
-    is_delivery: bool,
 ) -> str:
+    """A loja só trabalha com entrega — resumo sempre mostra taxa e endereço."""
     lines = ["*Confirma o pedido?* 📝", ""]
     for index, item in enumerate(cart.items, start=1):
         lines.append(_item_line(index, item))
     lines.append("")
     lines.append(f"Subtotal: {money(cart.subtotal)}")
-    if is_delivery:
-        lines.append(f"Taxa de entrega: {money(delivery_fee)}")
-        lines.append(f"Entregar em: {format_address(address)}")
-    else:
-        lines.append("Retirada na loja")
-    total = cart.total(delivery_fee if is_delivery else Decimal("0"))
+    lines.append(f"Taxa de entrega: {money(delivery_fee)}")
+    lines.append(f"Entregar em: {format_address(address)}")
+    total = cart.total(delivery_fee)
     lines.append(f"*Total: {money(total)}*")
     lines.append("")
     lines.append("Responda *sim* para confirmar ou *não* para ajustar.")

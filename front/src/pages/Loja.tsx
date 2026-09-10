@@ -17,7 +17,10 @@ import { useOrders } from '@/hooks/use-orders';
 import type { OrderStatus } from '@/types/order';
 import { cn } from '@/lib/utils';
 
-const KANBAN_STATUSES: OrderStatus[] = ['novo', 'preparando', 'entrega', 'finalizado'];
+// "novo" (pix pendente) fica de fora: o pedido só entra no quadro quando o
+// Pix é confirmado — é o próprio backend que move o pedido para "preparando"
+// no momento em que o pagamento cai (ver services/orders.py::apply_payment_result).
+const KANBAN_STATUSES: OrderStatus[] = ['preparando', 'entrega', 'finalizado'];
 
 const STATUS_LABELS: Record<OrderStatus, string> = {
   novo: 'Novo',
@@ -62,7 +65,7 @@ const Loja = () => {
             title="Não foi possível carregar os pedidos"
           />
         ) : isLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {KANBAN_STATUSES.map((status) => (
               <Skeleton key={status} className="h-64 rounded-lg" />
             ))}
@@ -71,7 +74,7 @@ const Loja = () => {
           <div
             className={cn(
               'grid grid-cols-1 md:grid-cols-2 gap-4',
-              showCancelled ? 'xl:grid-cols-5' : 'xl:grid-cols-4',
+              showCancelled ? 'xl:grid-cols-4' : 'xl:grid-cols-3',
             )}
           >
             {columns.map((status) => (

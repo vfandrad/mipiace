@@ -69,12 +69,6 @@ describe('OrderCard', () => {
     expect(onStatusChange).toHaveBeenCalledWith('o1', 'preparando');
   });
 
-  it('pula a etapa de entrega quando o pedido é retirada', () => {
-    const onStatusChange = renderCard({ status: 'preparando', fulfillment_type: 'retirada' });
-    fireEvent.click(screen.getByRole('button', { name: /finalizar/i }));
-    expect(onStatusChange).toHaveBeenCalledWith('o1', 'finalizado');
-  });
-
   it('não oferece ações em pedido finalizado', () => {
     renderCard({ status: 'finalizado' });
     expect(screen.queryByRole('button', { name: /cancelar pedido/i })).not.toBeInTheDocument();

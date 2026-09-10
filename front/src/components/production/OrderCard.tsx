@@ -6,7 +6,7 @@
  */
 
 import { useState } from 'react';
-import { Check, ChefHat, Clock, Copy, MapPin, Package, Truck, XCircle } from 'lucide-react';
+import { Check, ChefHat, Clock, Copy, MapPin, Truck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { PaymentBadge } from '@/components/ui/status-badge';
 import { cn } from '@/lib/utils';
@@ -48,9 +48,7 @@ const ACTION_CONFIG: Partial<
   },
 };
 
-/** Retirada não vira "saiu para entrega": vai direto de preparando a finalizado. */
 function nextStatusFor(order: Order): OrderStatus | null {
-  if (order.fulfillmentType === 'retirada' && order.status === 'preparando') return 'finalizado';
   return NEXT_STATUS[order.status];
 }
 
@@ -109,23 +107,12 @@ export function OrderCard({ order, onStatusChange }: OrderCardProps) {
         )}
       </div>
 
-      {/* Pagamento + tipo de entrega */}
+      {/* Pagamento */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <PaymentBadge status={order.paymentStatus} />
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-secondary text-secondary-foreground">
-          {order.fulfillmentType === 'retirada' ? (
-            <>
-              <Package className="h-3 w-3" /> Retirada
-            </>
-          ) : (
-            <>
-              <Truck className="h-3 w-3" /> Entrega
-            </>
-          )}
-        </span>
       </div>
 
-      {/* Endereço (só quando é entrega e existe) */}
+      {/* Endereço de entrega */}
       {address && (
         <div className="flex items-start gap-1.5 text-sm text-muted-foreground mb-3">
           <MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0" />

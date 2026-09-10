@@ -35,7 +35,6 @@ logger = logging.getLogger(__name__)
 
 #: Palavras que valem como "chega, pode seguir" dentro de um grupo opcional.
 _DONE_WORDS = frozenset({"nao", "nao quero", "so isso", "pronto", "chega", "ok", "e so isso"})
-_PICKUP_WORDS = ("retir", "busc", "pegar na loja", "loja")
 
 
 # ---------------------------------------------------------------------------
@@ -403,12 +402,6 @@ def _take_complements(
 # Fechamento do pedido
 # ---------------------------------------------------------------------------
 
-def _is_delivery(session: ConversationSession) -> bool:
-    return session.slots.get("fulfillment", FulfillmentType.ENTREGA.value) == (
-        FulfillmentType.ENTREGA.value
-    )
-
-
 def _address(session: ConversationSession) -> dict[str, Any]:
     address = session.slots.get("address")
     return dict(address) if isinstance(address, dict) else {}
@@ -419,14 +412,10 @@ def _missing_address_fields(address: dict[str, Any]) -> list[str]:
 
 
 async def _start_checkout(deps: AgentDeps, session: ConversationSession) -> list[str]:
-    """Do carrinho para o endereço (ou direto para a confirmação, se retirada)."""
+    """Do carrinho para o endereço — a loja só trabalha com entrega."""
     if session.cart.is_empty:
         _go(session, S.REVISANDO_CARRINHO)
         return [r.cart_empty_on_close()]
-
-    if not _is_delivery(session):
-        _go(session, S.CONFIRMANDO_PEDIDO)
-        return [r.pickup_info(), _final_summary(deps, session)]
 
     address = _address(session)
     if not address and deps.saved_address is not None:
@@ -451,7 +440,6 @@ def _final_summary(deps: AgentDeps, session: ConversationSession) -> str:
         session.cart,
         delivery_fee=deps.settings.delivery_fee,
         address=_address(session),
-        is_delivery=_is_delivery(session),
     )
 
 
@@ -462,7 +450,6 @@ async def _place_order(deps: AgentDeps, session: ConversationSession) -> list[st
     Pix falhar depois (provedor fora do ar, token ausente) e o cliente mandar
     "sim" de novo, reaproveitamos o mesmo pedido em vez de duplicar a compra.
     """
-    is_delivery = _is_delivery(session)
     pending_id = session.slots.get("pending_order_id")
     try:
         if pending_id:
@@ -478,10 +465,8 @@ async def _place_order(deps: AgentDeps, session: ConversationSession) -> list[st
                 cart=session.cart,
                 phone=session.phone,
                 customer_name=session.slots.get("customer_name"),
-                fulfillment_type=(
-                    FulfillmentType.ENTREGA if is_delivery else FulfillmentType.RETIRADA
-                ),
-                address=_address(session) if is_delivery else None,
+                fulfillment_type=FulfillmentType.ENTREGA,
+                address=_address(session),
                 channel=deps.channel,
                 notes=session.slots.get("notes"),
             )
@@ -594,30 +579,10 @@ async def _handle_personalizando(
 async def _handle_revisando(
     deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
 ) -> list[str]:
-    normalized = normalize(text)
-
-    # Pergunta pendente "entrega ou retirada?"
-    if session.slots.pop("awaiting_fulfillment", False):
-        pickup = nlu.intent is Intent.ESCOLHER_RETIRADA or any(
-            word in normalized for word in _PICKUP_WORDS
-        )
-        session.slots["fulfillment"] = (
-            FulfillmentType.RETIRADA.value if pickup else FulfillmentType.ENTREGA.value
-        )
-        return await _start_checkout(deps, session)
-
-    if nlu.intent is Intent.ESCOLHER_RETIRADA:
-        session.slots["fulfillment"] = FulfillmentType.RETIRADA.value
-        return await _start_checkout(deps, session)
-
     if nlu.intent in {Intent.FINALIZAR_PEDIDO, Intent.CONFIRMAR}:
         if session.cart.is_empty:
             _go(session, S.ESCOLHENDO_PRODUTO)
             return [r.cart_empty_on_close()]
-        if "fulfillment" not in session.slots:
-            session.slots["awaiting_fulfillment"] = True
-            _go(session, S.REVISANDO_CARRINHO)
-            return [r.ask_fulfillment()]
         return await _start_checkout(deps, session)
 
     if nlu.intent in {Intent.ADICIONAR_MAIS, Intent.NEGAR} and not (
@@ -631,7 +596,6 @@ async def _handle_revisando(
         return _take_product(deps, session, nlu, text)
 
     if nlu.intent is Intent.INFORMAR_ENDERECO and nlu.address is not None:
-        session.slots["fulfillment"] = FulfillmentType.ENTREGA.value
         _merge_address(session, nlu)
         return await _start_checkout(deps, session)
 
@@ -662,11 +626,6 @@ async def _handle_endereco(
             _go(session, S.COLETANDO_ENDERECO)
             return [r.ask_address(["rua", "numero", "bairro"])]
         session.slots.pop("address_needs_confirm", None)
-
-    if nlu.intent is Intent.ESCOLHER_RETIRADA:
-        session.slots["fulfillment"] = FulfillmentType.RETIRADA.value
-        _go(session, S.CONFIRMANDO_PEDIDO)
-        return [r.pickup_info(), _final_summary(deps, session)]
 
     before = _address(session)
     _merge_address(session, nlu)

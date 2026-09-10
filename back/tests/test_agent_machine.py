@@ -310,14 +310,6 @@ async def test_cancelar_limpa_o_carrinho() -> None:
 
 
 @pytest.mark.asyncio
-async def test_retirada_pula_o_endereco() -> None:
-    deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
-    await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Casquinha"), "casquinha")
-    await run(deps, session, nlu(Intent.ESCOLHER_RETIRADA), "vou retirar na loja")
-    assert session.state is S.CONFIRMANDO_PEDIDO
-
-
-@pytest.mark.asyncio
 async def test_endereco_incompleto_pede_so_o_que_falta() -> None:
     deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
     await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Casquinha"), "casquinha")

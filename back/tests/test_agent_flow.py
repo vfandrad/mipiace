@@ -258,17 +258,13 @@ async def test_fluxo_feliz_ate_o_pix(flow) -> None:
     ]
     assert cart.subtotal == Decimal("32.00")
 
-    # 4. Fechar o pedido pergunta a modalidade.
+    # 4. Fechar o pedido vai direto para a coleta de endereço — a loja só
+    #    trabalha com entrega, não pergunta mais a modalidade.
     replies = await flow.say("pode fechar")
-    assert flow.state is S.REVISANDO_CARRINHO
-    assert "entrega" in replies[0].lower()
-
-    # 5. Entrega leva para a coleta de endereço.
-    replies = await flow.say("entrega")
     assert flow.state is S.COLETANDO_ENDERECO
     assert "endereço" in replies[0].lower()
 
-    # 6. Endereço completo leva ao resumo final com taxa e total.
+    # 5. Endereço completo leva ao resumo final com taxa e total.
     replies = await flow.say("Rua das Flores, 123, bairro Centro")
     assert flow.state is S.CONFIRMANDO_PEDIDO
     resumo = replies[0]
@@ -277,7 +273,7 @@ async def test_fluxo_feliz_ate_o_pix(flow) -> None:
     assert "R$ 37,00" in resumo          # total
     assert "Rua Das Flores" in resumo
 
-    # 7. Confirmação cria o pedido, gera o Pix e trava em AGUARDANDO_PAGAMENTO.
+    # 6. Confirmação cria o pedido, gera o Pix e trava em AGUARDANDO_PAGAMENTO.
     replies = await flow.say("sim")
     assert flow.state is S.AGUARDANDO_PAGAMENTO
     assert "PIX-COPIA-E-COLA-MIPIACE" in replies[0]
@@ -293,7 +289,7 @@ async def test_fluxo_feliz_ate_o_pix(flow) -> None:
     assert address["numero"] == "123"
     assert address["bairro"] == "Centro"
 
-    # 8. O webhook de pagamento fecha a conversa.
+    # 7. O webhook de pagamento fecha a conversa.
     await runner.notify_payment_approved(object(), order.id)
     assert flow.state is S.CONCLUIDO
     assert any("Pagamento confirmado" in text for _, text in flow.adapter.sent)
