@@ -1,0 +1,246 @@
+# =============================================================================
+# Mi Piace — ambiente local completo
+#
+#   docker compose up --build
+#
+#   Postgres         -> localhost:5432   (schema.sql + seed.sql aplicados no 1º boot)
+#   Supabase Studio  -> http://localhost:54323  (navegar/editar o banco visualmente)
+#   Backend          -> http://localhost:8000   (/docs para o Swagger)
+#   Frontend         -> http://localhost:8080
+#
+# Com FAKE_MODE=true (padrão) roda sem nenhuma chave externa: LLM falso e Pix
+# falso. Para usar Anthropic/Mercado Pago, exporte as variáveis no shell antes
+# do `docker compose up` — nada de segredo dentro deste arquivo.
+#
+# O Postgres é a imagem oficial `supabase/postgres`, a mesma usada pelo
+# Supabase self-hosted (ver supabase/ na raiz do projeto para os arquivos de
+# apoio). Rodamos só db + pg-meta + Studio — sem gateway (Kong/Envoy), Auth,
+# Storage, Realtime ou Functions, que este MVP não usa; o FastAPI continua
+# sendo a única API pública, autenticada por X-API-Key. Por isso o Studio é
+# exposto sem a camada de basic-auth que o gateway daria: não publique a porta
+# 54323 além do localhost.
+# =============================================================================
+
+services:
+  db:
+    image: supabase/postgres:17.6.1.136
+    container_name: mipiace-db
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-dev-supabase-postgres-password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev-supabase-postgres-password}
+      PGDATABASE: ${POSTGRES_DB:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      JWT_SECRET: ${JWT_SECRET:-V3/naZU8lmW74bdckxAaQrleNOnSJZ9kSCuB0vhP}
+      JWT_EXP: ${JWT_EXPIRY:-3600}
+    command:
+      [
+        "postgres",
+        "-c", "config_file=/etc/postgresql/postgresql.conf",
+        "-c", "log_min_messages=fatal"
+      ]
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - supabase_db_config:/etc/postgresql-custom
+      # Executados em ordem alfabética no primeiro boot do volume (imagem
+      # supabase/postgres lê init-scripts/ como subpasta própria).
+      - ./back/db/schema.sql:/docker-entrypoint-initdb.d/init-scripts/01-schema.sql:ro
+      - ./back/db/seed.sql:/docker-entrypoint-initdb.d/init-scripts/02-seed.sql:ro
+      - ./supabase/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+      # roles.sql do Supabase oficial não é usado aqui: ele sincroniza senha de
+      # papéis (supabase_auth_admin, supabase_functions_admin, ...) que só
+      # existem quando Auth/Storage/Functions estão rodando — não é o nosso caso.
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # pg-meta: API interna que o Studio usa para introspectar o banco (tabelas,
+  # colunas, políticas). Não precisa de porta publicada — só o Studio fala com ele.
+  meta:
+    image: supabase/postgres-meta:v0.96.6
+    container_name: mipiace-supabase-meta
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: ${POSTGRES_PORT:-5432}
+      PG_META_DB_NAME: ${POSTGRES_DB:-postgres}
+      PG_META_DB_USER: postgres
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD:-dev-supabase-postgres-password}
+      CRYPTO_KEY: ${PG_META_CRYPTO_KEY:-45f43645ff7e454579e6312e2c324a8b}
+    restart: unless-stopped
+
+  studio:
+    image: supabase/studio:2026.08.03-sha-022b374
+    container_name: mipiace-supabase-studio
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HOSTNAME: "0.0.0.0"
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev-supabase-postgres-password}
+      POSTGRES_USER_READ_WRITE: postgres
+      PG_META_CRYPTO_KEY: ${PG_META_CRYPTO_KEY:-45f43645ff7e454579e6312e2c324a8b}
+      PGRST_DB_SCHEMAS: public
+      DEFAULT_ORGANIZATION_NAME: "Mi Piace"
+      DEFAULT_PROJECT_NAME: "Mi Piace"
+      # Sem api-gw (Kong/Envoy) neste setup mínimo: placeholder inofensivo,
+      # só afeta o "API explorer" embutido do Studio, que não usamos.
+      SUPABASE_URL: http://localhost:8000
+      SUPABASE_PUBLIC_URL: http://localhost:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzg4OTAzMzExLCJleHAiOjE5NDY1ODMzMTF9.IQUIeEtkAmJ3y_Lotd2u6gc5oJEP4W2wGvrvty_Dezc}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3ODg5MDMzMTEsImV4cCI6MTk0NjU4MzMxMX0.DDDDCXslQTSHWSptFofxmTKMhSgNPPr3pDSixPD-dAM}
+      AUTH_JWT_SECRET: ${JWT_SECRET:-V3/naZU8lmW74bdckxAaQrleNOnSJZ9kSCuB0vhP}
+    ports:
+      - "54323:3000"
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./back
+    container_name: mipiace-backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-dev-supabase-postgres-password}@db:5432/${POSTGRES_DB:-postgres}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-true}
+      FAKE_MODE: ${FAKE_MODE:-true}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-local-key}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:5173}
+      DELIVERY_FEE: ${DELIVERY_FEE:-5.00}
+      # Só usados com FAKE_MODE=false. LLM_PROVIDER escolhe "anthropic" ou "openai".
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-claude-haiku-4-5}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-dev-verify-token}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      # "cloud" (Meta) ou "evolution" (self-hosted, ver serviço evolution-api abaixo).
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-cloud}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution-api:8080}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-dev-evolution-key}
+      EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE:-mipiace}
+      EVOLUTION_WEBHOOK_TOKEN: ${EVOLUTION_WEBHOOK_TOKEN:-dev-evolution-webhook-token}
+      MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN:-}
+      MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET:-}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./front
+      dockerfile: Dockerfile
+      args:
+        # Embutidos no bundle em tempo de build (tudo que é VITE_ é público).
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        VITE_ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-local-key}
+    container_name: mipiace-frontend
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      # O container do front escuta na 8080 (mesma porta do vite preview).
+      - "8080:8080"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Evolution API — gateway WhatsApp open-source (alternativa self-hosted à
+  # WhatsApp Cloud API oficial da Meta, útil para não depender de aprovação
+  # de app/número comercial durante o desenvolvimento).
+  #
+  # Fica atrás de um profile porque tem stack própria (Postgres + Redis) e não
+  # é necessária para rodar o painel/API/agente em FAKE_MODE. Para subir:
+  #
+  #   docker compose --profile whatsapp up -d
+  #
+  # Depois de subir, crie uma instância e pareie o QR code:
+  #   curl -X POST http://localhost:8081/instance/create \
+  #        -H "apikey: dev-evolution-key" -H "Content-Type: application/json" \
+  #        -d '{"instanceName":"mipiace","integration":"WHATSAPP-BAILEYS","qrcode":true}'
+  #   curl http://localhost:8081/instance/connect/mipiace -H "apikey: dev-evolution-key"
+  #
+  # Para o backend usar este canal em vez da Cloud API da Meta, defina no shell
+  # antes do `docker compose up`:
+  #   WHATSAPP_PROVIDER=evolution EVOLUTION_WEBHOOK_ENABLED=true
+  # O parser do evento "messages.upsert" já existe em
+  # back/app/agent/channels/evolution.py + rota back/app/api/routes/evolution.py
+  # (POST /webhooks/evolution?token=EVOLUTION_WEBHOOK_TOKEN).
+  # ---------------------------------------------------------------------------
+  evolution-db:
+    image: postgres:15-alpine
+    container_name: mipiace-evolution-db
+    profiles: ["whatsapp"]
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution
+      POSTGRES_DB: evolution
+    volumes:
+      - evolution_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  evolution-redis:
+    image: redis:7-alpine
+    container_name: mipiace-evolution-redis
+    profiles: ["whatsapp"]
+    command: redis-server --appendonly yes
+    volumes:
+      - evolution_redis_data:/data
+
+  evolution-api:
+    image: evoapicloud/evolution-api:latest
+    container_name: mipiace-evolution-api
+    profiles: ["whatsapp"]
+    depends_on:
+      evolution-db:
+        condition: service_healthy
+      evolution-redis:
+        condition: service_started
+    environment:
+      SERVER_URL: ${EVOLUTION_SERVER_URL:-http://localhost:8081}
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-dev-evolution-key}
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:evolution@evolution-db:5432/evolution?schema=evolution_api
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://evolution-redis:6379/1
+      CACHE_REDIS_PREFIX_KEY: evolution
+      WEBHOOK_GLOBAL_ENABLED: ${EVOLUTION_WEBHOOK_ENABLED:-false}
+      WEBHOOK_GLOBAL_URL: ${EVOLUTION_WEBHOOK_URL:-http://backend:8000/webhooks/evolution?token=dev-evolution-webhook-token}
+      WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
+    ports:
+      # 8081 no host: 8080 já é do frontend neste projeto.
+      - "8081:8080"
+    volumes:
+      - evolution_instances:/evolution/instances
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  supabase_db_config:
+  evolution_pgdata:
+  evolution_redis_data:
+  evolution_instances:

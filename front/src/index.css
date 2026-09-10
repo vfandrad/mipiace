@@ -1,0 +1,235 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design System - Mi Piace Gelateria */
+/* Paleta terrosa com verde oliva como cor primária */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@layer base {
+  :root {
+    /* Background - Creme suave, tom terroso */
+    --background: 40 25% 97%;
+    --foreground: 30 20% 18%;
+
+    /* Cards - Branco quente */
+    --card: 40 20% 99%;
+    --card-foreground: 30 20% 18%;
+
+    /* Popover */
+    --popover: 40 20% 99%;
+    --popover-foreground: 30 20% 18%;
+
+    /* Primary - Verde Oliva (mantido) */
+    --primary: 84 25% 32%;
+    --primary-foreground: 40 20% 99%;
+
+    /* Secondary - Bege terroso */
+    --secondary: 35 20% 92%;
+    --secondary-foreground: 30 20% 18%;
+
+    /* Muted - Cinza quente com tom terroso */
+    --muted: 35 15% 93%;
+    --muted-foreground: 30 10% 45%;
+
+    /* Accent - Verde oliva claro */
+    --accent: 80 18% 90%;
+    --accent-foreground: 30 20% 18%;
+
+    /* Destructive - Terracota */
+    --destructive: 15 70% 50%;
+    --destructive-foreground: 40 20% 99%;
+
+    /* Border - Bege sutil */
+    --border: 35 18% 88%;
+    --input: 35 18% 88%;
+    --ring: 84 25% 32%;
+
+    /* Radius */
+    --radius: 0.75rem;
+
+    /* Status Colors - Paleta terrosa harmônica */
+    --status-new: 200 45% 45%;           /* Azul acinzentado/slate */
+    --status-new-bg: 200 35% 95%;
+    --status-production: 35 70% 50%;     /* Âmbar/mostarda */
+    --status-production-bg: 35 60% 94%;
+    --status-ready: 84 35% 42%;          /* Verde oliva médio */
+    --status-ready-bg: 84 30% 94%;
+    --status-delivered: 30 15% 55%;      /* Cinza terroso */
+    --status-delivered-bg: 30 15% 94%;
+
+    /* Payment Status */
+    --paid: 84 35% 42%;
+    --pending: 35 70% 50%;
+
+    /* Sidebar */
+    --sidebar-background: 40 20% 99%;
+    --sidebar-foreground: 30 20% 18%;
+    --sidebar-primary: 84 25% 32%;
+    --sidebar-primary-foreground: 40 20% 99%;
+    --sidebar-accent: 80 18% 90%;
+    --sidebar-accent-foreground: 30 20% 18%;
+    --sidebar-border: 35 18% 88%;
+    --sidebar-ring: 84 25% 32%;
+
+    /* Chart Colors - Tons terrosos */
+    --chart-1: 84 30% 38%;               /* Verde oliva */
+    --chart-2: 35 55% 48%;               /* Âmbar */
+    --chart-3: 20 50% 45%;               /* Terracota */
+    --chart-4: 55 40% 45%;               /* Mostarda oliva */
+    --chart-5: 30 20% 55%;               /* Taupe */
+  }
+
+  .dark {
+    --background: 220 20% 10%;
+    --foreground: 210 20% 98%;
+    --card: 220 20% 14%;
+    --card-foreground: 210 20% 98%;
+    --popover: 220 20% 14%;
+    --popover-foreground: 210 20% 98%;
+    --primary: 0 0% 100%;
+    --primary-foreground: 220 20% 10%;
+    --secondary: 220 14% 20%;
+    --secondary-foreground: 210 20% 98%;
+    --muted: 220 14% 20%;
+    --muted-foreground: 220 10% 60%;
+    --accent: 220 14% 20%;
+    --accent-foreground: 210 20% 98%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 14% 20%;
+    --input: 220 14% 20%;
+    --ring: 210 20% 98%;
+    --sidebar-background: 220 20% 10%;
+    --sidebar-foreground: 210 20% 98%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 220 20% 10%;
+    --sidebar-accent: 220 14% 20%;
+    --sidebar-accent-foreground: 210 20% 98%;
+    --sidebar-border: 220 14% 20%;
+    --sidebar-ring: 210 20% 98%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  /* Smooth transitions */
+  * {
+    @apply transition-colors duration-150;
+  }
+}
+
+@layer components {
+  /* KPI Card styling */
+  .kpi-card {
+    @apply bg-card rounded-xl border border-border/50 p-6 shadow-sm hover:shadow-md transition-shadow duration-200;
+  }
+
+  /* Status badges */
+  .status-new {
+    @apply bg-[hsl(var(--status-new-bg))] text-[hsl(var(--status-new))] font-medium;
+  }
+
+  .status-production {
+    @apply bg-[hsl(var(--status-production-bg))] text-[hsl(var(--status-production))] font-medium;
+  }
+
+  .status-ready {
+    @apply bg-[hsl(var(--status-ready-bg))] text-[hsl(var(--status-ready))] font-medium;
+  }
+
+  .status-delivered {
+    @apply bg-[hsl(var(--status-delivered-bg))] text-[hsl(var(--status-delivered))] font-medium;
+  }
+
+  /* Order card */
+  .order-card {
+    @apply bg-card rounded-lg border border-border/50 p-4 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer;
+  }
+
+  /* Kanban column */
+  .kanban-column {
+    @apply bg-secondary/50 rounded-xl p-4 min-h-[500px];
+  }
+
+  /* Action button */
+  .action-btn {
+    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .action-btn-primary {
+    @apply action-btn bg-primary text-primary-foreground hover:bg-primary/90;
+  }
+
+  .action-btn-secondary {
+    @apply action-btn bg-secondary text-secondary-foreground hover:bg-secondary/80;
+  }
+
+  .action-btn-success {
+    @apply action-btn bg-[hsl(var(--status-ready))] text-white hover:bg-[hsl(var(--status-ready))]/90;
+  }
+
+  .action-btn-warning {
+    @apply action-btn bg-[hsl(var(--status-production))] text-white hover:bg-[hsl(var(--status-production))]/90;
+  }
+}
+
+@layer utilities {
+  /* Custom scrollbar */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 3px;
+  }
+
+  /* Fade in animation */
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Pulse animation for new orders */
+  .animate-pulse-subtle {
+    animation: pulseSubtle 2s ease-in-out infinite;
+  }
+
+  @keyframes pulseSubtle {
+    0%, 100% {
+      box-shadow: 0 0 0 0 hsl(var(--status-new) / 0.4);
+    }
+    50% {
+      box-shadow: 0 0 0 8px hsl(var(--status-new) / 0);
+    }
+  }
+}

@@ -1,0 +1,215 @@
+"""Guardrail de grounding: casa texto livre do cliente com o catálogo real.
+
+Este módulo é a fronteira entre "o que o cliente escreveu" e "o que existe de
+verdade". O LLM devolve texto (`product_query="pote grande"`); aqui esse texto
+vira — ou não — um `CatalogProduct`/`CatalogComplement`. Se não casar com nada,
+o resultado diz `NOT_FOUND` e a máquina repergunta, em vez de seguir adiante
+com um item inventado.
+
+Estratégia, em ordem: match exato normalizado → substring → similaridade
+(`difflib.SequenceMatcher`). Empate entre candidatos vira `AMBIGUOUS`, que a
+máquina traduz em "qual dos dois você quer?".
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from difflib import SequenceMatcher
+from enum import Enum
+from typing import Sequence, TypeVar
+
+from app.domain.catalog import (
+    CatalogComplement,
+    CatalogGroup,
+    CatalogProduct,
+    CatalogSnapshot,
+    normalize,
+)
+
+#: Abaixo disso a similaridade é chute; melhor repreguntar do que errar o pedido.
+SIMILARITY_CUTOFF = 0.72
+
+#: Candidatos com score muito próximo do melhor também entram como ambiguidade.
+SIMILARITY_TOLERANCE = 0.06
+
+#: Palavras que não ajudam a identificar item nenhum no cardápio.
+_STOPWORDS = frozenset(
+    {
+        "quero", "queria", "gostaria", "de", "do", "da", "dos", "das", "um",
+        "uma", "uns", "umas", "o", "a", "os", "as", "por", "favor", "pfv",
+        "me", "ve", "ver", "manda", "pode", "ser", "e", "com", "sabor",
+        "sabores", "ai", "pra", "para", "vou", "levar", "no",
+    }
+)
+
+
+class MatchStatus(str, Enum):
+    """Como o texto do cliente se comportou contra o catálogo."""
+
+    OK = "ok"                    # exatamente um item disponível
+    AMBIGUOUS = "ambiguous"      # dois ou mais bons candidatos: perguntar qual
+    NOT_FOUND = "not_found"      # nada parecido no cardápio: repreguntar
+    UNAVAILABLE = "unavailable"  # existe, mas está esgotado/desativado
+
+
+T = TypeVar("T", CatalogProduct, CatalogComplement)
+
+
+@dataclass(slots=True)
+class ProductMatch:
+    status: MatchStatus
+    query: str
+    product: CatalogProduct | None = None
+    candidates: list[CatalogProduct] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return self.status is MatchStatus.OK and self.product is not None
+
+
+@dataclass(slots=True)
+class ComplementMatch:
+    status: MatchStatus
+    query: str
+    complement: CatalogComplement | None = None
+    candidates: list[CatalogComplement] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return self.status is MatchStatus.OK and self.complement is not None
+
+
+# ---------------------------------------------------------------------------
+# Núcleo do casamento (independente de ser produto ou complemento)
+# ---------------------------------------------------------------------------
+
+def _clean(query: str) -> str:
+    """Normaliza e remove ruído de pedido ("quero um...") do texto."""
+    norm = normalize(query)
+    tokens = [t for t in norm.replace("/", " ").split() if t]
+    kept = [t for t in tokens if t not in _STOPWORDS]
+    return " ".join(kept) if kept else norm
+
+
+def _score(query: str, name: str) -> float:
+    return SequenceMatcher(None, query, name).ratio()
+
+
+def _match_names(query: str, items: Sequence[T]) -> list[T]:
+    """Devolve os candidatos plausíveis, do mais para o menos provável."""
+    cleaned = _clean(query)
+    if not cleaned:
+        return []
+
+    pairs = [(item, normalize(item.name)) for item in items]
+
+    # 1) match exato — o caminho feliz de quem digitou o nome do cardápio.
+    exact = [item for item, name in pairs if name == cleaned]
+    if exact:
+        return exact
+
+    # 2) substring nos dois sentidos ("pote" -> "Pote 500ml";
+    #    "quero pote 500ml gelado" -> "Pote 500ml").
+    substring = [item for item, name in pairs if name in cleaned or cleaned in name]
+    if substring:
+        # nomes mais próximos em tamanho batem melhor com a query
+        substring.sort(key=lambda item: abs(len(normalize(item.name)) - len(cleaned)))
+        return substring
+
+    # 3) similaridade — cobre erro de digitação e acento perdido.
+    scored = [(item, _score(cleaned, name)) for item, name in pairs]
+    scored = [(item, s) for item, s in scored if s >= SIMILARITY_CUTOFF]
+    if not scored:
+        # última tentativa: casar palavra a palavra
+        # ("morango" dentro de "Sorvete de Morango").
+        token_hits = [
+            item
+            for item, name in pairs
+            if any(tok in name.split() for tok in cleaned.split() if len(tok) >= 4)
+        ]
+        return token_hits
+
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+    best = scored[0][1]
+    return [item for item, s in scored if best - s <= SIMILARITY_TOLERANCE]
+
+
+def _classify(candidates: Sequence[T]) -> tuple[MatchStatus, T | None, list[T]]:
+    """Transforma a lista de candidatos em veredito, respeitando disponibilidade."""
+    if not candidates:
+        return MatchStatus.NOT_FOUND, None, []
+
+    available = [c for c in candidates if c.is_available]
+    if not available:
+        # Existe no cardápio mas acabou: mensagem diferente de "não entendi".
+        return MatchStatus.UNAVAILABLE, None, list(candidates)
+    if len(available) == 1:
+        return MatchStatus.OK, available[0], available
+    return MatchStatus.AMBIGUOUS, None, available
+
+
+# ---------------------------------------------------------------------------
+# API pública
+# ---------------------------------------------------------------------------
+
+def resolve_product(query: str, catalog: CatalogSnapshot) -> ProductMatch:
+    """Casa texto livre com um produto do cardápio. Nunca inventa produto."""
+    if not query or not query.strip():
+        return ProductMatch(MatchStatus.NOT_FOUND, query or "")
+
+    candidates = _match_names(query, catalog.products)
+    status, product, shortlist = _classify(candidates)
+    return ProductMatch(status, query, product, list(shortlist))
+
+
+def resolve_complement(query: str, group: CatalogGroup) -> ComplementMatch:
+    """Casa texto livre com um complemento *dentro de um grupo específico*.
+
+    Restringir ao grupo é o que impede o cliente de escolher "chocolate" da
+    cobertura quando a pergunta era sobre sabor.
+    """
+    if not query or not query.strip():
+        return ComplementMatch(MatchStatus.NOT_FOUND, query or "")
+
+    candidates = _match_names(query, group.complements)
+    status, complement, shortlist = _classify(candidates)
+    return ComplementMatch(status, query, complement, list(shortlist))
+
+
+def resolve_complements(
+    queries: Sequence[str], group: CatalogGroup
+) -> list[ComplementMatch]:
+    """Resolve vários pedidos de uma vez ("pistache e morango")."""
+    results: list[ComplementMatch] = []
+    seen: set[str] = set()
+    for query in queries:
+        match = resolve_complement(query, group)
+        if match.ok and match.complement is not None:
+            key = str(match.complement.id)
+            if key in seen:  # cliente repetiu o mesmo sabor
+                continue
+            seen.add(key)
+        results.append(match)
+    return results
+
+
+def pick_by_number(text: str, options: Sequence[str]) -> str | None:
+    """Resolve resposta numérica ("2") contra a lista que acabamos de oferecer.
+
+    Devolve o id (string) escolhido ou None. Fica aqui, e não na máquina,
+    porque também é uma forma de casar texto do cliente com o catálogo.
+    """
+    stripped = text.strip().lstrip("#").strip().rstrip(".)-").strip()
+    if not stripped.isdigit():
+        return None
+    index = int(stripped)
+    if 1 <= index <= len(options):
+        return options[index - 1]
+    return None
+
+
+def split_queries(text: str) -> list[str]:
+    """Quebra "pistache, morango e limão" em pedaços resolvíveis."""
+    normalized = text.replace(" e ", ",").replace("/", ",").replace(" + ", ",")
+    parts = [part.strip(" .;") for part in normalized.split(",")]
+    return [part for part in parts if part]

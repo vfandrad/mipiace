@@ -1,0 +1,17 @@
+# Faixas abertas de propósito: a máquina de dev roda Python 3.14, que ainda não
+# tem wheel para versões antigas de pydantic-core/psycopg. Pinagem exata fica
+# para o momento de fechar o deploy (pip freeze > requirements.lock.txt).
+fastapi>=0.118
+uvicorn[standard]>=0.37
+pydantic>=2.12
+pydantic-settings>=2.11
+sqlalchemy>=2.0.44
+psycopg[binary]>=3.2.10
+httpx>=0.28
+python-dotenv>=1.1
+anthropic>=0.72
+openai>=1.54
+
+# dev/test
+pytest>=8.4
+pytest-asyncio>=1.0
