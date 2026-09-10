@@ -7,13 +7,13 @@
  */
 
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { Header } from '@/components/layout/Header';
 import { KanbanColumn } from '@/components/production/KanbanColumn';
 import { QueryError } from '@/components/common/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { useOrders } from '@/hooks/use-orders';
-import { useToast } from '@/hooks/use-toast';
 import type { OrderStatus } from '@/types/order';
 import { cn } from '@/lib/utils';
 
@@ -29,13 +29,11 @@ const STATUS_LABELS: Record<OrderStatus, string> = {
 
 const Loja = () => {
   const { orders, isLoading, isError, error, refetch, changeStatus } = useOrders();
-  const { toast } = useToast();
   const [showCancelled, setShowCancelled] = useState(false);
 
   const handleStatusChange = (orderId: string, newStatus: OrderStatus) => {
     changeStatus(orderId, newStatus);
-    toast({
-      title: 'Status atualizado',
+    toast.success('Status atualizado', {
       description: `Pedido movido para ${STATUS_LABELS[newStatus]}`,
     });
   };

@@ -12,8 +12,14 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 # Instala dependências antes de copiar o código: cacheia a camada pesada.
+# fetch-timeout/retries maiores porque a rede do Docker Desktop, nesta máquina,
+# tende a enrolar no meio do download de pacotes grandes e o timeout padrão do
+# npm (~5min sem receber bytes) estourava antes de a conexão retomar.
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm config set fetch-timeout 600000 && \
+    npm config set fetch-retries 5 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm ci --no-audit --no-fund
 
 COPY . .
 
