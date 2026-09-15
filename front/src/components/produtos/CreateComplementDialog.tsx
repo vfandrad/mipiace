@@ -9,22 +9,31 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useAsyncSubmit } from '@/hooks/use-async-submit';
-import type { ComplementInput } from '@/types/catalog';
+import type { ComplementInput, FlavorCategory } from '@/types/catalog';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   groupId: string;
+  flavorCategories: FlavorCategory[];
   /** O grupo vai na rota (`POST /api/groups/{id}/complements`). */
   onCreate: (groupId: string, data: ComplementInput) => Promise<unknown>;
 }
 
-export const CreateComplementDialog = ({ open, onOpenChange, groupId, onCreate }: Props) => {
+export const CreateComplementDialog = ({
+  open,
+  onOpenChange,
+  groupId,
+  flavorCategories,
+  onCreate,
+}: Props) => {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [available, setAvailable] = useState(true);
+  const [categoryId, setCategoryId] = useState('');
   const { loading, run } = useAsyncSubmit();
 
   const handleSubmit = () => {
@@ -34,10 +43,12 @@ export const CreateComplementDialog = ({ open, onOpenChange, groupId, onCreate }
         name: name.trim(),
         extra_price: Number.parseFloat(price) || 0,
         is_available: available,
+        flavor_category_id: categoryId || null,
       });
       setName('');
       setPrice('');
       setAvailable(true);
+      setCategoryId('');
       onOpenChange(false);
     });
   };
@@ -69,6 +80,25 @@ export const CreateComplementDialog = ({ open, onOpenChange, groupId, onCreate }
               onChange={(e) => setPrice(e.target.value)}
               placeholder="0,00"
             />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="complement-category">Categoria do sabor</Label>
+            <Select
+              id="complement-category"
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+            >
+              <option value="">Não se aplica</option>
+              {flavorCategories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Use em sabores. Complementos que não são sabor (calda, adicional)
+              podem ficar em "Não se aplica".
+            </p>
           </div>
           <div className="flex items-center justify-between">
             <Label htmlFor="complement-available">Disponível</Label>

@@ -5,6 +5,16 @@
  * aninhada, então o front não precisa mais cruzar três listas na mão.
  */
 
+/**
+ * Categoria do sabor em si ("Sem lactose" / "Com lactose") — é atributo do
+ * sabor, não do grupo. Vem de `GET /api/flavor-categories` e quase nunca muda.
+ */
+export interface FlavorCategory {
+  id: string;
+  name: string;
+  sort_order?: number;
+}
+
 export interface Complement {
   id: string;
   group_id: string;
@@ -12,6 +22,8 @@ export interface Complement {
   extra_price: number;
   is_available: boolean;
   sort_order?: number;
+  /** null = sabor sem categoria definida (ou complemento que não é sabor). */
+  flavor_category_id?: string | null;
 }
 
 export interface ComplementGroup {
@@ -60,6 +72,7 @@ export interface ComplementInput {
   name: string;
   extra_price: number;
   is_available: boolean;
+  flavor_category_id?: string | null;
 }
 
 /** Tipo de entidade do catálogo — usado nas rotas genéricas de PATCH/DELETE. */

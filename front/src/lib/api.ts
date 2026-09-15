@@ -11,6 +11,7 @@ import type {
   Complement,
   ComplementGroup,
   ComplementInput,
+  FlavorCategory,
   GroupInput,
   Product,
   ProductInput,
@@ -193,6 +194,12 @@ export function updateProduct(id: string, data: Partial<ProductInput>): Promise<
 
 export function deleteProduct(id: string): Promise<void> {
   return request<void>(`/api/products/${id}`, { method: 'DELETE' });
+}
+
+/** Categorias de sabor ("Sem lactose" / "Com lactose"). Lista fixa e curta. */
+export async function fetchFlavorCategories(): Promise<FlavorCategory[]> {
+  const data = await request<FlavorCategory[]>('/api/flavor-categories');
+  return unwrapList<FlavorCategory>(data, 'flavor_categories');
 }
 
 export function createGroup(productId: string, data: GroupInput): Promise<ComplementGroup> {

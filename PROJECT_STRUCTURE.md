@@ -79,7 +79,8 @@ mipiace/
 │
 ├── back/
 │   ├── db/schema.sql         AS TABELAS — fonte de verdade do banco
-│   ├── db/seed.sql           cardápio inicial
+│   ├── db/seed.sql           cardápio real (3 tamanhos + 31 sabores)
+│   ├── db/seed_demo.sql      pedidos fabricados p/ ver Kanban e Dashboard
 │   ├── requirements.txt
 │   ├── tests/                118 testes, nenhum precisa de Postgres no ar
 │   └── app/
@@ -193,10 +194,18 @@ Produto            "Pote 500ml"        R$ 39,90
        └─ Complemento  "Pistache"      + R$ 0,00
 ```
 
+O cardápio da casa são três tamanhos — **M 240ml** (2 sabores, R$ 30),
+**G 500ml** (3 sabores, R$ 50) e **COMBO 2 G 1000ml** (6 sabores, R$ 90) — e os
+mesmos 31 sabores disponíveis em todos.
+
 Existe porque **os sabores mudam todo dia**. É a única tela do painel que
 escreve no banco: o lojista liga e desliga `is_available` conforme o que saiu
 do freezer, e o agente enxerga a mudança na próxima mensagem (ele lê o catálogo
 a cada turno).
+
+Cada sabor carrega uma **categoria de lactose** ("Sem lactose" / "Com lactose"),
+editável no painel ao criar ou editar o sabor. É atributo do sabor, não do
+grupo — por isso mora em `flavor_categories` e não no grupo de escolha.
 
 Sabor indisponível não some do catálogo que o agente recebe — ele precisa saber
 que existe para responder *"hoje não tem pistache"* em vez de *"não entendi"*.
@@ -385,6 +394,8 @@ visíveis no navegador:
 |---|---|
 | **mudar o que o bot fala** | `back/app/agent/renderer.py` |
 | **adicionar/tirar sabor** | não é código: tela **Produtos** do painel |
+| **marcar sabor como sem lactose** | tela **Produtos**, ao criar ou editar o sabor |
+| **ver Kanban/Dashboard com dado** | aplicar `back/db/seed_demo.sql` (instruções no topo do arquivo) |
 | **mudar a taxa de entrega** | variável `DELIVERY_FEE` |
 | **mudar quantas falhas até chamar humano** | variável `MAX_NLU_FAILURES` |
 | **adicionar um estado à conversa** | `domain/enums.py` (o nome) + `agent/states.py` (as transições) + `agent/machine.py` (o handler) |

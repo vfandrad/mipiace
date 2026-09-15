@@ -3,18 +3,21 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { useAsyncSubmit } from '@/hooks/use-async-submit';
-import type { CatalogEntity, Complement, Product } from '@/types/catalog';
+import type { CatalogEntity, Complement, FlavorCategory, Product } from '@/types/catalog';
 
 interface Props {
   editTarget: { type: 'product' | 'complement'; item: Product | Complement } | null;
+  flavorCategories: FlavorCategory[];
   onClose: () => void;
   onSave: (entity: CatalogEntity, id: string, data: Record<string, unknown>) => Promise<unknown>;
 }
 
-export const EditItemSheet = ({ editTarget, onClose, onSave }: Props) => {
+export const EditItemSheet = ({ editTarget, flavorCategories, onClose, onSave }: Props) => {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
+  const [categoryId, setCategoryId] = useState('');
   const { loading, run } = useAsyncSubmit();
 
   useEffect(() => {
@@ -24,6 +27,11 @@ export const EditItemSheet = ({ editTarget, onClose, onSave }: Props) => {
       editTarget.type === 'product'
         ? String((editTarget.item as Product).base_price ?? 0)
         : String((editTarget.item as Complement).extra_price ?? 0),
+    );
+    setCategoryId(
+      editTarget.type === 'complement'
+        ? ((editTarget.item as Complement).flavor_category_id ?? '')
+        : '',
     );
   }, [editTarget]);
 
@@ -35,6 +43,7 @@ export const EditItemSheet = ({ editTarget, onClose, onSave }: Props) => {
         data.base_price = Number.parseFloat(price) || 0;
       } else {
         data.extra_price = Number.parseFloat(price) || 0;
+        data.flavor_category_id = categoryId || null;
       }
       await onSave(editTarget.type, editTarget.item.id, data);
       onClose();
@@ -67,6 +76,23 @@ export const EditItemSheet = ({ editTarget, onClose, onSave }: Props) => {
               onChange={(e) => setPrice(e.target.value)}
             />
           </div>
+          {editTarget?.type === 'complement' && (
+            <div className="space-y-2">
+              <Label htmlFor="edit-category">Categoria do sabor</Label>
+              <Select
+                id="edit-category"
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+              >
+                <option value="">Não se aplica</option>
+                {flavorCategories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
           <Button className="w-full" onClick={handleSave} disabled={loading || !name.trim()}>
             {loading ? 'Salvando...' : 'Salvar alterações'}
           </Button>

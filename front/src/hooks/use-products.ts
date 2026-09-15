@@ -15,6 +15,7 @@ import {
   deleteComplement,
   deleteGroup,
   deleteProduct,
+  fetchFlavorCategories,
   fetchProducts,
   updateComplement,
   updateGroup,
@@ -30,6 +31,7 @@ import type {
 } from '@/types/catalog';
 
 export const PRODUCTS_QUERY_KEY = ['products'] as const;
+const FLAVOR_CATEGORIES_QUERY_KEY = ['flavor-categories'] as const;
 
 function describe(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -56,6 +58,14 @@ export function useProducts() {
   const query = useQuery({
     queryKey: PRODUCTS_QUERY_KEY,
     queryFn: fetchProducts,
+  });
+
+  // Lista curta e praticamente imutável ("Sem lactose" / "Com lactose"): não
+  // precisa ser refeita junto com o catálogo a cada mutação.
+  const categoriesQuery = useQuery({
+    queryKey: FLAVOR_CATEGORIES_QUERY_KEY,
+    queryFn: fetchFlavorCategories,
+    staleTime: Infinity,
   });
 
   const products = query.data ?? [];
@@ -183,6 +193,7 @@ export function useProducts() {
 
   return {
     products,
+    flavorCategories: categoriesQuery.data ?? [],
     isLoading: query.isLoading,
     isError: query.isError,
     error: query.error,

@@ -28,7 +28,7 @@ import { DeleteConfirmDialog } from '@/components/produtos/DeleteConfirmDialog';
 
 const Produtos = () => {
   const catalog = useProducts();
-  const { products, isLoading, isError, error } = catalog;
+  const { products, flavorCategories, isLoading, isError, error } = catalog;
 
   const [showNewProduct, setShowNewProduct] = useState(false);
   const [newGroupProduct, setNewGroupProduct] = useState<{ id: string; name: string } | null>(null);
@@ -126,6 +126,7 @@ const Produtos = () => {
                     <GroupCard
                       key={group.id}
                       group={group}
+                      flavorCategories={flavorCategories}
                       isSaving={catalog.isSaving}
                       onToggleComplement={(complement) =>
                         catalog.toggleAvailability(
@@ -188,10 +189,12 @@ const Produtos = () => {
           open={!!newComplementGroupId}
           onOpenChange={(open) => !open && setNewComplementGroupId(null)}
           groupId={newComplementGroupId ?? ''}
+          flavorCategories={flavorCategories}
           onCreate={catalog.createComplement}
         />
         <EditItemSheet
           editTarget={editTarget}
+          flavorCategories={flavorCategories}
           onClose={() => setEditTarget(null)}
           onSave={catalog.editItem}
         />

@@ -7,7 +7,8 @@
 -- então rodar duas vezes não duplica nada. Isso importa porque o mesmo arquivo
 -- é usado no `python -m app.db.init_db --seed` de quem roda sem Docker.
 --
--- Só o cardápio real (produtos, grupos de escolha, sabores por categoria).
+-- Só o cardápio real: os três tamanhos (M/G/COMBO) e os 31 sabores da casa,
+-- cada um marcado como com ou sem lactose.
 -- Nada de cliente, pedido, pagamento ou conversa fabricados: clientes, pedidos
 -- e o histórico do dashboard nascem vazios e são preenchidos pelo uso real do
 -- agente/painel. Isso troca "gráfico bonito desde o dia 1" por "nenhum dado
@@ -17,33 +18,24 @@
 BEGIN;
 
 -- ----------------------------------------------------------------------------
--- Produtos
+-- Produtos — os três tamanhos da casa
 -- ----------------------------------------------------------------------------
 INSERT INTO products (id, name, description, base_price, is_available, sort_order) VALUES
-    ('11111111-1111-4111-8111-000000000001', 'Pote 500ml',
-     'Nosso pote grande: escolha 3 sabores e leve uma cobertura de brinde.', 39.90, true, 1),
-    ('11111111-1111-4111-8111-000000000002', 'Pote 240ml',
-     'Pote individual com 2 sabores à sua escolha.', 22.90, true, 2),
-    ('11111111-1111-4111-8111-000000000003', 'Casquinha',
-     'Casquinha crocante com 1 sabor.', 12.00, true, 3),
-    ('11111111-1111-4111-8111-000000000004', 'Milkshake 400ml',
-     'Milkshake cremoso feito com o gelato da casa.', 24.90, true, 4),
-    ('11111111-1111-4111-8111-000000000005', 'Taça Mi Piace',
-     'Taça com 2 sabores, calda e chantilly.', 29.90, true, 5)
+    ('11111111-1111-4111-8111-000000000010', 'M 240ml',
+     'Pote médio: escolha 2 sabores.', 30.00, true, 1),
+    ('11111111-1111-4111-8111-000000000011', 'G 500ml',
+     'Pote grande: escolha 3 sabores.', 50.00, true, 2),
+    ('11111111-1111-4111-8111-000000000012', 'COMBO 2 G 1000ml',
+     'Dois potes G: escolha 6 sabores.', 90.00, true, 3)
 ON CONFLICT (id) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
--- Grupos de escolha
+-- Grupos de escolha — um por produto, com a quantidade de sabores do tamanho
 -- ----------------------------------------------------------------------------
 INSERT INTO complement_groups (id, product_id, name, min_choices, max_choices, is_required, sort_order) VALUES
-    ('22222222-2222-4222-8222-000000000001', '11111111-1111-4111-8111-000000000001', 'Escolha 3 sabores', 3, 3, true,  1),
-    ('22222222-2222-4222-8222-000000000002', '11111111-1111-4111-8111-000000000001', 'Cobertura',         0, 1, false, 2),
-    ('22222222-2222-4222-8222-000000000003', '11111111-1111-4111-8111-000000000002', 'Escolha 2 sabores', 2, 2, true,  1),
-    ('22222222-2222-4222-8222-000000000004', '11111111-1111-4111-8111-000000000003', 'Escolha 1 sabor',   1, 1, true,  1),
-    ('22222222-2222-4222-8222-000000000005', '11111111-1111-4111-8111-000000000004', 'Sabor do milkshake',1, 1, true,  1),
-    ('22222222-2222-4222-8222-000000000006', '11111111-1111-4111-8111-000000000004', 'Adicionais',        0, 2, false, 2),
-    ('22222222-2222-4222-8222-000000000007', '11111111-1111-4111-8111-000000000005', 'Escolha 2 sabores', 2, 2, true,  1),
-    ('22222222-2222-4222-8222-000000000008', '11111111-1111-4111-8111-000000000005', 'Calda',             0, 1, false, 2)
+    ('22222222-2222-4222-8222-000000000010', '11111111-1111-4111-8111-000000000010', 'Escolha 2 sabores', 2, 2, true, 1),
+    ('22222222-2222-4222-8222-000000000011', '11111111-1111-4111-8111-000000000011', 'Escolha 3 sabores', 3, 3, true, 1),
+    ('22222222-2222-4222-8222-000000000012', '11111111-1111-4111-8111-000000000012', 'Escolha 6 sabores', 6, 6, true, 1)
 ON CONFLICT (id) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
@@ -62,11 +54,9 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO complements (group_id, name, extra_price, is_available, sort_order, flavor_category_id)
 SELECT g.id, s.nome, s.extra, true, s.ordem, s.categoria_id
 FROM (VALUES
-        ('22222222-2222-4222-8222-000000000001'::uuid),
-        ('22222222-2222-4222-8222-000000000003'::uuid),
-        ('22222222-2222-4222-8222-000000000004'::uuid),
-        ('22222222-2222-4222-8222-000000000005'::uuid),
-        ('22222222-2222-4222-8222-000000000007'::uuid)
+        ('22222222-2222-4222-8222-000000000010'::uuid),
+        ('22222222-2222-4222-8222-000000000011'::uuid),
+        ('22222222-2222-4222-8222-000000000012'::uuid)
      ) AS g(id)
 CROSS JOIN (VALUES
         -- 1. Sem lactose
@@ -105,34 +95,6 @@ CROSS JOIN (VALUES
      ) AS s(nome, extra, ordem, categoria_id)
 WHERE NOT EXISTS (
     SELECT 1 FROM complements c WHERE c.group_id = g.id AND c.name = s.nome
-);
-
-INSERT INTO complements (group_id, name, extra_price, is_available, sort_order)
-SELECT g.id, s.nome, s.extra, true, s.ordem
-FROM (VALUES
-        ('22222222-2222-4222-8222-000000000002'::uuid),
-        ('22222222-2222-4222-8222-000000000008'::uuid)
-     ) AS g(id)
-CROSS JOIN (VALUES
-        ('Calda de Chocolate',   0.00, 1),
-        ('Calda de Morango',     0.00, 2),
-        ('Caramelo Salgado',     3.00, 3),
-        ('Frutas Vermelhas',     5.00, 4)
-     ) AS s(nome, extra, ordem)
-WHERE NOT EXISTS (
-    SELECT 1 FROM complements c WHERE c.group_id = g.id AND c.name = s.nome
-);
-
-INSERT INTO complements (group_id, name, extra_price, is_available, sort_order)
-SELECT '22222222-2222-4222-8222-000000000006'::uuid, s.nome, s.extra, true, s.ordem
-FROM (VALUES
-        ('Paçoca',      3.00, 1),
-        ('Nutella',     5.00, 2),
-        ('Chantilly',   2.00, 3)
-     ) AS s(nome, extra, ordem)
-WHERE NOT EXISTS (
-    SELECT 1 FROM complements c
-    WHERE c.group_id = '22222222-2222-4222-8222-000000000006'::uuid AND c.name = s.nome
 );
 
 COMMIT;

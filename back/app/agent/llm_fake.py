@@ -333,33 +333,44 @@ class FakeLLMClient:
 
     @staticmethod
     def _infer_size(text: str, catalog: CatalogSnapshot) -> str | None:
-        """Mapeia keywords de tamanho ('grande', '500ml', etc) para produto.
+        """Adivinha o produto quando o cliente cita só o tamanho.
 
-        Usado quando cliente cita complemento sem produto explícito:
-        'Quero pistache grande' → infer_size retorna 'Pote 500ml'
-        para que o resultado seja ESCOLHER_PRODUTO com product_query='Pote 500ml'
-        e complement_queries=['pistache'].
+        "quero pistache grande" -> devolve o nome do maior produto do cardápio,
+        para o resultado virar ESCOLHER_PRODUTO com esse produto mais
+        complement_queries=["pistache"].
+
+        Sai tudo do catálogo, nada escrito na mão: primeiro tenta casar um
+        volume citado ("500", "240") com o nome do produto; depois cai em
+        "grande/pequeno", que viram o mais caro e o mais barato do cardápio.
+        Assim o cardápio pode mudar de nome e de tamanho sem mexer aqui.
         """
-        size_keywords = {
-            "grande": "Pote 500ml",
-            "500": "Pote 500ml",
-            "500ml": "Pote 500ml",
-            "pequeno": "Pote 240ml",
-            "240": "Pote 240ml",
-            "240ml": "Pote 240ml",
-            "individual": "Pote 240ml",
-            "casquinha": "Casquinha",
-            "casquinhas": "Casquinha",
-            "milkshake": "Milkshake 400ml",
-            "taca": "Taça Mi Piace",
-        }
+        products = catalog.available_products
+        if not products:
+            return None
 
-        for keyword, product_name in size_keywords.items():
-            if keyword in text:
-                # Verifica se produto existe no catálogo
-                for p in catalog.available_products:
-                    if normalize(p.name) == normalize(product_name):
-                        return product_name
+        # 1. Volume explícito: "500", "1000" — o número aparece no nome.
+        for numero in re.findall(r"\d{2,4}", text):
+            for product in products:
+                if numero in normalize(product.name):
+                    return product.name
+
+        # 2. A palavra de tamanho pode estar no próprio cardápio: o produto
+        #    "G 500ml" se descreve como "Pote grande". Vale mais que o preço.
+        for palavra in ("grande", "pequeno", "medio", "individual", "familia"):
+            if palavra not in text:
+                continue
+            for product in products:
+                descricao = normalize(f"{product.name} {product.description or ''}")
+                if palavra in descricao:
+                    return product.name
+
+        # 3. Sem pista no cardápio, "grande" é o mais caro e "pequeno" o mais barato.
+        por_preco = sorted(products, key=lambda p: p.base_price)
+        if any(palavra in text for palavra in ("grande", "maior", "familia")):
+            return por_preco[-1].name
+        if any(palavra in text for palavra in ("pequeno", "menor", "individual")):
+            return por_preco[0].name
+
         return None
 
     @staticmethod

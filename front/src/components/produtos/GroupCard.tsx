@@ -12,11 +12,12 @@ import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/format';
-import type { Complement, ComplementGroup } from '@/types/catalog';
+import type { Complement, ComplementGroup, FlavorCategory } from '@/types/catalog';
 
 interface Props {
   /** O grupo já traz seus complementos aninhados. */
   group: ComplementGroup;
+  flavorCategories: FlavorCategory[];
   isSaving: boolean;
   onToggleComplement: (complement: Complement) => void;
   onEditComplement: (complement: Complement) => void;
@@ -25,8 +26,17 @@ interface Props {
   onAddComplement: () => void;
 }
 
+/** Nome da categoria do sabor, ou undefined quando o complemento não é sabor. */
+function categoryName(
+  complement: Complement,
+  categories: FlavorCategory[],
+): string | undefined {
+  return categories.find((c) => c.id === complement.flavor_category_id)?.name;
+}
+
 export const GroupCard = ({
   group,
+  flavorCategories,
   isSaving,
   onToggleComplement,
   onEditComplement,
@@ -86,7 +96,16 @@ export const GroupCard = ({
           ) : (
             group.complements.map((complement) => (
               <TableRow key={complement.id}>
-                <TableCell className="font-medium">{complement.name}</TableCell>
+                <TableCell className="font-medium">
+                  <span className="flex flex-wrap items-center gap-2">
+                    {complement.name}
+                    {categoryName(complement, flavorCategories) && (
+                      <Badge variant="secondary" className="font-normal">
+                        {categoryName(complement, flavorCategories)}
+                      </Badge>
+                    )}
+                  </span>
+                </TableCell>
                 <TableCell className="text-right">
                   {complement.extra_price > 0 ? formatCurrency(complement.extra_price) : 'Incluso'}
                 </TableCell>

@@ -36,7 +36,15 @@ docker compose up --build
 | Postgres | `localhost:5432` |
 
 O banco aplica `back/db/schema.sql` e `back/db/seed.sql` na primeira subida:
-o cardápio já nasce populado. Para recomeçar do zero: `docker compose down -v`.
+o cardápio já nasce com os três tamanhos (M 240ml, G 500ml e COMBO 2 G 1000ml)
+e os 31 sabores. Para recomeçar do zero: `docker compose down -v`.
+
+Pedidos nascem vazios — Kanban e Dashboard aparecem zerados. Para olhar as duas
+telas com dado dentro, aplique os pedidos de demonstração (não roda sozinho):
+
+```bash
+docker compose exec -T db psql -U postgres -d postgres < back/db/seed_demo.sql
+```
 
 Para subir também o gateway de WhatsApp:
 `docker compose --profile whatsapp up -d`.
