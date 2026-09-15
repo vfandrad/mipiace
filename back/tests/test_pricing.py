@@ -110,7 +110,3 @@ def test_tudo_continua_decimal():
     assert isinstance(breakdown.subtotal, Decimal)
     assert isinstance(breakdown.total, Decimal)
 
-
-def test_formato_brasileiro():
-    assert pricing.format_brl(Decimal("46.9")) == "R$ 46,90"
-    assert pricing.format_brl(Decimal("1234.5")) == "R$ 1.234,50"

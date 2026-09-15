@@ -9,10 +9,10 @@ import { BarChart3, MessageSquare, Package, Store } from 'lucide-react';
 import logoMiPiace from '@/assets/logo-mipiace.png';
 
 const NAV_ITEMS = [
-  { path: '/loja', label: 'Produção', icon: Store },
+  { path: '/producao', label: 'Produção', icon: Store },
   { path: '/produtos', label: 'Produtos', icon: Package },
   { path: '/conversas', label: 'Conversas', icon: MessageSquare },
-  { path: '/admin', label: 'Dashboard', icon: BarChart3 },
+  { path: '/dashboard', label: 'Dashboard', icon: BarChart3 },
 ];
 
 export function Header() {

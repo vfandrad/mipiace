@@ -2,7 +2,7 @@
 
 O cardápio entra no system prompt em um bloco próprio com `cache_control`
 efêmero: ele é grande, é idêntico entre turnos e muda raramente, então é
-exatamente o tipo de conteúdo que o prompt caching da Anthropic desconta.
+exatamente o tipo de conteúdo que o prompt caching do provedor desconta.
 """
 
 from __future__ import annotations
@@ -92,10 +92,6 @@ def tool_schema() -> dict[str, Any]:
                     "additionalProperties": False,
                 },
                 "customer_name": {"type": ["string", "null"]},
-                "note": {
-                    "type": ["string", "null"],
-                    "description": "Observação do cliente (ex.: sem açúcar).",
-                },
             },
             "required": ["intent", "confidence"],
             "additionalProperties": False,

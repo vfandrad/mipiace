@@ -10,7 +10,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.domain.enums import MessageDirection
 from app.schemas.common import ORMModel
@@ -55,12 +55,7 @@ class HandoffResult(BaseModel):
     state: str
 
 
-class ConversationList(BaseModel):
-    conversations: list[ConversationRead] = Field(default_factory=list)
-
-
 __all__ = [
-    "ConversationList",
     "ConversationMessageRead",
     "ConversationRead",
     "HandoffResult",

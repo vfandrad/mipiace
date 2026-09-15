@@ -16,7 +16,6 @@ from app.agent.resolver import (
     MatchStatus,
     pick_by_number,
     resolve_complement,
-    resolve_complements,
     resolve_product,
     split_queries,
 )
@@ -145,23 +144,6 @@ def test_complemento_inexistente(catalog: CatalogSnapshot) -> None:
     grupo = catalog.products[0].groups[0]
     match = resolve_complement("bacon", grupo)
     assert match.status is MatchStatus.NOT_FOUND
-
-
-def test_varios_complementos_de_uma_vez(catalog: CatalogSnapshot) -> None:
-    grupo = catalog.products[0].groups[0]
-    matches = resolve_complements(["pistache", "morango", "chocolate belga"], grupo)
-    assert [m.status for m in matches] == [MatchStatus.OK] * 3
-    assert [m.complement.name for m in matches] == [
-        "Pistache",
-        "Morango",
-        "Chocolate Belga",
-    ]
-
-
-def test_complemento_repetido_e_descartado(catalog: CatalogSnapshot) -> None:
-    grupo = catalog.products[0].groups[0]
-    matches = resolve_complements(["pistache", "pistache"], grupo)
-    assert len(matches) == 1
 
 
 # --- utilitários ------------------------------------------------------------

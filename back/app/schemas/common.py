@@ -29,10 +29,4 @@ class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class Message(BaseModel):
-    """Resposta simples de confirmação."""
-
-    detail: str
-
-
-__all__ = ["Amount", "Money", "Message", "ORMModel"]
+__all__ = ["Amount", "Money", "ORMModel"]

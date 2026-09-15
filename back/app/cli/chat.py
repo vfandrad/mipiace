@@ -16,7 +16,7 @@ import asyncio
 import logging
 import sys
 
-from app.agent.channels.base import InboundMessage
+from app.agent.whatsapp import InboundMessage
 from app.agent.renderer import money
 from app.agent.runner import handle_inbound, settings_snapshot
 from app.agent.session import load_or_create, reset_session

@@ -176,23 +176,6 @@ def resolve_complement(query: str, group: CatalogGroup) -> ComplementMatch:
     return ComplementMatch(status, query, complement, list(shortlist))
 
 
-def resolve_complements(
-    queries: Sequence[str], group: CatalogGroup
-) -> list[ComplementMatch]:
-    """Resolve vários pedidos de uma vez ("pistache e morango")."""
-    results: list[ComplementMatch] = []
-    seen: set[str] = set()
-    for query in queries:
-        match = resolve_complement(query, group)
-        if match.ok and match.complement is not None:
-            key = str(match.complement.id)
-            if key in seen:  # cliente repetiu o mesmo sabor
-                continue
-            seen.add(key)
-        results.append(match)
-    return results
-
-
 def pick_by_number(text: str, options: Sequence[str]) -> str | None:
     """Resolve resposta numérica ("2") contra a lista que acabamos de oferecer.
 

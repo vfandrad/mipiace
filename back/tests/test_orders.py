@@ -11,6 +11,7 @@ import pytest
 from app.domain.cart import Cart, CartItem
 from app.domain.enums import FulfillmentType, OrderChannel, OrderStatus
 from app.services import orders as orders_service
+from app.services import payments as payments_service
 
 S = OrderStatus
 
@@ -139,19 +140,6 @@ def test_entrega_sem_endereco_completo_e_recusada(monkeypatch):
         )
 
 
-def test_cart_from_json_aceita_lista_e_dicionario():
-    item = {
-        "product_id": str(uuid4()),
-        "product_name": "Casquinha",
-        "unit_base_price": "12.00",
-        "quantity": 1,
-        "complements": [],
-    }
-    assert orders_service.cart_from_json([item]).items[0].product_name == "Casquinha"
-    assert orders_service.cart_from_json({"items": [item]}).subtotal == Decimal("12.00")
-    assert orders_service.cart_from_json(None).is_empty
-
-
 # ---------------------------------------------------------------------------
 # Costura pagamento -> agente
 # ---------------------------------------------------------------------------
@@ -189,7 +177,7 @@ async def test_notificacao_de_pagamento_comita(monkeypatch) -> None:
     monkeypatch.setattr(runner, "notify_payment_approved", fake_notify)
 
     session = _StubSession()
-    await orders_service.notify_agent_payment_approved(session, uuid4())
+    await payments_service.notify_agent_payment_approved(session, uuid4())
 
     assert len(chamadas) == 1, "o agente precisa ser avisado"
     assert session.commits == 1, "sem commit a conversa fica presa"
@@ -206,6 +194,6 @@ async def test_falha_ao_notificar_nao_derruba_o_pagamento(monkeypatch) -> None:
     monkeypatch.setattr(runner, "notify_payment_approved", explode)
 
     session = _StubSession()
-    await orders_service.notify_agent_payment_approved(session, uuid4())
+    await payments_service.notify_agent_payment_approved(session, uuid4())
 
     assert session.rollbacks == 1, "transação suja precisa ser desfeita"

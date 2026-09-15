@@ -40,29 +40,17 @@ class Settings(BaseSettings):
 
     # --- Modo de desenvolvimento --------------------------------------------
     # true  -> LLM falso + pagamento falso, roda sem chave nenhuma
-    # false -> Anthropic + Mercado Pago de verdade
+    # false -> OpenAI + Mercado Pago de verdade
     fake_mode: bool = True
 
-    # --- LLM ("anthropic" ou "openai") ---------------------------------------
-    llm_provider: str = "anthropic"
-    anthropic_api_key: str | None = None
-    llm_model: str = "claude-haiku-4-5"
+    # --- LLM (OpenAI) --------------------------------------------------------
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
     llm_max_tokens: int = 1024
     llm_timeout_seconds: float = 20.0
 
-    # --- WhatsApp Cloud API (Meta) ------------------------------------------
-    whatsapp_api_version: str = "v21.0"
-    whatsapp_token: str | None = None
-    whatsapp_phone_number_id: str | None = None
-    whatsapp_verify_token: str = "dev-verify-token"
-    whatsapp_app_secret: str | None = None
-
-    # --- WhatsApp via Evolution API (gateway self-hosted, alternativa à Cloud
-    # API da Meta — não exige app/número comercial aprovado para desenvolver).
-    # "cloud" usa WhatsAppCloudAdapter; "evolution" usa EvolutionAdapter.
-    whatsapp_provider: str = "cloud"
+    # --- WhatsApp via Evolution API (gateway self-hosted): não exige app nem
+    # número comercial aprovado, basta parear um QR code.
     evolution_api_url: str = "http://localhost:8081"
     evolution_api_key: str | None = None
     evolution_instance: str = "mipiace"

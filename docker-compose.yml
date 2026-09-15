@@ -9,7 +9,7 @@
 #   Frontend         -> http://localhost:8080
 #
 # Com FAKE_MODE=true (padrão) roda sem nenhuma chave externa: LLM falso e Pix
-# falso. Para usar Anthropic/Mercado Pago, exporte as variáveis no shell antes
+# falso. Para usar OpenAI/Mercado Pago, exporte as variáveis no shell antes
 # do `docker compose up` — nada de segredo dentro deste arquivo.
 #
 # O Postgres é a imagem oficial `supabase/postgres`, a mesma usada pelo
@@ -124,18 +124,10 @@ services:
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-local-key}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:5173}
       DELIVERY_FEE: ${DELIVERY_FEE:-5.00}
-      # Só usados com FAKE_MODE=false. LLM_PROVIDER escolhe "anthropic" ou "openai".
-      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      LLM_MODEL: ${LLM_MODEL:-claude-haiku-4-5}
+      # Só usados com FAKE_MODE=false.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
-      WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:-}
-      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
-      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-dev-verify-token}
-      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
-      # "cloud" (Meta) ou "evolution" (self-hosted, ver serviço evolution-api abaixo).
-      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-cloud}
+      # WhatsApp self-hosted — ver o serviço evolution-api abaixo.
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution-api:8080}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-dev-evolution-key}
       EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE:-mipiace}
@@ -164,9 +156,9 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # Evolution API — gateway WhatsApp open-source (alternativa self-hosted à
-  # WhatsApp Cloud API oficial da Meta, útil para não depender de aprovação
-  # de app/número comercial durante o desenvolvimento).
+  # Evolution API — gateway WhatsApp open-source e self-hosted. É o canal de
+  # WhatsApp do projeto: não depende de aprovação de app/número comercial,
+  # basta parear um QR code.
   #
   # Fica atrás de um profile porque tem stack própria (Postgres + Redis) e não
   # é necessária para rodar o painel/API/agente em FAKE_MODE. Para subir:
@@ -179,12 +171,12 @@ services:
   #        -d '{"instanceName":"mipiace","integration":"WHATSAPP-BAILEYS","qrcode":true}'
   #   curl http://localhost:8081/instance/connect/mipiace -H "apikey: dev-evolution-key"
   #
-  # Para o backend usar este canal em vez da Cloud API da Meta, defina no shell
-  # antes do `docker compose up`:
-  #   WHATSAPP_PROVIDER=evolution EVOLUTION_WEBHOOK_ENABLED=true
-  # O parser do evento "messages.upsert" já existe em
-  # back/app/agent/channels/evolution.py + rota back/app/api/routes/evolution.py
-  # (POST /webhooks/evolution?token=EVOLUTION_WEBHOOK_TOKEN).
+  # Para o backend receber as mensagens, defina no shell antes do
+  # `docker compose up`:
+  #   EVOLUTION_WEBHOOK_ENABLED=true
+  # O parser do evento "messages.upsert" está em
+  # back/app/agent/whatsapp.py; a rota em
+  # back/app/api/routes/webhooks.py (POST /webhooks/evolution?token=...).
   # ---------------------------------------------------------------------------
   evolution-db:
     image: postgres:15-alpine

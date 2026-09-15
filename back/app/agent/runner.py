@@ -12,11 +12,12 @@ from typing import Any
 from uuid import UUID
 
 from app.agent import renderer as r
-from app.agent.channels.base import InboundMessage
-from app.agent.channels.factory import get_channel_adapter
-from app.agent.llm.base import NluResult
-from app.agent.llm.factory import get_llm_client
-from app.agent.machine import AgentDeps, build_deps, run as run_machine
+from app.agent.whatsapp import InboundMessage
+from app.agent.whatsapp import get_channel_adapter
+from app.agent.llm import NluResult
+from app.agent.llm import get_llm_client
+from app.agent.checkout import AgentDeps, build_deps
+from app.agent.machine import run as run_machine
 from app.agent.session import (
     ConversationSession,
     find_by_active_order,
@@ -284,5 +285,5 @@ def settings_snapshot() -> dict[str, Any]:
     return {
         "fake_mode": settings.fake_mode,
         "llm": get_llm_client().name,
-        "model": settings.llm_model,
+        "model": settings.openai_model,
     }

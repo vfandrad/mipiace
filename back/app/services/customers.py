@@ -10,10 +10,53 @@ import re
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Address, Customer
-from app.repositories import customers as customers_repo
+
+# ---------------------------------------------------------------------------
+# Acesso a dados
+# ---------------------------------------------------------------------------
+
+
+async def get_customer_by_phone(session: AsyncSession, phone: str) -> Customer | None:
+    return await session.scalar(select(Customer).where(Customer.phone == phone))
+
+
+async def get_customer(session: AsyncSession, customer_id: UUID) -> Customer | None:
+    return await session.get(Customer, customer_id)
+
+
+async def create_customer(
+    session: AsyncSession, *, phone: str, name: str | None = None
+) -> Customer:
+    customer = Customer(phone=phone, name=name)
+    session.add(customer)
+    await session.flush()
+    return customer
+
+
+async def list_addresses(session: AsyncSession, customer_id: UUID) -> list[Address]:
+    result = await session.scalars(
+        select(Address)
+        .where(Address.customer_id == customer_id)
+        .order_by(Address.is_default.desc(), Address.created_at.desc())
+    )
+    return list(result)
+
+
+async def create_address(
+    session: AsyncSession, *, customer_id: UUID, data: dict[str, Any]
+) -> Address:
+    address = Address(customer_id=customer_id, **data)
+    session.add(address)
+    await session.flush()
+    return address
+
+# ---------------------------------------------------------------------------
+# Regras
+# ---------------------------------------------------------------------------
 
 #: Campos aceitos vindos do agente (o LLM devolve texto livre com estas chaves).
 ADDRESS_FIELDS = ("rua", "numero", "bairro", "complemento", "referencia")
@@ -34,9 +77,9 @@ async def get_or_create_customer(
 ) -> Customer:
     """Acha pelo telefone ou cria. Só sobrescreve o nome se ainda não houver um."""
     normalized = normalize_phone(phone)
-    customer = await customers_repo.get_customer_by_phone(session, normalized)
+    customer = await get_customer_by_phone(session, normalized)
     if customer is None:
-        return await customers_repo.create_customer(
+        return await create_customer(
             session, phone=normalized, name=(name or None)
         )
     if name and not customer.name:
@@ -67,7 +110,7 @@ async def save_address(
     if cleaned is None:
         return None
 
-    existing = await customers_repo.list_addresses(session, customer_id)
+    existing = await list_addresses(session, customer_id)
     for candidate in existing:
         same = (
             candidate.rua.casefold() == cleaned["rua"].casefold()
@@ -77,7 +120,7 @@ async def save_address(
         if same:
             return candidate
 
-    return await customers_repo.create_address(
+    return await create_address(
         session,
         customer_id=customer_id,
         data={**cleaned, "is_default": not existing},

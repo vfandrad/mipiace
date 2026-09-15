@@ -68,13 +68,6 @@ class CatalogSnapshot(BaseModel):
     def product_by_id(self, product_id: UUID) -> CatalogProduct | None:
         return next((p for p in self.products if p.id == product_id), None)
 
-    def group_by_id(self, group_id: UUID) -> CatalogGroup | None:
-        for product in self.products:
-            for group in product.groups:
-                if group.id == group_id:
-                    return group
-        return None
-
     def complement_by_id(self, complement_id: UUID) -> CatalogComplement | None:
         for product in self.products:
             for group in product.groups:

@@ -10,9 +10,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Bot, Hand, RefreshCw } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Button } from '@/components/ui/button';
-import { ConversationList } from '@/components/conversations/ConversationList';
-import { ConversationStateBadge } from '@/components/conversations/ConversationStateBadge';
-import { MessageThread } from '@/components/conversations/MessageThread';
+import { ConversationList } from '@/components/conversas/ConversationList';
+import { ConversationStateBadge } from '@/components/conversas/ConversationStateBadge';
+import { MessageThread } from '@/components/conversas/MessageThread';
 import { EmptyState } from '@/components/common/QueryState';
 import {
   useConversationMessages,

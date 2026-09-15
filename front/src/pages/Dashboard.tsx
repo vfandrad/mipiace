@@ -19,28 +19,15 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useMetrics } from '@/hooks/use-metrics';
 import { useOrders } from '@/hooks/use-orders';
 import { formatCurrency, formatInteger, toNumber } from '@/lib/format';
+import { ORDER_STATUS_INFO, statusTileClass } from '@/lib/status';
 import { RANGE_LABELS } from '@/lib/transforms';
 import type { MetricsRange } from '@/types/metrics';
 import type { OrderStatus } from '@/types/order';
 
-const PRODUCTION_STATUSES: { key: OrderStatus; label: string; bg: string; text: string }[] = [
-  { key: 'novo', label: 'Novos', bg: 'bg-status-new-bg', text: 'text-status-new' },
-  {
-    key: 'preparando',
-    label: 'Preparando',
-    bg: 'bg-status-production-bg',
-    text: 'text-status-production',
-  },
-  { key: 'entrega', label: 'Em entrega', bg: 'bg-status-ready-bg', text: 'text-status-ready' },
-  {
-    key: 'finalizado',
-    label: 'Finalizados',
-    bg: 'bg-status-delivered-bg',
-    text: 'text-status-delivered',
-  },
-];
+// Os 4 status que o lojista acompanha no bloco "Status de produção".
+const PRODUCTION_STATUSES: OrderStatus[] = ['novo', 'preparando', 'entrega', 'finalizado'];
 
-const Admin = () => {
+const Dashboard = () => {
   const [range, setRange] = useState<MetricsRange>('semana');
   const { summary, daily, products, hourly, refetchAll } = useMetrics(range);
   const orders = useOrders();
@@ -145,14 +132,19 @@ const Admin = () => {
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
-                {PRODUCTION_STATUSES.map((status) => (
-                  <div key={status.key} className={`p-3 sm:p-4 rounded-lg ${status.bg}`}>
-                    <p className={`text-2xl sm:text-3xl font-bold ${status.text}`}>
-                      {statusCount(status.key)}
-                    </p>
-                    <p className={`text-xs sm:text-sm ${status.text}/80 mt-1`}>{status.label}</p>
-                  </div>
-                ))}
+                {PRODUCTION_STATUSES.map((status) => {
+                  const tile = statusTileClass(status);
+                  return (
+                    <div key={status} className={`p-3 sm:p-4 rounded-lg ${tile.bg}`}>
+                      <p className={`text-2xl sm:text-3xl font-bold ${tile.text}`}>
+                        {statusCount(status)}
+                      </p>
+                      <p className={`text-xs sm:text-sm ${tile.text}/80 mt-1`}>
+                        {ORDER_STATUS_INFO[status].plural}
+                      </p>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -185,4 +177,4 @@ const Admin = () => {
   );
 };
 
-export default Admin;
+export default Dashboard;

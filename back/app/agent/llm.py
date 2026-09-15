@@ -1,19 +1,29 @@
-"""Contrato do cliente de LLM usado pelo agente.
+"""Contrato do cliente de LLM usado pelo agente, e a escolha de qual usar.
 
 O LLM tem um papel deliberadamente estreito: ele lê a mensagem do cliente e
 devolve *dados estruturados* (intenção + campos extraídos). Ele nunca escolhe
 o próximo estado, nunca calcula preço e nunca emite id de produto — quem faz
 isso é a máquina de estados com o catálogo real em mãos.
+
+`FAKE_MODE=true` é a chave da escolha: o sistema inteiro roda sem nenhuma
+chave externa. Com `fake_mode=false` usamos a OpenAI; se a chave não estiver
+configurada caímos no cliente falso e avisamos no log — melhor um agente
+limitado do que um agente que responde erro 500 no WhatsApp.
 """
 
 from __future__ import annotations
 
+import logging
+from functools import lru_cache
 from typing import Any, Protocol, Sequence
 
 from pydantic import BaseModel, Field
 
 from app.domain.catalog import CatalogSnapshot
+from app.core.config import get_settings
 from app.domain.enums import ConversationState, Intent
+
+logger = logging.getLogger(__name__)
 
 
 class Turn(BaseModel):
@@ -51,7 +61,6 @@ class NluResult(BaseModel):
     quantity: int | None = None
     address: ExtractedAddress | None = None
     customer_name: str | None = None
-    note: str | None = None
 
     # Metadados para auditoria/custo (gravados em conversation_messages)
     model: str | None = None
@@ -59,7 +68,7 @@ class NluResult(BaseModel):
 
 
 class LLMClient(Protocol):
-    """Implementado por AnthropicLLMClient e FakeLLMClient."""
+    """Implementado por OpenAILLMClient e FakeLLMClient."""
 
     name: str
 
@@ -73,3 +82,24 @@ class LLMClient(Protocol):
     ) -> NluResult:
         """Interpreta a mensagem do cliente no contexto do estado atual."""
         ...
+
+
+@lru_cache
+def get_llm_client() -> LLMClient:
+    """Cliente de LLM do processo (cacheado: o SDK reaproveita a conexão)."""
+    settings = get_settings()
+
+    if not settings.fake_mode and settings.openai_api_key:
+        from app.agent.llm_openai import OpenAILLMClient
+
+        return OpenAILLMClient(settings)
+
+    if not settings.fake_mode:
+        logger.warning(
+            "FAKE_MODE=false mas OPENAI_API_KEY não está configurada; "
+            "usando o LLM falso."
+        )
+
+    from app.agent.llm_fake import FakeLLMClient
+
+    return FakeLLMClient()

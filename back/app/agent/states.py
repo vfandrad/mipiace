@@ -7,7 +7,12 @@ gerar Pix sem endereço, ou fechar pedido com carrinho vazio).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from app.domain.enums import ConversationState as S
+
+if TYPE_CHECKING:  # evita ciclo de import em tempo de execução
+    from app.agent.session import ConversationSession
 
 # Transições permitidas. Qualquer salto fora daqui é bug e deve levantar erro.
 TRANSITIONS: dict[S, set[S]] = {
@@ -69,9 +74,6 @@ TRANSITIONS: dict[S, set[S]] = {
     },
 }
 
-#: Estados em que a conversa não está mais conduzindo um pedido ativo.
-TERMINAL_STATES: frozenset[S] = frozenset({S.CONCLUIDO, S.CANCELADO})
-
 #: Estados a partir dos quais um "quero cancelar" do cliente é aceito.
 CANCELLABLE_STATES: frozenset[S] = frozenset(
     {
@@ -101,3 +103,26 @@ def can_transition(origin: S, destination: S) -> bool:
 def assert_transition(origin: S, destination: S) -> None:
     if not can_transition(origin, destination):
         raise InvalidTransition(origin, destination)
+
+
+#: Estados que aceitam "entrar de novo" no mesmo estado. Repetir a pergunta é
+#: parte do fluxo neles (ex.: faltam 2 dos 3 sabores, endereço incompleto);
+#: nos demais, mandar para o estado atual é ruído e a transição é ignorada.
+_REENTERABLE: frozenset[S] = frozenset(
+    {
+        S.ESCOLHENDO_PRODUTO,
+        S.PERSONALIZANDO_ITEM,
+        S.REVISANDO_CARRINHO,
+        S.COLETANDO_ENDERECO,
+        S.CONFIRMANDO_PEDIDO,
+        S.AGUARDANDO_PAGAMENTO,
+    }
+)
+
+
+def advance(session: "ConversationSession", destination: S) -> None:
+    """Única porta de mudança de estado — valida contra a tabela de transições."""
+    if session.state == destination and destination not in _REENTERABLE:
+        return
+    assert_transition(session.state, destination)
+    session.state = destination

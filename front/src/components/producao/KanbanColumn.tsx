@@ -4,6 +4,7 @@
 
 import type { Order, OrderStatus } from '@/types/order';
 import { OrderCard } from './OrderCard';
+import { ORDER_STATUS_INFO, statusBorderClass } from '@/lib/status';
 import { cn } from '@/lib/utils';
 
 interface KanbanColumnProps {
@@ -12,22 +13,13 @@ interface KanbanColumnProps {
   onStatusChange: (orderId: string, newStatus: OrderStatus) => void;
 }
 
-export const COLUMN_CONFIG: Record<OrderStatus, { title: string; borderColor: string }> = {
-  novo: { title: 'Novos', borderColor: 'border-b-status-new' },
-  preparando: { title: 'Preparando', borderColor: 'border-b-status-production' },
-  entrega: { title: 'Saiu p/ entrega', borderColor: 'border-b-status-ready' },
-  finalizado: { title: 'Finalizados', borderColor: 'border-b-status-delivered' },
-  cancelado: { title: 'Cancelados', borderColor: 'border-b-destructive' },
-};
-
 export function KanbanColumn({ status, orders, onStatusChange }: KanbanColumnProps) {
-  const config = COLUMN_CONFIG[status];
 
   return (
     <div className="kanban-column flex flex-col">
-      <div className={cn('pb-3 mb-4 border-b-2', config.borderColor)}>
+      <div className={cn('pb-3 mb-4 border-b-2', statusBorderClass(status))}>
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-foreground">{config.title}</h3>
+          <h3 className="font-semibold text-foreground">{ORDER_STATUS_INFO[status].plural}</h3>
           <span className="flex items-center justify-center h-6 w-6 rounded-full bg-card text-sm font-medium shadow-sm">
             {orders.length}
           </span>

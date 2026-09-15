@@ -20,7 +20,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 
-from app.agent.llm.base import Turn
+from app.agent.llm import Turn
 from app.core.config import get_settings
 from app.domain.cart import Cart
 from app.domain.enums import ConversationState, MessageDirection
@@ -44,8 +44,6 @@ class ConversationSession:
     active_order_id: UUID | None = None
     handoff: bool = False
     fail_count: int = 0
-    #: True quando a sessão anterior venceu e o fluxo foi reiniciado.
-    was_expired: bool = False
 
     def reset_flow(self) -> None:
         """Zera o pedido em construção mantendo a identidade do cliente."""
@@ -192,7 +190,6 @@ async def load_or_create(
     expires_at = row._mapping["expires_at"]
     if _is_expired(expires_at):
         session.reset_flow()
-        session.was_expired = True
     return session
 
 
@@ -381,14 +378,3 @@ async def get_saved_address(db: Any, phone: str) -> dict[str, Any] | None:
         "referencia": row[4],
     }
 
-
-async def get_saved_name(db: Any, phone: str) -> str | None:
-    try:
-        result = await db.execute(
-            text("SELECT name FROM customers WHERE phone = :phone"),
-            {"phone": phone},
-        )
-        row = result.first()
-    except Exception:
-        return None
-    return row[0] if row and row[0] else None

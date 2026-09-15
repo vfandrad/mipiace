@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import Sequence
 
-from app.agent.llm.base import ExtractedAddress, LLMClient, NluResult, Turn
+from app.agent.llm import ExtractedAddress, LLMClient, NluResult, Turn
 from app.domain.catalog import CatalogSnapshot, normalize
 from app.domain.enums import ConversationState, Intent
 
@@ -269,6 +269,16 @@ class FakeLLMClient:
         # 8. Sabor citado fora da personalização (cliente adiantado).
         complement_hits = self._complement_queries(raw, text, complements)
         if complement_hits:
+            # Se complemento vem com tamanho ("grande pote de pistache"),
+            # trata como ESCOLHER_PRODUTO + complementos, não só complemento.
+            size_hint = self._infer_size(text, catalog)
+            if size_hint:
+                return NluResult(
+                    intent=Intent.ESCOLHER_PRODUTO,
+                    confidence=0.8,
+                    product_query=size_hint,
+                    complement_queries=complement_hits,
+                )
             return NluResult(
                 intent=Intent.ESCOLHER_COMPLEMENTOS,
                 confidence=0.7,
@@ -283,7 +293,7 @@ class FakeLLMClient:
         if _is_token(text, _NO) or _has(text, ("nao quero", "nao obrigado")):
             return NluResult(intent=Intent.NEGAR, confidence=0.85)
         if _has(text, _DELIVERY):
-            return NluResult(intent=Intent.CONFIRMAR, confidence=0.7, note="entrega")
+            return NluResult(intent=Intent.CONFIRMAR, confidence=0.7)
 
         # 10. Número solto: escolha da lista que acabou de ser oferecida.
         if text.isdigit():
@@ -320,6 +330,37 @@ class FakeLLMClient:
             if hit not in ordered:
                 ordered.append(hit)
         return ordered
+
+    @staticmethod
+    def _infer_size(text: str, catalog: CatalogSnapshot) -> str | None:
+        """Mapeia keywords de tamanho ('grande', '500ml', etc) para produto.
+
+        Usado quando cliente cita complemento sem produto explícito:
+        'Quero pistache grande' → infer_size retorna 'Pote 500ml'
+        para que o resultado seja ESCOLHER_PRODUTO com product_query='Pote 500ml'
+        e complement_queries=['pistache'].
+        """
+        size_keywords = {
+            "grande": "Pote 500ml",
+            "500": "Pote 500ml",
+            "500ml": "Pote 500ml",
+            "pequeno": "Pote 240ml",
+            "240": "Pote 240ml",
+            "240ml": "Pote 240ml",
+            "individual": "Pote 240ml",
+            "casquinha": "Casquinha",
+            "casquinhas": "Casquinha",
+            "milkshake": "Milkshake 400ml",
+            "taca": "Taça Mi Piace",
+        }
+
+        for keyword, product_name in size_keywords.items():
+            if keyword in text:
+                # Verifica se produto existe no catálogo
+                for p in catalog.available_products:
+                    if normalize(p.name) == normalize(product_name):
+                        return product_name
+        return None
 
     @staticmethod
     def _name(text: str) -> str | None:

@@ -12,21 +12,13 @@ import { PaymentBadge } from '@/components/ui/status-badge';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatPhone, formatTime, minutesSince } from '@/lib/format';
 import { formatAddress } from '@/lib/transforms';
+import { nextOrderStatus } from '@/lib/status';
 import type { Order, OrderStatus } from '@/types/order';
 
 interface OrderCardProps {
   order: Order;
   onStatusChange: (orderId: string, newStatus: OrderStatus) => void;
 }
-
-/** Fluxo padrão do balcão. `cancelado` sai por botão próprio, não pelo avanço. */
-const NEXT_STATUS: Record<OrderStatus, OrderStatus | null> = {
-  novo: 'preparando',
-  preparando: 'entrega',
-  entrega: 'finalizado',
-  finalizado: null,
-  cancelado: null,
-};
 
 const ACTION_CONFIG: Partial<
   Record<OrderStatus, { label: string; icon: React.ReactNode; className: string }>
@@ -48,16 +40,12 @@ const ACTION_CONFIG: Partial<
   },
 };
 
-function nextStatusFor(order: Order): OrderStatus | null {
-  return NEXT_STATUS[order.status];
-}
-
 export function OrderCard({ order, onStatusChange }: OrderCardProps) {
   const [copied, setCopied] = useState(false);
   const minutesAgo = minutesSince(order.createdAt);
   const isOpen = order.status !== 'finalizado' && order.status !== 'cancelado';
   const isUrgent = minutesAgo > 15 && isOpen;
-  const nextStatus = nextStatusFor(order);
+  const nextStatus = nextOrderStatus(order.status);
   const action = nextStatus ? ACTION_CONFIG[nextStatus] : null;
   const address = formatAddress(order);
   const pixCode = order.paymentStatus === 'pendente' ? order.payment?.qr_code : null;

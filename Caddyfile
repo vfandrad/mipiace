@@ -44,10 +44,6 @@
     reverse_proxy backend:8000
   }
 
-  handle /client/* {
-    reverse_proxy backend:8000
-  }
-
   # Health check
   handle /health {
     reverse_proxy backend:8000

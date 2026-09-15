@@ -1,29 +1,72 @@
-"""Canal WhatsApp via Evolution API (gateway self-hosted, Baileys por baixo).
+"""Canais de mensagem do agente — para onde as respostas vão.
 
-Alternativa à WhatsApp Cloud API da Meta para desenvolvimento: não exige app
-comercial aprovado, só parear um QR code. Duas diferenças relevantes em
-relação ao `WhatsAppCloudAdapter`:
+São dois, e o `FAKE_MODE` decide qual:
 
-1. O payload do webhook é o evento `messages.upsert` do Baileys, bem mais raso
-   que o da Meta (`data` já é a mensagem, sem `entry[].changes[].value`).
-2. Evolution API não assina o corpo do webhook — por isso a validação, feita
-   na rota (`app/api/routes/evolution.py`), é um token compartilhado na query
-   string, não HMAC.
+* `EvolutionAdapter` — WhatsApp de verdade, via Evolution API (gateway
+  self-hosted, Baileys por baixo). Não exige app comercial aprovado, só parear
+  um QR code. O webhook dele é o evento `messages.upsert`: `data` já é a
+  mensagem, sem os envelopes de outros provedores. A Evolution API não assina o
+  corpo do webhook — a validação, feita em `api/routes/webhooks.py`, é um token
+  compartilhado na query string.
+* `ConsoleAdapter` — canal em memória. Serve o simulador HTTP, a CLI e os
+  testes; é ele que permite exercitar a conversa inteira, de "oi" até o Pix,
+  sem WhatsApp e sem rede.
+
+A máquina de estados não sabe qual dos dois está atrás: ela só entrega texto
+para um `ChannelAdapter`.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from functools import lru_cache
+from typing import Any, Protocol
 
 import httpx
+from pydantic import BaseModel, Field
 
-from app.agent.channels.base import InboundMessage
 from app.core.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Contrato
+# ---------------------------------------------------------------------------
+
+class InboundMessage(BaseModel):
+    """Mensagem recebida, já normalizada e independente de canal."""
+
+    phone: str                       # E.164 sem "+": 5511999998888
+    text: str
+    provider_message_id: str | None = None
+    profile_name: str | None = None
+    timestamp: datetime | None = None
+    #: True quando a própria conta conectada enviou (lojista respondendo pelo
+    #: celular, ou eco do que o bot mandou). Não passa pela IA/máquina de
+    #: estados — só é registrada no histórico para o painel espelhar o chat.
+    from_me: bool = False
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChannelAdapter(Protocol):
+    """Implementado por EvolutionAdapter e ConsoleAdapter."""
+
+    name: str
+
+    async def send_text(self, to: str, text: str) -> str | None:
+        """Envia texto e devolve o id da mensagem no provedor, se houver."""
+        ...
+
+    def parse_webhook(self, payload: dict[str, Any]) -> list[InboundMessage]:
+        """Extrai as mensagens de um payload de webhook do provedor."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp de verdade
+# ---------------------------------------------------------------------------
 
 class EvolutionAdapter:
     """Implementa `ChannelAdapter` para a Evolution API."""
@@ -53,7 +96,7 @@ class EvolutionAdapter:
         payload = {"number": to, "text": text}
         headers = {
             "apikey": self._settings.evolution_api_key,
-            "Content-Type": "application/json",
+            "Content-Type": "application/json; charset=utf-8",
         }
 
         try:
@@ -76,15 +119,6 @@ class EvolutionAdapter:
         except Exception as e:
             logger.exception("falha ao conectar com Evolution API para %s: %s", to, str(e))
             raise
-
-    async def send_message(self, phone_number: str, message: str) -> str | None:
-        """Alias de send_text para compatibilidade com interface pública."""
-        # Formata número se necessário (remove caracteres especiais, garante formato)
-        clean_number = ''.join(c for c in phone_number if c.isdigit())
-        if not clean_number.startswith('55'):
-            clean_number = f"55{clean_number}"
-
-        return await self.send_text(clean_number, message)
 
     # -- webhook -----------------------------------------------------------
 
@@ -169,3 +203,58 @@ class EvolutionAdapter:
             return datetime.fromtimestamp(int(raw), tz=timezone.utc)
         except (TypeError, ValueError):
             return None
+
+# ---------------------------------------------------------------------------
+# Canal em memória (FAKE_MODE, simulador, CLI e testes)
+# ---------------------------------------------------------------------------
+
+class ConsoleAdapter:
+    """Implementa `ChannelAdapter` guardando as respostas numa lista."""
+
+    name = "console"
+
+    #: Teto do histórico: em modo falso este adapter é um singleton de processo
+    #: e viveria para sempre acumulando mensagens.
+    MAX_HISTORY = 500
+
+    def __init__(self, echo: bool = False) -> None:
+        #: Todas as respostas enviadas, na ordem: [(telefone, texto), ...]
+        self.sent: list[tuple[str, str]] = []
+        self._echo = echo
+
+    async def send_text(self, to: str, text: str) -> str | None:
+        self.sent.append((to, text))
+        if len(self.sent) > self.MAX_HISTORY:
+            del self.sent[: -self.MAX_HISTORY]
+        if self._echo:
+            print(text)
+        return None
+
+    def parse_webhook(self, payload: dict[str, Any]) -> list[InboundMessage]:
+        """Aceita o formato simples do simulador: {"phone": ..., "text": ...}."""
+        phone = payload.get("phone")
+        text = payload.get("text")
+        if not phone or not text:
+            return []
+        return [InboundMessage(phone=str(phone), text=str(text), raw=payload)]
+
+    def replies_for(self, phone: str) -> list[str]:
+        """Usado pelos testes e pelo simulador para ler o que o bot respondeu."""
+        return [text for to, text in self.sent if to == phone]
+
+
+# ---------------------------------------------------------------------------
+# Escolha do canal
+# ---------------------------------------------------------------------------
+
+#: Canal em memória compartilhado do processo — o simulador lê daqui.
+_console = ConsoleAdapter()
+
+
+@lru_cache
+def get_channel_adapter(channel_name: str = "whatsapp") -> ChannelAdapter:
+    """Adapter do canal pedido. Em FAKE_MODE tudo vai para o console."""
+    if channel_name == "console" or get_settings().fake_mode:
+        return _console
+
+    return EvolutionAdapter(get_settings())

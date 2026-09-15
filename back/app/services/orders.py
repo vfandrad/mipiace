@@ -1,31 +1,60 @@
-"""Regras de pedido: fechamento do carrinho, Pix e mudança de status.
+"""Regras de pedido: fechamento do carrinho e mudança de status.
 
 Este módulo é a fronteira entre a conversa (carrinho em JSON) e o pedido real:
 é aqui que o preço é congelado, o código curto é emitido e o cliente vira uma
 entidade do banco. Nada disso pode depender do que o LLM devolveu.
+
+O ciclo do pagamento (criar o Pix, aplicar o resultado) mora em
+`services/payments.py`.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.db.models import Order, OrderItem, OrderItemComplement, Payment
+from app.db.models import Order, OrderItem, OrderItemComplement, order_code_seq
 from app.domain.cart import Cart
 from app.domain.enums import FulfillmentType, OrderChannel, OrderStatus, PaymentStatus
-from app.repositories import orders as orders_repo
-from app.repositories import payments as payments_repo
 from app.schemas.order import OrderCreated, OrderSummary, OrderSummaryItem
 from app.services import customers as customers_service
 from app.services import pricing
-from app.services.payments.base import PaymentStatusResult, PixCharge
-from app.services.payments.factory import get_payment_provider
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Acesso a dados
+# ---------------------------------------------------------------------------
+
+
+async def list_orders(
+    session: AsyncSession,
+    *,
+    status: OrderStatus | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[Order]:
+    """Lista para o Kanban: mais recentes primeiro, com itens e pagamentos."""
+    stmt = select(Order).order_by(Order.created_at.desc()).limit(limit).offset(offset)
+    if status is not None:
+        stmt = stmt.where(Order.status == status)
+    result = await session.scalars(stmt)
+    return list(result)
+
+
+async def get_order(session: AsyncSession, order_id: UUID) -> Order | None:
+    return await session.get(Order, order_id)
+
+
+async def next_code_number(session: AsyncSession) -> int:
+    """`nextval('order_code_seq')` — números sem colisão mesmo em concorrência."""
+    value = await session.scalar(select(order_code_seq.next_value()))
+    return int(value)
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +176,7 @@ async def create_order_from_cart(
             )
 
     breakdown = pricing.calculate_cart(cart, fulfillment_type=fulfillment_type)
-    code = format_order_code(await orders_repo.next_code_number(session))
+    code = format_order_code(await next_code_number(session))
 
     order = Order(
         code=code,
@@ -187,7 +216,7 @@ async def create_order_from_cart(
                 )
             )
 
-    await session.commit()
+    await session.flush()
     logger.info("Pedido %s criado (%s) total=%s", order.code, channel, order.total)
 
     return OrderCreated(
@@ -202,145 +231,6 @@ async def create_order_from_cart(
 
 
 # ---------------------------------------------------------------------------
-# Pix
-# ---------------------------------------------------------------------------
-
-
-async def create_pix_for_order(session: AsyncSession, order_id: UUID) -> PixCharge:
-    """Cria (ou reaproveita) a cobrança Pix do pedido.
-
-    Reaproveitar a cobrança pendente evita gerar dois QR para o mesmo pedido
-    quando o cliente pede o código de novo.
-    """
-    order = await orders_repo.get_order(session, order_id)
-    if order is None:
-        raise OrderNotFoundError(f"Pedido {order_id} não encontrado.")
-    if order.payment_status is PaymentStatus.PAGO:
-        raise OrderError("Pedido já está pago.")
-
-    provider = get_payment_provider()
-
-    existing = await payments_repo.get_latest_payment(
-        session, order_id, status=PaymentStatus.PENDENTE
-    )
-    if existing is not None and existing.provider == provider.name and existing.qr_code:
-        return PixCharge(
-            provider=existing.provider,
-            provider_payment_id=existing.provider_payment_id or "",
-            amount=existing.amount,
-            qr_code=existing.qr_code,
-            qr_code_base64=existing.qr_code_base64,
-            ticket_url=existing.ticket_url,
-            expires_at=existing.expires_at,
-            raw=existing.raw_payload or {},
-        )
-
-    charge = await provider.create_pix_charge(
-        order_id=order.id,
-        order_code=order.code,
-        amount=order.total,
-        payer_name=order.customer.name if order.customer else None,
-        payer_phone=order.customer.phone if order.customer else None,
-    )
-
-    await payments_repo.create_payment(
-        session,
-        {
-            "order_id": order.id,
-            "provider": charge.provider,
-            "provider_payment_id": charge.provider_payment_id,
-            "method": "pix",
-            "amount": pricing.money(charge.amount),
-            "status": PaymentStatus.PENDENTE,
-            "qr_code": charge.qr_code,
-            "qr_code_base64": charge.qr_code_base64,
-            "ticket_url": charge.ticket_url,
-            "expires_at": charge.expires_at,
-            "raw_payload": charge.raw or None,
-        },
-    )
-    await session.commit()
-    logger.info("Pix criado para %s (%s)", order.code, charge.provider_payment_id)
-    return charge
-
-
-async def apply_payment_result(
-    session: AsyncSession, result: PaymentStatusResult, *, provider_name: str
-) -> tuple[Order | None, bool]:
-    """Aplica ao banco o status consultado no provedor.
-
-    Devolve `(pedido, aprovado_agora)`. `aprovado_agora` é False quando o
-    pedido já estava pago — é o que impede o webhook de notificar o cliente
-    duas vezes.
-    """
-    payment = await payments_repo.get_payment_by_provider_id(
-        session,
-        provider=provider_name,
-        provider_payment_id=result.provider_payment_id,
-    )
-    order: Order | None = None
-    if payment is not None:
-        order = await orders_repo.get_order(session, payment.order_id)
-    elif result.external_reference:
-        # Cobrança criada fora do nosso fluxo: ainda dá para achar o pedido.
-        try:
-            order = await orders_repo.get_order(session, UUID(result.external_reference))
-        except ValueError:
-            order = None
-
-    if order is None:
-        logger.warning(
-            "Pagamento %s sem pedido correspondente", result.provider_payment_id
-        )
-        return None, False
-
-    if payment is not None:
-        payment.status = result.status
-        payment.raw_payload = result.raw or payment.raw_payload
-
-    already_paid = order.payment_status is PaymentStatus.PAGO
-    approved_now = result.status is PaymentStatus.PAGO and not already_paid
-
-    if approved_now:
-        order.payment_status = PaymentStatus.PAGO
-        order.paid_at = datetime.now(timezone.utc)
-        if order.status is OrderStatus.NOVO:
-            # Pagou, entra na fila da produção.
-            order.status = OrderStatus.PREPARANDO
-    elif result.status in {PaymentStatus.EXPIRADO, PaymentStatus.CANCELADO}:
-        if not already_paid:
-            order.payment_status = result.status
-
-    await session.commit()
-    return order, approved_now
-
-
-async def notify_agent_payment_approved(session: AsyncSession, order_id: UUID) -> None:
-    """Avisa o agente que o Pix caiu — sem deixar o webhook morrer por isso.
-
-    Import tardio de propósito: `app.agent.runner` importa serviços daqui, e o
-    ciclo quebraria o boot. Se o agente ainda não existir (desenvolvimento em
-    paralelo), o pagamento continua registrado.
-    """
-    try:
-        from app.agent.runner import notify_payment_approved
-    except ImportError:  # pragma: no cover - agente opcional
-        logger.warning("app.agent.runner indisponível; cliente não foi notificado.")
-        return
-    try:
-        await notify_payment_approved(session, order_id)
-        # A camada do agente não comita de propósito — quem chama é que decide
-        # a transação. Nas rotas de conversa quem comita é a própria rota; aqui
-        # o chamador é o fluxo de pagamento, então o commit tem de ser nosso.
-        # Sem ele, a conversa fica presa em "aguardando_pagamento" e o cliente
-        # nunca recebe a confirmação do Pix.
-        await session.commit()
-    except Exception:  # noqa: BLE001 - notificação nunca derruba o webhook
-        logger.exception("Falha ao notificar o cliente do pedido %s", order_id)
-        await session.rollback()
-
-
-# ---------------------------------------------------------------------------
 # Status e leitura
 # ---------------------------------------------------------------------------
 
@@ -348,7 +238,7 @@ async def notify_agent_payment_approved(session: AsyncSession, order_id: UUID) -
 async def update_order_status(
     session: AsyncSession, order_id: UUID, new_status: OrderStatus
 ) -> Order:
-    order = await orders_repo.get_order(session, order_id)
+    order = await get_order(session, order_id)
     if order is None:
         raise OrderNotFoundError(f"Pedido {order_id} não encontrado.")
 
@@ -359,7 +249,7 @@ async def update_order_status(
     order.status = new_status
     if new_status is OrderStatus.CANCELADO:
         order.cancelled_at = datetime.now(timezone.utc)
-    await session.commit()
+    await session.flush()
     logger.info("Pedido %s -> %s", order.code, new_status)
     return order
 
@@ -382,13 +272,14 @@ async def get_order_summary(
     session: AsyncSession, order_id: UUID
 ) -> OrderSummary | None:
     """Resumo pronto para o agente ler em voz alta para o cliente."""
-    order = await orders_repo.get_order(session, order_id)
+    order = await get_order(session, order_id)
     if order is None:
         return None
 
-    pending = await payments_repo.get_latest_payment(
-        session, order.id, status=PaymentStatus.PENDENTE
-    )
+    # Import tardio: services.payments importa daqui (OrderError, get_order).
+    from app.services.payments import get_pending_payment  # noqa: PLC0415
+
+    pending = await get_pending_payment(session, order.id)
     return OrderSummary(
         id=order.id,
         code=order.code,
@@ -409,32 +300,6 @@ async def get_order_summary(
     )
 
 
-async def list_orders(
-    session: AsyncSession,
-    *,
-    status: OrderStatus | None = None,
-    limit: int = 100,
-    offset: int = 0,
-) -> list[Order]:
-    return await orders_repo.list_orders(
-        session, status=status, limit=limit, offset=offset
-    )
-
-
-async def get_pending_payment(session: AsyncSession, order_id: UUID) -> Payment | None:
-    return await payments_repo.get_latest_payment(
-        session, order_id, status=PaymentStatus.PENDENTE
-    )
-
-
-def cart_from_json(raw: Any) -> Cart:
-    """Converte o JSONB de `conversations.cart` em `Cart` (aceita lista ou dict)."""
-    if isinstance(raw, list):
-        return Cart(items=raw)
-    if isinstance(raw, dict):
-        return Cart.model_validate(raw)
-    return Cart()
-
 
 __all__ = [
     "EmptyCartError",
@@ -443,16 +308,11 @@ __all__ = [
     "ORDER_TRANSITIONS",
     "OrderError",
     "OrderNotFoundError",
-    "apply_payment_result",
     "assert_order_transition",
     "can_transition_order",
-    "cart_from_json",
     "create_order_from_cart",
-    "create_pix_for_order",
     "format_order_code",
     "get_order_summary",
-    "get_pending_payment",
     "list_orders",
-    "notify_agent_payment_approved",
     "update_order_status",
 ]

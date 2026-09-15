@@ -1,22 +1,23 @@
-"""Cliente real de LLM (Anthropic), com tool use para saída estruturada.
+"""Cliente de LLM (OpenAI), com function calling para saída estruturada.
 
-Duas decisões que valem explicação:
+Contrato e garantias:
 
-* **tool use obrigatório** (`tool_choice`): em vez de pedir JSON no texto e
-  torcer, o modelo é forçado a chamar `registrar_interpretacao`, cujo
-  input_schema espelha `NluResult`. Não sobra formato livre para parsear.
-* **falha nunca sobe**: qualquer erro (timeout, rate limit, resposta
-  inesperada) vira `NluResult(intent=DESCONHECIDO)`. A máquina de estados já
-  sabe repreguntar; derrubar a request do WhatsApp seria bem pior.
+* **tool call obrigatório** (`tool_choice`): o modelo é forçado a chamar
+  `registrar_interpretacao`, cujo `parameters` espelha `NluResult`. Não sobra
+  texto livre para parsear.
+* **falha nunca sobe**: qualquer erro (timeout, rate limit, resposta sem tool
+  call) vira `NluResult(intent=DESCONHECIDO)`. A máquina de estados já sabe
+  repreguntar; derrubar a request do WhatsApp seria bem pior.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Sequence
 
-from app.agent.llm.base import ExtractedAddress, NluResult, Turn
-from app.agent.llm.prompts import TOOL_NAME, build_system_blocks, tool_schema
+from app.agent.llm import ExtractedAddress, NluResult, Turn
+from app.agent.prompts import TOOL_NAME, build_system_blocks, tool_schema
 from app.core.config import Settings, get_settings
 from app.domain.catalog import CatalogSnapshot
 from app.domain.enums import ConversationState, Intent
@@ -24,47 +25,57 @@ from app.domain.enums import ConversationState, Intent
 logger = logging.getLogger(__name__)
 
 
-class AnthropicLLMClient:
-    """Implementa `LLMClient` chamando a API de Mensagens da Anthropic."""
+def _function_tool() -> dict[str, Any]:
+    """Converte o schema da tool (`input_schema`) para o formato OpenAI."""
+    schema = tool_schema()
+    return {
+        "type": "function",
+        "function": {
+            "name": schema["name"],
+            "description": schema["description"],
+            "parameters": schema["input_schema"],
+        },
+    }
 
-    name = "anthropic"
+
+def _system_text(state: ConversationState, catalog: CatalogSnapshot) -> str:
+    """OpenAI recebe uma única mensagem de sistema; junta os blocos em um."""
+    return "\n\n".join(block["text"] for block in build_system_blocks(state, catalog))
+
+
+class OpenAILLMClient:
+    """Implementa `LLMClient` chamando a API de Chat Completions da OpenAI."""
+
+    name = "openai"
 
     def __init__(self, settings: Settings | None = None, client: Any | None = None) -> None:
         self._settings = settings or get_settings()
         self._client = client  # injetável em teste
-        self._tool = tool_schema()
+        self._tool = _function_tool()
 
     # -- infraestrutura ----------------------------------------------------
 
     def _ensure_client(self) -> Any:
         if self._client is None:
-            from anthropic import AsyncAnthropic  # noqa: PLC0415 (import tardio)
+            from openai import AsyncOpenAI  # noqa: PLC0415 (import tardio)
 
-            if not self._settings.anthropic_api_key:
-                raise RuntimeError("ANTHROPIC_API_KEY não configurada")
-            self._client = AsyncAnthropic(
-                api_key=self._settings.anthropic_api_key,
+            if not self._settings.openai_api_key:
+                raise RuntimeError("OPENAI_API_KEY não configurada")
+            self._client = AsyncOpenAI(
+                api_key=self._settings.openai_api_key,
                 timeout=self._settings.llm_timeout_seconds,
             )
         return self._client
 
     @staticmethod
-    def _messages(history: Sequence[Turn], message: str) -> list[dict[str, Any]]:
-        """Histórico recente + a mensagem atual, alternando papéis."""
-        messages: list[dict[str, Any]] = []
+    def _messages(
+        system_text: str, history: Sequence[Turn], message: str
+    ) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system_text}]
         for turn in history[-8:]:
             role = "user" if turn.role == "cliente" else "assistant"
-            if messages and messages[-1]["role"] == role:
-                messages[-1]["content"] += f"\n{turn.content}"
-                continue
             messages.append({"role": role, "content": turn.content})
-        if not messages or messages[-1]["role"] != "user":
-            messages.append({"role": "user", "content": message})
-        else:
-            messages[-1]["content"] += f"\n{message}"
-        # A API exige que a conversa comece com o cliente.
-        while messages and messages[0]["role"] != "user":
-            messages.pop(0)
+        messages.append({"role": "user", "content": message})
         return messages
 
     # -- contrato ----------------------------------------------------------
@@ -79,18 +90,17 @@ class AnthropicLLMClient:
     ) -> NluResult:
         try:
             client = self._ensure_client()
-            response = await client.messages.create(
-                model=self._settings.llm_model,
+            response = await client.chat.completions.create(
+                model=self._settings.openai_model,
                 max_tokens=self._settings.llm_max_tokens,
-                system=build_system_blocks(state, catalog),
+                messages=self._messages(_system_text(state, catalog), history, message),
                 tools=[self._tool],
-                tool_choice={"type": "tool", "name": TOOL_NAME},
-                messages=self._messages(history, message),
+                tool_choice={"type": "function", "function": {"name": TOOL_NAME}},
             )
         except Exception:
             # Timeout, rate limit, chave inválida: a conversa continua viva.
             logger.exception("falha ao chamar o LLM; caindo para DESCONHECIDO")
-            return NluResult(intent=Intent.DESCONHECIDO, model=self._settings.llm_model)
+            return NluResult(intent=Intent.DESCONHECIDO, model=self._settings.openai_model)
 
         return self._to_result(response)
 
@@ -98,11 +108,13 @@ class AnthropicLLMClient:
 
     def _to_result(self, response: Any) -> NluResult:
         usage = self._usage(response)
-        model = getattr(response, "model", self._settings.llm_model)
+        model = getattr(response, "model", self._settings.openai_model)
 
         payload = self._tool_input(response)
         if payload is None:
-            logger.warning("resposta do LLM sem tool_use: %r", getattr(response, "id", None))
+            logger.warning(
+                "resposta do LLM sem tool call: %r", getattr(response, "id", None)
+            )
             return NluResult(intent=Intent.DESCONHECIDO, model=model, usage=usage)
 
         try:
@@ -116,7 +128,6 @@ class AnthropicLLMClient:
                 quantity=self._quantity(payload.get("quantity")),
                 address=self._address(payload.get("address")),
                 customer_name=payload.get("customer_name") or None,
-                note=payload.get("note") or None,
             )
         except Exception:
             logger.exception("input da tool fora do contrato: %r", payload)
@@ -128,11 +139,24 @@ class AnthropicLLMClient:
 
     @staticmethod
     def _tool_input(response: Any) -> dict[str, Any] | None:
-        for block in getattr(response, "content", []) or []:
-            if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == TOOL_NAME:
-                payload = getattr(block, "input", None)
-                if isinstance(payload, dict):
-                    return payload
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            return None
+        message = getattr(choices[0], "message", None)
+        tool_calls = getattr(message, "tool_calls", None) or []
+        for call in tool_calls:
+            function = getattr(call, "function", None)
+            if getattr(function, "name", None) != TOOL_NAME:
+                continue
+            raw_args = getattr(function, "arguments", None)
+            if not raw_args:
+                continue
+            try:
+                payload = json.loads(raw_args)
+            except json.JSONDecodeError:
+                logger.warning("arguments da tool não são JSON válido: %r", raw_args)
+                return None
+            return payload if isinstance(payload, dict) else None
         return None
 
     @staticmethod
@@ -160,16 +184,16 @@ class AnthropicLLMClient:
 
     @staticmethod
     def _usage(response: Any) -> dict[str, Any] | None:
-        """Tokens gastos — inclusive os de cache, para auditar o custo real."""
+        """Tokens gastos, inclusive os de cache automático da OpenAI."""
         usage = getattr(response, "usage", None)
         if usage is None:
             return None
-        fields = (
-            "input_tokens",
-            "output_tokens",
-            "cache_creation_input_tokens",
-            "cache_read_input_tokens",
-        )
-        data = {f: getattr(usage, f, None) for f in fields}
+        data = {
+            "input_tokens": getattr(usage, "prompt_tokens", None),
+            "output_tokens": getattr(usage, "completion_tokens", None),
+        }
+        details = getattr(usage, "prompt_tokens_details", None)
+        cached = getattr(details, "cached_tokens", None) if details else None
+        if cached:
+            data["cache_read_input_tokens"] = cached
         return {k: v for k, v in data.items() if v is not None}
-

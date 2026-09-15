@@ -164,20 +164,6 @@ export function unwrapList<T>(payload: unknown, key: string): T[] {
 }
 
 // ============================================================================
-// Saúde
-// ============================================================================
-
-export interface HealthResponse {
-  status: string;
-  version?: string;
-  fake_mode?: boolean;
-}
-
-export function fetchHealth(): Promise<HealthResponse> {
-  return request<HealthResponse>('/health');
-}
-
-// ============================================================================
 // Catálogo — /api/products, /api/groups, /api/complements
 // ============================================================================
 
@@ -253,10 +239,6 @@ export async function fetchOrders(params?: {
   return unwrapList<ApiOrder>(data, 'orders');
 }
 
-export function fetchOrder(id: string): Promise<ApiOrder> {
-  return request<ApiOrder>(`/api/orders/${id}`);
-}
-
 export function updateOrderStatus(id: string, status: OrderStatus): Promise<ApiOrder> {
   return request<ApiOrder>(`/api/orders/${id}/status`, {
     method: 'PATCH',
@@ -313,32 +295,4 @@ export function setConversationHandoff(id: string, handoff: boolean): Promise<Co
     method: 'POST',
     body: { handoff },
   });
-}
-
-// ============================================================================
-// Cliente — /client/* (público, sem autenticação)
-// ============================================================================
-
-export interface ClientMessageRequest {
-  phone_number: string;
-  message: string;
-}
-
-export interface ClientMessageResponse {
-  status: string;
-  message_id?: string;
-  error?: string;
-}
-
-/** Envia mensagem do cliente via WhatsApp (ou simulador). */
-export function sendClientMessage(data: ClientMessageRequest): Promise<ClientMessageResponse> {
-  return request<ClientMessageResponse>('/client/send-message', {
-    method: 'POST',
-    body: data,
-  });
-}
-
-/** Verifica status de conexão da Evolution API. */
-export function getInstanceStatus(): Promise<Record<string, unknown>> {
-  return request<Record<string, unknown>>('/client/instance-status');
 }

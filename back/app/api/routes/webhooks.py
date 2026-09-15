@@ -1,6 +1,10 @@
-"""Webhook do Mercado Pago.
+"""Webhooks — as duas portas de entrada que o mundo externo usa.
 
-Três garantias que este arquivo precisa dar:
+`/webhooks/evolution` recebe as mensagens do WhatsApp; `/webhooks/mercadopago`
+recebe a confirmação do Pix. Nenhuma das duas exige `X-API-Key`: cada uma
+valida o próprio remetente (token na query string e HMAC, respectivamente).
+
+Três garantias que o webhook de pagamento precisa dar:
   1. **Idempotência** — a mesma notificação chega várias vezes; a tabela
      `webhook_events` (UNIQUE source+external_id) é quem decide se já foi.
   2. **Nunca confiar no payload** — o corpo só diz *qual* pagamento mudou; o
@@ -16,20 +20,92 @@ import hmac
 import json
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
+from app.agent.whatsapp import EvolutionAdapter
+from app.agent.runner import handle_inbound, handle_outbound_echo
 from app.api.deps import SessionDep
 from app.core.config import get_settings
 from app.core.logging import get_logger
-from app.repositories import payments as payments_repo
-from app.services import orders as orders_service
-from app.services.payments.factory import get_payment_provider
+from app.db.session import get_sessionmaker
+from app.services import payments as payments_service
+from app.services.pix_provider import get_payment_provider
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 SOURCE = "mercadopago"
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp (Evolution API)
+# ---------------------------------------------------------------------------
+
+def _evolution_token_ok(token: str | None) -> bool:
+    """Evolution API não assina o corpo: a validação é um token na query string.
+
+    O token vem cadastrado na própria URL que a Evolution chama
+    (WEBHOOK_GLOBAL_URL no docker-compose.yml).
+    """
+    settings = get_settings()
+    expected = settings.evolution_webhook_token
+
+    if not expected:
+        if settings.fake_mode:
+            logger.warning(
+                "EVOLUTION_WEBHOOK_TOKEN ausente: token NÃO validado (fake_mode)."
+            )
+            return True
+        logger.error("EVOLUTION_WEBHOOK_TOKEN ausente em produção; rejeitando webhook")
+        return False
+
+    return bool(token) and hmac.compare_digest(token, expected)
+
+
+@router.post("/evolution", status_code=status.HTTP_200_OK)
+async def evolution_webhook(
+    request: Request,
+    token: str | None = Query(default=None),
+) -> dict[str, str]:
+    """Recebe eventos da Evolution API e roda o agente para cada mensagem."""
+    if not _evolution_token_ok(token):
+        logger.warning("token do webhook da Evolution API inválido; evento descartado")
+        return {"status": "ignored"}
+
+    try:
+        payload = await request.json()
+    except Exception:
+        logger.warning("payload do webhook da Evolution API não é JSON válido")
+        return {"status": "ignored"}
+
+    try:
+        messages = EvolutionAdapter(get_settings()).parse_webhook(payload)
+    except Exception:
+        logger.exception("payload do webhook da Evolution API em formato inesperado")
+        return {"status": "ignored"}
+
+    sessionmaker = get_sessionmaker()
+    for message in messages:
+        try:
+            async with sessionmaker() as db:
+                if message.from_me:
+                    # Eco do bot ou resposta manual do lojista: só histórico,
+                    # nunca aciona IA/máquina de estados.
+                    await handle_outbound_echo(db, message, channel_name="whatsapp")
+                else:
+                    await handle_inbound(db, message, channel_name="whatsapp")
+                await db.commit()
+        except Exception:
+            # Uma mensagem com problema não pode impedir as outras nem virar 500.
+            logger.exception("falha ao processar mensagem de %s", message.phone)
+
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Pagamento (Mercado Pago)
+# ---------------------------------------------------------------------------
 
 
 def _extract_payment_id(body: dict[str, Any], query: dict[str, str]) -> str | None:
@@ -112,7 +188,7 @@ async def mercadopago_webhook(request: Request, session: SessionDep) -> dict[str
     if not payment_id:
         return {"status": "sem_id"}
 
-    event = await payments_repo.claim_webhook_event(
+    event = await payments_service.claim_webhook_event(
         session, source=SOURCE, external_id=_event_id(body, payment_id), payload=body
     )
     if event is None:
@@ -126,7 +202,7 @@ async def mercadopago_webhook(request: Request, session: SessionDep) -> dict[str
         provider = get_payment_provider()
         # Fonte da verdade é a API, nunca o corpo do webhook.
         result = await provider.get_payment(payment_id)
-        order, approved_now = await orders_service.apply_payment_result(
+        order, approved_now = await payments_service.apply_payment_result(
             session, result, provider_name=provider.name
         )
     except Exception as exc:  # noqa: BLE001
@@ -140,11 +216,11 @@ async def mercadopago_webhook(request: Request, session: SessionDep) -> dict[str
             detail="Não foi possível confirmar o pagamento no provedor.",
         ) from exc
 
-    await payments_repo.mark_event_processed(session, event)
+    await payments_service.mark_event_processed(session, event)
     await session.commit()
 
     if order is not None and approved_now:
-        await orders_service.notify_agent_payment_approved(session, order.id)
+        await payments_service.notify_agent_payment_approved(session, order.id)
 
     return {"status": "ok", "pedido": order.code if order else ""}
 

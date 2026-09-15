@@ -18,13 +18,13 @@ import { EmptyState, QueryError } from '@/components/common/QueryState';
 import { useProducts } from '@/hooks/use-products';
 import { formatCurrency } from '@/lib/format';
 import type { CatalogEntity, Complement, Product } from '@/types/catalog';
-import { ProductsHeader } from '@/components/products/ProductsHeader';
-import { GroupCard } from '@/components/products/GroupCard';
-import { CreateProductDialog } from '@/components/products/CreateProductDialog';
-import { CreateGroupDialog } from '@/components/products/CreateGroupDialog';
-import { CreateComplementDialog } from '@/components/products/CreateComplementDialog';
-import { EditItemSheet } from '@/components/products/EditItemSheet';
-import { DeleteConfirmDialog } from '@/components/products/DeleteConfirmDialog';
+import { ProductsHeader } from '@/components/produtos/ProductsHeader';
+import { GroupCard } from '@/components/produtos/GroupCard';
+import { CreateProductDialog } from '@/components/produtos/CreateProductDialog';
+import { CreateGroupDialog } from '@/components/produtos/CreateGroupDialog';
+import { CreateComplementDialog } from '@/components/produtos/CreateComplementDialog';
+import { EditItemSheet } from '@/components/produtos/EditItemSheet';
+import { DeleteConfirmDialog } from '@/components/produtos/DeleteConfirmDialog';
 
 const Produtos = () => {
   const catalog = useProducts();

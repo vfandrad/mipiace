@@ -8,7 +8,6 @@ from fastapi import APIRouter, Query
 
 from app.api.deps import SessionDep, conflict, not_found
 from app.domain.enums import OrderStatus
-from app.repositories import orders as orders_repo
 from app.schemas.order import OrderRead, OrderStatusUpdate, OrderSummary
 from app.services import orders as orders_service
 
@@ -31,7 +30,7 @@ async def list_orders(
 
 @router.get("/orders/{order_id}", response_model=OrderRead)
 async def get_order(order_id: UUID, session: SessionDep) -> OrderRead:
-    order = await orders_repo.get_order(session, order_id)
+    order = await orders_service.get_order(session, order_id)
     if order is None:
         raise not_found("Pedido não encontrado.")
     return OrderRead.model_validate(order)
@@ -59,4 +58,5 @@ async def update_status(
         raise not_found(str(exc)) from exc
     except orders_service.InvalidStatusTransition as exc:
         raise conflict(str(exc)) from exc
+    await session.commit()
     return OrderRead.model_validate(order)

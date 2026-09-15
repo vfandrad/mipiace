@@ -84,19 +84,12 @@ def calculate_cart(
     return PriceBreakdown(subtotal=subtotal, delivery_fee=fee, total=money(subtotal + fee))
 
 
-def format_brl(value: Decimal) -> str:
-    """"R$ 24,90" — usado nas mensagens que o agente manda pro cliente."""
-    text = f"{money(value):,.2f}"
-    return "R$ " + text.replace(",", "_").replace(".", ",").replace("_", ".")
-
-
 __all__ = [
     "PriceBreakdown",
     "calculate_cart",
     "cart_subtotal",
     "complements_total",
     "delivery_fee_for",
-    "format_brl",
     "item_line_total",
     "item_unit_price",
     "money",

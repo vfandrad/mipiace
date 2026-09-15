@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.repositories import products as products_repo
+from app.services import catalog as catalog_service
 
 PRODUCT_ID = uuid4()
 GROUP_ID = uuid4()
@@ -62,7 +62,7 @@ def catalogo(monkeypatch):
     async def _list_products(session, *, only_available=False):
         return [_product()]
 
-    monkeypatch.setattr(products_repo, "list_products", _list_products)
+    monkeypatch.setattr(catalog_service, "list_products", _list_products)
 
 
 def test_sem_chave_a_api_recusa(client):
@@ -96,7 +96,7 @@ def test_cria_produto_com_payload_valido(client, api_key, monkeypatch, fake_sess
         recebido.update(data)
         return _product(name=data["name"], price=str(data["base_price"]))
 
-    monkeypatch.setattr(products_repo, "create_product", _create_product)
+    monkeypatch.setattr(catalog_service, "create_product", _create_product)
 
     resposta = client.post(
         "/api/products",
@@ -129,7 +129,7 @@ def test_produto_inexistente_devolve_404(client, api_key, monkeypatch):
     async def _get_product(session, product_id):
         return None
 
-    monkeypatch.setattr(products_repo, "get_product", _get_product)
+    monkeypatch.setattr(catalog_service, "get_product", _get_product)
 
     resposta = client.get(
         f"/api/products/{uuid4()}", headers={"X-API-Key": api_key}
@@ -144,7 +144,7 @@ def test_grupo_obrigatorio_precisa_de_min_choices(client, api_key, monkeypatch):
     async def _get_product(session, product_id):
         return _product()
 
-    monkeypatch.setattr(products_repo, "get_product", _get_product)
+    monkeypatch.setattr(catalog_service, "get_product", _get_product)
 
     resposta = client.post(
         f"/api/products/{PRODUCT_ID}/groups",

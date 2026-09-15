@@ -15,7 +15,16 @@ from typing import Any, Awaitable, Callable, Sequence
 from uuid import UUID
 
 from app.agent import renderer as r
-from app.agent.llm.base import NluResult
+from app.agent.checkout import (
+    AgentDeps,
+    address_of,
+    final_summary,
+    missing_address_fields,
+    order_status_reply,
+    place_order,
+    start_checkout,
+)
+from app.agent.llm import NluResult
 from app.agent.resolver import (
     MatchStatus,
     pick_by_number,
@@ -24,40 +33,16 @@ from app.agent.resolver import (
     split_queries,
 )
 from app.agent.session import ConversationSession
-from app.agent.states import CANCELLABLE_STATES, assert_transition, can_transition
-from app.core.config import Settings, get_settings
+from app.agent.states import CANCELLABLE_STATES, advance as _go, can_transition
 from app.domain.cart import CartComplement, CartItem
-from app.domain.catalog import CatalogGroup, CatalogProduct, CatalogSnapshot, normalize
+from app.domain.catalog import CatalogGroup, CatalogProduct, normalize
 from app.domain.enums import ConversationState as S
-from app.domain.enums import FulfillmentType, Intent, OrderChannel
+from app.domain.enums import Intent
 
 logger = logging.getLogger(__name__)
 
 #: Palavras que valem como "chega, pode seguir" dentro de um grupo opcional.
 _DONE_WORDS = frozenset({"nao", "nao quero", "so isso", "pronto", "chega", "ok", "e so isso"})
-
-
-# ---------------------------------------------------------------------------
-# Dependências injetáveis (o que a máquina precisa do mundo externo)
-# ---------------------------------------------------------------------------
-
-CreateOrder = Callable[..., Awaitable[Any]]
-CreatePix = Callable[..., Awaitable[Any]]
-OrderSummaryFn = Callable[..., Awaitable[Any]]
-
-
-@dataclass(slots=True)
-class AgentDeps:
-    """Tudo que a máquina consome de fora — injetado para poder testar sem banco."""
-
-    db: Any
-    catalog: CatalogSnapshot
-    settings: Settings
-    create_order: CreateOrder
-    create_pix: CreatePix
-    order_summary: OrderSummaryFn
-    saved_address: Callable[[], Awaitable[dict[str, Any] | None]] | None = None
-    channel: OrderChannel = OrderChannel.WHATSAPP
 
 
 @dataclass(slots=True)
@@ -66,57 +51,9 @@ class MachineResult:
     state: S = S.SAUDACAO
 
 
-async def build_deps(
-    db: Any,
-    catalog: CatalogSnapshot,
-    *,
-    phone: str | None = None,
-    channel: OrderChannel = OrderChannel.WHATSAPP,
-) -> AgentDeps:
-    """Monta as dependências reais. Import tardio evita ciclo com os serviços."""
-    from app.services.orders import (  # noqa: PLC0415  (import tardio proposital)
-        create_order_from_cart,
-        create_pix_for_order,
-        get_order_summary,
-    )
-
-    async def _saved_address() -> dict[str, Any] | None:
-        if phone is None:
-            return None
-        from app.agent.session import get_saved_address  # noqa: PLC0415
-
-        return await get_saved_address(db, phone)
-
-    return AgentDeps(
-        db=db,
-        catalog=catalog,
-        settings=get_settings(),
-        create_order=create_order_from_cart,
-        create_pix=create_pix_for_order,
-        order_summary=get_order_summary,
-        saved_address=_saved_address,
-        channel=channel,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Helpers de estado
 # ---------------------------------------------------------------------------
-
-def _go(session: ConversationSession, destination: S) -> None:
-    """Única porta de mudança de estado — valida contra a tabela de transições."""
-    if session.state == destination and destination not in {
-        S.ESCOLHENDO_PRODUTO,
-        S.PERSONALIZANDO_ITEM,
-        S.REVISANDO_CARRINHO,
-        S.COLETANDO_ENDERECO,
-        S.CONFIRMANDO_PEDIDO,
-        S.AGUARDANDO_PAGAMENTO,
-    }:
-        return
-    assert_transition(session.state, destination)
-    session.state = destination
-
 
 def _offer(session: ConversationSession, ids: Sequence[Any]) -> None:
     """Registra a lista numerada que acabamos de mostrar (para aceitar "2")."""
@@ -153,12 +90,17 @@ def _to_human(session: ConversationSession) -> list[str]:
     return [r.handoff()]
 
 
-def _cancel(session: ConversationSession) -> list[str]:
-    _go(session, S.CANCELADO)
+def _clear_order(session: ConversationSession) -> None:
+    """Esquece o pedido em construção, sem mexer no estado nem no cliente."""
     session.slots = {}
     session.cart.items.clear()
     session.active_order_id = None
     session.fail_count = 0
+
+
+def _cancel(session: ConversationSession) -> list[str]:
+    _go(session, S.CANCELADO)
+    _clear_order(session)
     return [r.cancelled()]
 
 
@@ -235,6 +177,14 @@ def _commit_item(session: ConversationSession) -> CartItem:
     return item
 
 
+def _finish_item(session: ConversationSession) -> list[str]:
+    """Fecha o item em construção e leva a conversa para o carrinho."""
+    item = _commit_item(session)
+    _go(session, S.REVISANDO_CARRINHO)
+    session.slots.pop("options", None)
+    return [r.cart_added(item, session.cart)]
+
+
 def _ask_group(
     deps: AgentDeps,
     session: ConversationSession,
@@ -261,10 +211,7 @@ def _advance_group(
         _go(session, S.PERSONALIZANDO_ITEM)
         return _ask_group(deps, session, product, group, pending)
 
-    item = _commit_item(session)
-    _go(session, S.REVISANDO_CARRINHO)
-    session.slots.pop("options", None)
-    return [r.cart_added(item, session.cart)]
+    return _finish_item(session)
 
 
 # ---------------------------------------------------------------------------
@@ -310,10 +257,7 @@ def _take_product(
             return _take_complements(deps, session, nlu.complement_queries)
         return _ask_group(deps, session, product, group, pending)
 
-    item = _commit_item(session)
-    _go(session, S.REVISANDO_CARRINHO)
-    session.slots.pop("options", None)
-    return [r.cart_added(item, session.cart)]
+    return _finish_item(session)
 
 
 def _take_complements(
@@ -399,119 +343,6 @@ def _take_complements(
 
 
 # ---------------------------------------------------------------------------
-# Fechamento do pedido
-# ---------------------------------------------------------------------------
-
-def _address(session: ConversationSession) -> dict[str, Any]:
-    address = session.slots.get("address")
-    return dict(address) if isinstance(address, dict) else {}
-
-
-def _missing_address_fields(address: dict[str, Any]) -> list[str]:
-    return [f for f in ("rua", "numero", "bairro") if not (address.get(f) or "").strip()]
-
-
-async def _start_checkout(deps: AgentDeps, session: ConversationSession) -> list[str]:
-    """Do carrinho para o endereço — a loja só trabalha com entrega."""
-    if session.cart.is_empty:
-        _go(session, S.REVISANDO_CARRINHO)
-        return [r.cart_empty_on_close()]
-
-    address = _address(session)
-    if not address and deps.saved_address is not None:
-        saved = await deps.saved_address()
-        if saved and not _missing_address_fields(saved):
-            session.slots["address"] = saved
-            session.slots["address_needs_confirm"] = True
-            _go(session, S.COLETANDO_ENDERECO)
-            return [r.confirm_saved_address(saved)]
-
-    missing = _missing_address_fields(address)
-    if missing:
-        _go(session, S.COLETANDO_ENDERECO)
-        return [r.ask_address(missing)]
-
-    _go(session, S.CONFIRMANDO_PEDIDO)
-    return [_final_summary(deps, session)]
-
-
-def _final_summary(deps: AgentDeps, session: ConversationSession) -> str:
-    return r.final_summary(
-        session.cart,
-        delivery_fee=deps.settings.delivery_fee,
-        address=_address(session),
-    )
-
-
-async def _place_order(deps: AgentDeps, session: ConversationSession) -> list[str]:
-    """Cria o pedido, gera o Pix e leva para AGUARDANDO_PAGAMENTO.
-
-    Guarda o id do pedido em `pending_order_id` assim que ele é criado: se o
-    Pix falhar depois (provedor fora do ar, token ausente) e o cliente mandar
-    "sim" de novo, reaproveitamos o mesmo pedido em vez de duplicar a compra.
-    """
-    pending_id = session.slots.get("pending_order_id")
-    try:
-        if pending_id:
-            summary = await deps.order_summary(deps.db, UUID(pending_id))
-        else:
-            summary = None
-
-        if summary is not None:
-            order_id, order_code, order_total = UUID(pending_id), summary.code, summary.total
-        else:
-            order = await deps.create_order(
-                deps.db,
-                cart=session.cart,
-                phone=session.phone,
-                customer_name=session.slots.get("customer_name"),
-                fulfillment_type=FulfillmentType.ENTREGA,
-                address=_address(session),
-                channel=deps.channel,
-                notes=session.slots.get("notes"),
-            )
-            order_id, order_code, order_total = order.id, order.code, order.total
-            session.slots["pending_order_id"] = str(order_id)
-
-        charge = await deps.create_pix(deps.db, order_id)
-    except Exception:
-        logger.exception("falha ao criar pedido/Pix para %s", session.phone)
-        _go(session, S.CONFIRMANDO_PEDIDO)
-        return [
-            "Tive um problema para gerar a cobrança agora. 😔 "
-            "Pode tentar de novo em instantes ou digitar *atendente*."
-        ]
-
-    session.active_order_id = order_id
-    session.cart.items.clear()
-    session.slots.pop("options", None)
-    session.slots.pop("pending_order_id", None)
-    session.fail_count = 0
-    _go(session, S.AGUARDANDO_PAGAMENTO)
-    return [
-        r.pix_message(
-            order_code=order_code,
-            total=order_total,
-            qr_code=charge.qr_code,
-            expires_minutes=deps.settings.pix_expiration_minutes,
-        )
-    ]
-
-
-async def _order_status_reply(deps: AgentDeps, session: ConversationSession) -> list[str]:
-    if session.active_order_id is None:
-        return [r.no_active_order()]
-    try:
-        summary = await deps.order_summary(deps.db, session.active_order_id)
-    except Exception:
-        logger.exception("falha ao consultar pedido %s", session.active_order_id)
-        summary = None
-    if summary is None:
-        return [r.no_active_order()]
-    return [r.order_status(summary)]
-
-
-# ---------------------------------------------------------------------------
 # Handlers por estado
 # ---------------------------------------------------------------------------
 
@@ -532,7 +363,7 @@ async def _handle_escolhendo_produto(
         if session.cart.is_empty:
             return [r.cart_empty_on_close()]
         _go(session, S.REVISANDO_CARRINHO)
-        return await _start_checkout(deps, session)
+        return await start_checkout(deps, session)
 
     if nlu.intent in {Intent.NEGAR, Intent.CONFIRMAR} and not session.cart.is_empty:
         _go(session, S.REVISANDO_CARRINHO)
@@ -583,7 +414,7 @@ async def _handle_revisando(
         if session.cart.is_empty:
             _go(session, S.ESCOLHENDO_PRODUTO)
             return [r.cart_empty_on_close()]
-        return await _start_checkout(deps, session)
+        return await start_checkout(deps, session)
 
     if nlu.intent in {Intent.ADICIONAR_MAIS, Intent.NEGAR} and not (
         nlu.product_query or ""
@@ -597,13 +428,13 @@ async def _handle_revisando(
 
     if nlu.intent is Intent.INFORMAR_ENDERECO and nlu.address is not None:
         _merge_address(session, nlu)
-        return await _start_checkout(deps, session)
+        return await start_checkout(deps, session)
 
     return _fail(session, deps)
 
 
 def _merge_address(session: ConversationSession, nlu: NluResult) -> None:
-    address = _address(session)
+    address = address_of(session)
     if nlu.address is not None:
         for key, value in nlu.address.model_dump().items():
             if value:
@@ -619,7 +450,7 @@ async def _handle_endereco(
         if nlu.intent is Intent.CONFIRMAR:
             session.slots.pop("address_needs_confirm", None)
             _go(session, S.CONFIRMANDO_PEDIDO)
-            return [_final_summary(deps, session)]
+            return [final_summary(deps, session)]
         if nlu.intent is Intent.NEGAR:
             session.slots.pop("address_needs_confirm", None)
             session.slots["address"] = {}
@@ -627,18 +458,18 @@ async def _handle_endereco(
             return [r.ask_address(["rua", "numero", "bairro"])]
         session.slots.pop("address_needs_confirm", None)
 
-    before = _address(session)
+    before = address_of(session)
     _merge_address(session, nlu)
-    address = _address(session)
+    address = address_of(session)
 
     if address == before and nlu.address is None:
         # Nada de novo veio: pode ser resposta solta ("Centro") para o campo que falta.
-        missing = _missing_address_fields(address)
+        missing = missing_address_fields(address)
         if len(missing) == 1 and text.strip():
             address[missing[0]] = text.strip()
             session.slots["address"] = address
 
-    missing = _missing_address_fields(_address(session))
+    missing = missing_address_fields(address_of(session))
     if missing:
         _go(session, S.COLETANDO_ENDERECO)
         if nlu.address is None and not text.strip():
@@ -649,7 +480,7 @@ async def _handle_endereco(
     if nlu.customer_name:
         session.slots["customer_name"] = nlu.customer_name
     _go(session, S.CONFIRMANDO_PEDIDO)
-    return [_final_summary(deps, session)]
+    return [final_summary(deps, session)]
 
 
 async def _handle_confirmando(
@@ -659,7 +490,7 @@ async def _handle_confirmando(
     # pergunta de confirmação como "quer fechar o pedido" em vez de CONFIRMAR
     # (visto em produção) — nesta tela os dois significam a mesma coisa.
     if nlu.intent in {Intent.CONFIRMAR, Intent.FINALIZAR_PEDIDO}:
-        return await _place_order(deps, session)
+        return await place_order(deps, session)
 
     if nlu.intent in {Intent.NEGAR, Intent.ADICIONAR_MAIS} or (
         nlu.product_query or ""
@@ -673,7 +504,7 @@ async def _handle_confirmando(
     if nlu.intent is Intent.INFORMAR_ENDERECO and nlu.address is not None:
         _merge_address(session, nlu)
         _go(session, S.CONFIRMANDO_PEDIDO)
-        return [_final_summary(deps, session)]
+        return [final_summary(deps, session)]
 
     _go(session, S.CONFIRMANDO_PEDIDO)
     return _fail(session, deps)
@@ -684,7 +515,7 @@ async def _handle_aguardando(
 ) -> list[str]:
     """Estado passivo: quem tira daqui é o webhook de pagamento."""
     _go(session, S.AGUARDANDO_PAGAMENTO)
-    return await _order_status_reply(deps, session)
+    return await order_status_reply(deps, session)
 
 
 async def _handle_terminal(
@@ -692,10 +523,7 @@ async def _handle_terminal(
 ) -> list[str]:
     """CONCLUIDO/CANCELADO: qualquer mensagem nova recomeça a conversa."""
     _go(session, S.SAUDACAO)
-    session.slots = {}
-    session.cart.items.clear()
-    session.active_order_id = None
-    session.fail_count = 0
+    _clear_order(session)
     return await _handle_saudacao(deps, session, nlu, text)
 
 
@@ -760,6 +588,6 @@ async def _handle_global_intents(
         return _menu_reply(deps, session)
 
     if nlu.intent is Intent.CONSULTAR_STATUS and session.active_order_id is not None:
-        return await _order_status_reply(deps, session)
+        return await order_status_reply(deps, session)
 
     return None

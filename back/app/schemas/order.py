@@ -138,16 +138,6 @@ class OrderStatusUpdate(BaseModel):
 
     status: OrderStatus
 
-
-class PixChargeRead(BaseModel):
-    """Cobrança Pix devolvida ao painel/agente."""
-
-    payment_id: UUID
-    provider: str
-    provider_payment_id: str
-    amount: Money
-    qr_code: str | None = None
-    qr_code_base64: str | None = None
     ticket_url: str | None = None
     expires_at: datetime | None = None
 
@@ -163,5 +153,4 @@ __all__ = [
     "OrderSummary",
     "OrderSummaryItem",
     "PaymentRead",
-    "PixChargeRead",
 ]

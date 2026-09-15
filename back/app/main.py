@@ -1,9 +1,9 @@
 """Aplicação FastAPI do Mi Piace.
 
-Monta as rotas administrativas (protegidas por X-API-Key), os webhooks
-(protegidos pela assinatura do provedor) e — se já existirem — as rotas do
-agente de WhatsApp. Os imports do agente são tolerantes a ausência de
-propósito: o backend precisa subir mesmo com aquela parte ainda em construção.
+Monta três grupos de rotas:
+  - públicas: `/health` e os webhooks (que validam o próprio remetente);
+  - administrativas: tudo em `/api`, protegido por `X-API-Key`;
+  - simulador: ferramenta de desenvolvimento, só responde com FAKE_MODE=true.
 """
 
 from __future__ import annotations
@@ -15,7 +15,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.deps import ADMIN_DEPS
-from app.api.routes import conversations, dev, health, metrics, orders, products, webhooks
+from app.api.routes import (
+    conversations,
+    health,
+    metrics,
+    orders,
+    products,
+    simulator,
+    webhooks,
+)
 from app.api.routes.health import API_VERSION
 from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
@@ -38,24 +46,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await dispose_engine()
 
 
-def _include_agent_routers(app: FastAPI) -> None:
-    """Rotas do agente (Agente 2). Ausentes = app sobe igual, só sem WhatsApp."""
-    for module_name, label in (
-        ("app.api.routes.whatsapp", "WhatsApp"),
-        ("app.api.routes.evolution", "Evolution API"),
-        ("app.api.routes.evolution_client", "cliente Evolution"),
-        ("app.api.routes.simulator", "simulador"),
-    ):
-        try:
-            module = __import__(module_name, fromlist=["router"])
-            app.include_router(module.router)
-            logger.info("Rotas do %s montadas.", label)
-        except ImportError:
-            logger.warning("Rotas do %s indisponíveis (módulo ainda não existe).", label)
-        except AttributeError:
-            logger.warning("Módulo %s não expõe `router`.", module_name)
-
-
 def create_app() -> FastAPI:
     setup_logging()
     settings = get_settings()
@@ -76,18 +66,20 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "X-API-Key", "Authorization"],
     )
 
-    # Públicas: health e webhooks (estes validam a assinatura do provedor).
+    # Públicas: health e webhooks (Mercado Pago e Evolution validam o remetente).
     app.include_router(health.router)
     app.include_router(webhooks.router)
 
     # Administrativas: exigem X-API-Key.
-    for router in (products.router, orders.router, metrics.router, conversations.router):
+    for router in (
+        products.router,
+        orders.router,
+        metrics.router,
+        conversations.router,
+        simulator.router,
+    ):
         app.include_router(router, dependencies=ADMIN_DEPS)
 
-    # Ferramenta de desenvolvimento: só responde com FAKE_MODE=true.
-    app.include_router(dev.router, dependencies=ADMIN_DEPS)
-
-    _include_agent_routers(app)
     return app
 
 

@@ -13,8 +13,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.agent.llm.base import ExtractedAddress, NluResult
-from app.agent.machine import AgentDeps, run
+from app.agent.llm import ExtractedAddress, NluResult
+from app.agent.checkout import AgentDeps
+from app.agent.machine import run
 from app.agent.session import ConversationSession
 from app.agent.states import (
     TRANSITIONS,

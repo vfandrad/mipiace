@@ -15,11 +15,11 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.agent import runner
-from app.agent.channels.base import InboundMessage
-from app.agent.channels.console import ConsoleAdapter
-from app.agent.llm.base import Turn
-from app.agent.llm.fake import FakeLLMClient
-from app.agent.machine import AgentDeps
+from app.agent.whatsapp import InboundMessage
+from app.agent.whatsapp import ConsoleAdapter
+from app.agent.llm import Turn
+from app.agent.llm_fake import FakeLLMClient
+from app.agent.checkout import AgentDeps
 from app.agent.session import ConversationSession
 from app.core.config import get_settings
 from app.domain.catalog import (

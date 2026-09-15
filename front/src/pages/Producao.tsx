@@ -9,11 +9,12 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Header } from '@/components/layout/Header';
-import { KanbanColumn } from '@/components/production/KanbanColumn';
+import { KanbanColumn } from '@/components/producao/KanbanColumn';
 import { QueryError } from '@/components/common/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { useOrders } from '@/hooks/use-orders';
+import { ORDER_STATUS_INFO } from '@/lib/status';
 import type { OrderStatus } from '@/types/order';
 import { cn } from '@/lib/utils';
 
@@ -22,22 +23,14 @@ import { cn } from '@/lib/utils';
 // no momento em que o pagamento cai (ver services/orders.py::apply_payment_result).
 const KANBAN_STATUSES: OrderStatus[] = ['preparando', 'entrega', 'finalizado'];
 
-const STATUS_LABELS: Record<OrderStatus, string> = {
-  novo: 'Novo',
-  preparando: 'Preparando',
-  entrega: 'Saiu p/ entrega',
-  finalizado: 'Finalizado',
-  cancelado: 'Cancelado',
-};
-
-const Loja = () => {
+const Producao = () => {
   const { orders, isLoading, isError, error, refetch, changeStatus } = useOrders();
   const [showCancelled, setShowCancelled] = useState(false);
 
   const handleStatusChange = (orderId: string, newStatus: OrderStatus) => {
     changeStatus(orderId, newStatus);
     toast.success('Status atualizado', {
-      description: `Pedido movido para ${STATUS_LABELS[newStatus]}`,
+      description: `Pedido movido para ${ORDER_STATUS_INFO[newStatus].label}`,
     });
   };
 
@@ -92,4 +85,4 @@ const Loja = () => {
   );
 };
 
-export default Loja;
+export default Producao;

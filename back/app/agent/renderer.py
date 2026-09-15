@@ -64,13 +64,6 @@ def ask_product() -> str:
     return "O que você vai querer? Pode falar o nome ou o número do cardápio."
 
 
-def product_not_found(query: str) -> str:
-    return (
-        f'Não achei "{query}" no nosso cardápio. 🤔\n'
-        "Pode conferir e me dizer de novo? Digite *cardápio* para ver as opções."
-    )
-
-
 def product_ambiguous(candidates: Sequence[CatalogProduct]) -> str:
     lines = ["Temos mais de uma opção parecida. Qual delas?"]
     for index, product in enumerate(candidates, start=1):
@@ -281,10 +274,11 @@ def pix_message(
     return "\n".join(lines)
 
 
-def payment_pending_reminder(order_code: str) -> str:
+def pix_failed() -> str:
+    """Provedor de pagamento fora do ar na hora de gerar a cobrança."""
     return (
-        f"Seu pedido *{order_code}* está aguardando o pagamento do Pix. 💳\n"
-        "Assim que cair, eu te aviso na hora!"
+        "Tive um problema para gerar a cobrança agora. 😔 "
+        "Pode tentar de novo em instantes ou digitar *atendente*."
     )
 
 
@@ -333,11 +327,4 @@ def fallback(attempt: int = 1) -> str:
         "Ainda não consegui entender. 🙈 "
         "Você pode digitar *cardápio* para ver as opções ou *atendente* "
         "para falar com uma pessoa."
-    )
-
-
-def already_paid_flow() -> str:
-    return (
-        "Seu pedido já está pago e em preparo. 😄 "
-        "Se quiser fazer outro, é só mandar *oi*!"
     )

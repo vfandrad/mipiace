@@ -1,16 +1,17 @@
-"""Métricas do dashboard.
+"""Métricas do dashboard: o SQL e os números que o painel mostra.
 
-Só faz a costura entre o SQL (repositories/metrics.py) e os DTOs: a definição
-de "venda" mora nas views do banco.
+São só leituras agregadas. A definição de "venda válida" (paga e não
+cancelada) mora no fragmento `_VALID_SALE` e nas views do `schema.sql`.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any
 
-from app.repositories import metrics as metrics_repo
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas.metrics import (
     DailySales,
     HourlySales,
@@ -21,6 +22,148 @@ from app.schemas.metrics import (
 from app.services.pricing import money
 
 ZERO = Decimal("0.00")
+
+
+# ---------------------------------------------------------------------------
+# SQL
+# ---------------------------------------------------------------------------
+
+#: Quantos dias cada faixa do dashboard cobre (inclusive o dia de hoje).
+RANGE_DAYS: dict[str, int] = {"hoje": 1, "semana": 7, "mes": 30}
+
+#: O que conta como venda. As views do schema já embutem esta regra, mas elas
+#: agregam sobre todo o histórico e por isso não servem para as consultas que
+#: precisam respeitar o filtro de período do dashboard. Para não escrever a
+#: regra em dois lugares, os SQLs por período reaproveitam este fragmento.
+_VALID_SALE = "o.payment_status = 'pago' AND o.status <> 'cancelado'"
+
+#: Início da janela: hoje = só hoje; semana = últimos 7 dias, contando hoje.
+_WINDOW_START = "date_trunc('day', now()) - make_interval(days => :days - 1)"
+
+_PERIOD_CTE = """
+WITH bounds AS (
+    SELECT date_trunc('day', now()) - make_interval(days => :days - 1) AS inicio,
+           date_trunc('day', now()) - make_interval(days => 2 * :days - 1) AS inicio_anterior
+)
+"""
+
+_SUMMARY_SQL = text(
+    _PERIOD_CTE
+    + """
+SELECT
+    (SELECT coalesce(sum(o.total), 0) FROM orders o, bounds b
+      WHERE o.payment_status = 'pago' AND o.status <> 'cancelado'
+        AND o.created_at >= b.inicio)                                AS total_vendas,
+    (SELECT count(*) FROM orders o, bounds b
+      WHERE o.payment_status = 'pago' AND o.status <> 'cancelado'
+        AND o.created_at >= b.inicio)                                AS total_pedidos,
+    (SELECT coalesce(sum(o.total), 0) FROM orders o, bounds b
+      WHERE o.payment_status = 'pago' AND o.status <> 'cancelado'
+        AND o.created_at >= b.inicio_anterior AND o.created_at < b.inicio)
+                                                                     AS total_anterior
+"""
+)
+
+_STATUS_SQL = text(
+    _PERIOD_CTE
+    + """
+SELECT o.status::text AS status, count(*) AS quantidade
+FROM orders o, bounds b
+WHERE o.created_at >= b.inicio
+GROUP BY 1
+"""
+)
+
+# generate_series garante dia sem venda no gráfico (senão a linha "pula" datas).
+_DAILY_SQL = text(
+    """
+SELECT d.dia::date            AS dia,
+       coalesce(v.pedidos, 0) AS pedidos,
+       coalesce(v.total, 0)   AS total
+FROM generate_series(
+        date_trunc('day', now()) - make_interval(days => :days - 1),
+        date_trunc('day', now()),
+        interval '1 day'
+     ) AS d(dia)
+LEFT JOIN vw_daily_sales v ON v.dia = d.dia::date
+ORDER BY d.dia
+"""
+)
+
+_PRODUCT_SQL = text(
+    f"""
+SELECT oi.product_name_snapshot AS produto,
+       sum(oi.quantity)         AS unidades,
+       sum(oi.line_total)       AS receita
+FROM order_items oi
+JOIN orders o ON o.id = oi.order_id
+WHERE {_VALID_SALE}
+  AND o.created_at >= {_WINDOW_START}
+GROUP BY 1
+ORDER BY receita DESC, unidades DESC
+LIMIT :limit
+"""
+)
+
+# generate_series mantém as 24 faixas no gráfico mesmo sem venda na hora.
+_HOURLY_SQL = text(
+    f"""
+SELECT h.hora                 AS hora,
+       coalesce(v.pedidos, 0) AS pedidos,
+       coalesce(v.receita, 0) AS receita
+FROM generate_series(0, 23) AS h(hora)
+LEFT JOIN (
+    SELECT extract(hour FROM o.created_at)::int AS hora,
+           count(*)                             AS pedidos,
+           coalesce(sum(o.total), 0)            AS receita
+    FROM orders o
+    WHERE {_VALID_SALE}
+      AND o.created_at >= {_WINDOW_START}
+    GROUP BY 1
+) v ON v.hora = h.hora
+ORDER BY h.hora
+"""
+)
+
+
+async def summary_totals(session: AsyncSession, *, days: int) -> dict[str, Any]:
+    row = (await session.execute(_SUMMARY_SQL, {"days": days})).mappings().one()
+    return dict(row)
+
+
+async def summary_by_status(session: AsyncSession, *, days: int) -> dict[str, int]:
+    rows = (await session.execute(_STATUS_SQL, {"days": days})).mappings().all()
+    return {row["status"]: int(row["quantidade"]) for row in rows}
+
+
+async def daily_sales(session: AsyncSession, *, days: int) -> list[dict[str, Any]]:
+    rows = (await session.execute(_DAILY_SQL, {"days": days})).mappings().all()
+    return [dict(row) for row in rows]
+
+
+async def product_sales(
+    session: AsyncSession, *, limit: int = 10, days: int = 7
+) -> list[dict[str, Any]]:
+    rows = (
+        (await session.execute(_PRODUCT_SQL, {"limit": limit, "days": days}))
+        .mappings()
+        .all()
+    )
+    return [dict(row) for row in rows]
+
+
+async def hourly_sales(session: AsyncSession, *, days: int = 7) -> list[dict[str, Any]]:
+    rows = (await session.execute(_HOURLY_SQL, {"days": days})).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def as_decimal(value: Any) -> Decimal:
+    """`sum()` do Postgres volta como Decimal, mas 0 pode vir como int."""
+    return value if isinstance(value, Decimal) else Decimal(str(value or 0))
+
+# ---------------------------------------------------------------------------
+# Números do painel
+# ---------------------------------------------------------------------------
 
 
 def _variation(current: Decimal, previous: Decimal) -> Decimal:
@@ -37,13 +180,13 @@ def _variation(current: Decimal, previous: Decimal) -> Decimal:
 async def get_summary(
     session: AsyncSession, *, range_: MetricsRange = MetricsRange.HOJE
 ) -> MetricsSummary:
-    days = metrics_repo.RANGE_DAYS[range_.value]
-    totals = await metrics_repo.summary_totals(session, days=days)
-    by_status = await metrics_repo.summary_by_status(session, days=days)
+    days = RANGE_DAYS[range_.value]
+    totals = await summary_totals(session, days=days)
+    by_status = await summary_by_status(session, days=days)
 
-    total_vendas = money(metrics_repo.as_decimal(totals["total_vendas"]))
+    total_vendas = money(as_decimal(totals["total_vendas"]))
     total_pedidos = int(totals["total_pedidos"])
-    anterior = metrics_repo.as_decimal(totals["total_anterior"])
+    anterior = as_decimal(totals["total_anterior"])
     ticket = money(total_vendas / total_pedidos) if total_pedidos else ZERO
 
     return MetricsSummary(
@@ -56,12 +199,12 @@ async def get_summary(
 
 
 async def get_daily_sales(session: AsyncSession, *, days: int = 7) -> list[DailySales]:
-    rows = await metrics_repo.daily_sales(session, days=days)
+    rows = await daily_sales(session, days=days)
     return [
         DailySales(
             dia=row["dia"],
             pedidos=int(row["pedidos"]),
-            total=money(metrics_repo.as_decimal(row["total"])),
+            total=money(as_decimal(row["total"])),
         )
         for row in rows
     ]
@@ -73,13 +216,13 @@ async def get_product_sales(
     limit: int = 10,
     range_: MetricsRange = MetricsRange.SEMANA,
 ) -> list[ProductSales]:
-    days = metrics_repo.RANGE_DAYS[range_.value]
-    rows = await metrics_repo.product_sales(session, limit=limit, days=days)
+    days = RANGE_DAYS[range_.value]
+    rows = await product_sales(session, limit=limit, days=days)
     return [
         ProductSales(
             produto=row["produto"],
             unidades=int(row["unidades"]),
-            receita=money(metrics_repo.as_decimal(row["receita"])),
+            receita=money(as_decimal(row["receita"])),
         )
         for row in rows
     ]
@@ -88,13 +231,13 @@ async def get_product_sales(
 async def get_hourly_sales(
     session: AsyncSession, *, range_: MetricsRange = MetricsRange.SEMANA
 ) -> list[HourlySales]:
-    days = metrics_repo.RANGE_DAYS[range_.value]
-    rows = await metrics_repo.hourly_sales(session, days=days)
+    days = RANGE_DAYS[range_.value]
+    rows = await hourly_sales(session, days=days)
     return [
         HourlySales(
             hora=int(row["hora"]),
             pedidos=int(row["pedidos"]),
-            receita=money(metrics_repo.as_decimal(row["receita"])),
+            receita=money(as_decimal(row["receita"])),
         )
         for row in rows
     ]
