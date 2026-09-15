@@ -1,0 +1,149 @@
+# =============================================================================
+# Mi Piace — ambiente de PRODUÇÃO (sobrescreve docker-compose.yml)
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Configurações de produção:
+# - Sem portas Postgres/Studio expostas (acesso restrito via backend)
+# - Secrets gerenciados via .env.prod (não versionado)
+# - Resource limits, restart policies, logging
+# - Caddy reverse proxy com HTTPS/TLS automático
+# - Health checks em todos os serviços
+# =============================================================================
+
+services:
+  db:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+    ports: []  # Sem exposição direta
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  meta:
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  studio:
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    ports: []  # Sem exposição em produção (ou atrás de autenticação Caddy)
+
+  backend:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    ports:
+      - "8000:8000"  # Atrás do Caddy, mas internamente
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+  frontend:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    ports:
+      - "8080:8080"  # Atrás do Caddy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # Reverse proxy com HTTPS automático (Let's Encrypt via ACME)
+  caddy:
+    image: caddy:2-alpine
+    container_name: mipiace-caddy
+    restart: always
+    ports:
+      - "80:80"   # HTTP (redirect automático para HTTPS)
+      - "443:443" # HTTPS
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      ACME_AGREE: "true"
+    depends_on:
+      backend:
+        condition: service_started
+      frontend:
+        condition: service_started
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # Evolution API (opcional, profile: whatsapp)
+  evolution-db:
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  evolution-redis:
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  evolution-api:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    ports: []  # Sem exposição direta; comunicação interna
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+volumes:
+  caddy_data:
+  caddy_config:

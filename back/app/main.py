@@ -43,6 +43,7 @@ def _include_agent_routers(app: FastAPI) -> None:
     for module_name, label in (
         ("app.api.routes.whatsapp", "WhatsApp"),
         ("app.api.routes.evolution", "Evolution API"),
+        ("app.api.routes.evolution_client", "cliente Evolution"),
         ("app.api.routes.simulator", "simulador"),
     ):
         try:

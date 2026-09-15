@@ -1,0 +1,74 @@
+{
+  # Configurações globais do Caddy
+  auto_https on
+  email {$ACME_EMAIL:-admin@example.com}
+}
+
+# Domínio de produção — substituir por seu domínio real
+{$DOMAIN:-localhost} {
+  # Logs
+  log {
+    output stdout
+    format json
+  }
+
+  # Compressão de resposta
+  encode gzip
+
+  # Frontend (SPA React)
+  handle /assets/* {
+    reverse_proxy frontend:8080
+    header Cache-Control "public, max-age=31536000, immutable"
+  }
+
+  handle / {
+    reverse_proxy frontend:8080
+    # SPA: qualquer rota desconhecida volta ao index.html
+    try_files {path} /index.html
+  }
+
+  # Backend API
+  handle /api/* {
+    reverse_proxy backend:8000
+  }
+
+  handle /docs {
+    reverse_proxy backend:8000
+  }
+
+  handle /openapi.json {
+    reverse_proxy backend:8000
+  }
+
+  handle /webhooks/* {
+    reverse_proxy backend:8000
+  }
+
+  handle /client/* {
+    reverse_proxy backend:8000
+  }
+
+  # Health check
+  handle /health {
+    reverse_proxy backend:8000
+  }
+
+  # Redirect HTTP para HTTPS
+  handle {
+    redir https://{host}{uri} permanent
+  }
+}
+
+# Supabase Studio (opcional, atrás de autenticação básica)
+admin.{$DOMAIN:-localhost} {
+  log {
+    output stdout
+    format json
+  }
+
+  basicauth / {
+    {$STUDIO_USER:-admin} {$STUDIO_PASS:-changeme}
+  }
+
+  reverse_proxy studio:3000
+}

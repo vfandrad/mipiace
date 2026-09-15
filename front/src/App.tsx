@@ -7,6 +7,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import Admin from './pages/Admin';
+import Cliente from './pages/Cliente';
 import Conversas from './pages/Conversas';
 import Loja from './pages/Loja';
 import NotFound from './pages/NotFound';
@@ -33,6 +34,7 @@ const App = () => (
           <Route path="/produtos" element={<Produtos />} />
           <Route path="/conversas" element={<Conversas />} />
           <Route path="/admin" element={<Admin />} />
+          <Route path="/cliente" element={<Cliente />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

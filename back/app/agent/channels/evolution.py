@@ -71,6 +71,15 @@ class EvolutionAdapter:
 
         return (data.get("key") or {}).get("id")
 
+    async def send_message(self, phone_number: str, message: str) -> str | None:
+        """Alias de send_text para compatibilidade com interface pública."""
+        # Formata número se necessário (remove caracteres especiais, garante formato)
+        clean_number = ''.join(c for c in phone_number if c.isdigit())
+        if not clean_number.startswith('55'):
+            clean_number = f"55{clean_number}"
+
+        return await self.send_text(clean_number, message)
+
     # -- webhook -----------------------------------------------------------
 
     def parse_webhook(self, payload: dict[str, Any]) -> list[InboundMessage]:
