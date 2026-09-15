@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Send } from 'lucide-react';
-import { api } from '@/lib/api';
+import { sendClientMessage, fetchConversations } from '@/lib/api';
 import { toast } from 'sonner';
 
 interface Message {
@@ -27,14 +27,14 @@ export default function Cliente() {
   const queryClient = useQueryClient();
 
   // Busca conversas do usuário
-  const { data: conversations } = useQuery({
-    queryKey: ['conversations', phoneNumber],
+  useQuery({
+    queryKey: ['client-conversations', phoneNumber],
     queryFn: async () => {
       if (!phoneNumber) return [];
-      const response = await api.get('/conversations', {
-        params: { phone_number: phoneNumber },
-      });
-      return response.data;
+      const allConversations = await fetchConversations();
+      return allConversations.filter(
+        (c: any) => c.phone_number === phoneNumber || c.phone === phoneNumber,
+      );
     },
     enabled: !!phoneNumber,
   });
@@ -60,48 +60,26 @@ export default function Cliente() {
     setLoading(true);
 
     try {
-      // Tenta enviar pela API real (Evolution/WhatsApp)
-      // Se não estiver configurada, cai para simulador
-      try {
-        await api.post('/client/send-message', {
-          phone_number: phoneNumber,
-          message: input,
-        });
+      // Envia mensagem (real ou simulador, conforme configuração)
+      await sendClientMessage({
+        phone_number: phoneNumber,
+        message: input,
+      });
 
-        // Simula resposta do bot (em produção viria via webhook)
-        const botMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: '✓ Mensagem recebida. Processando seu pedido...',
-          sender: 'bot',
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, botMessage]);
+      // Simula resposta do bot (em produção real viria via webhook)
+      const botMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: '✓ Mensagem recebida. Agente processando...',
+        sender: 'bot',
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, botMessage]);
 
-        if (!conversationId) {
-          setConversationId(Date.now().toString());
-        }
-      } catch {
-        // Fallback para simulador (FAKE_MODE ou sem Evolution configurada)
-        const response = await api.post('/simulator', {
-          phone_number: phoneNumber,
-          message: input,
-          conversation_id: conversationId,
-        });
-
-        const botMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: response.data.response || 'Mensagem enviada',
-          sender: 'bot',
-          timestamp: new Date(),
-        };
-
-        setMessages((prev) => [...prev, botMessage]);
-        if (response.data.conversation_id) {
-          setConversationId(response.data.conversation_id);
-        }
+      if (!conversationId) {
+        setConversationId(Date.now().toString());
       }
 
-      queryClient.invalidateQueries({ queryKey: ['conversations', phoneNumber] });
+      queryClient.invalidateQueries({ queryKey: ['client-conversations', phoneNumber] });
     } catch (error) {
       toast.error('Erro ao enviar mensagem');
       console.error(error);
@@ -160,28 +138,6 @@ export default function Cliente() {
               Conectar
             </Button>
           </form>
-
-          {conversations && conversations.length > 0 && (
-            <div className="mt-6 pt-6 border-t">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">
-                Conversas anteriores
-              </h3>
-              <div className="space-y-2">
-                {conversations.map((conv: any) => (
-                  <button
-                    key={conv.id}
-                    onClick={() => handleStartConversation(conv.phone_number)}
-                    className="w-full text-left p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition"
-                  >
-                    <p className="text-sm font-medium text-gray-800">{conv.phone_number}</p>
-                    <p className="text-xs text-gray-500">
-                      {new Date(conv.created_at).toLocaleDateString()}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     );

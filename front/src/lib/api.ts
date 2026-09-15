@@ -314,3 +314,31 @@ export function setConversationHandoff(id: string, handoff: boolean): Promise<Co
     body: { handoff },
   });
 }
+
+// ============================================================================
+// Cliente — /client/* (público, sem autenticação)
+// ============================================================================
+
+export interface ClientMessageRequest {
+  phone_number: string;
+  message: string;
+}
+
+export interface ClientMessageResponse {
+  status: string;
+  message_id?: string;
+  error?: string;
+}
+
+/** Envia mensagem do cliente via WhatsApp (ou simulador). */
+export function sendClientMessage(data: ClientMessageRequest): Promise<ClientMessageResponse> {
+  return request<ClientMessageResponse>('/client/send-message', {
+    method: 'POST',
+    body: data,
+  });
+}
+
+/** Verifica status de conexão da Evolution API. */
+export function getInstanceStatus(): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>('/client/instance-status');
+}
