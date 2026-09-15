@@ -229,7 +229,7 @@ services:
       CACHE_REDIS_URI: redis://evolution-redis:6379/1
       CACHE_REDIS_PREFIX_KEY: evolution
       WEBHOOK_GLOBAL_ENABLED: ${EVOLUTION_WEBHOOK_ENABLED:-false}
-      WEBHOOK_GLOBAL_URL: ${EVOLUTION_WEBHOOK_URL:-http://backend:8000/webhooks/evolution?token=dev-evolution-webhook-token}
+      WEBHOOK_GLOBAL_URL: ${EVOLUTION_WEBHOOK_URL:-http://backend:8000/webhooks/evolution}
       WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
     ports:
       # 8081 no host: 8080 já é do frontend neste projeto.

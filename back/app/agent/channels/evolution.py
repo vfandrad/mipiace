@@ -64,12 +64,18 @@ class EvolutionAdapter:
                     response = await client.post(self._send_url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
-        except Exception:
-            # Falha de envio não pode derrubar o processamento do webhook.
-            logger.exception("falha ao enviar mensagem para %s via Evolution API", to)
-            return None
-
-        return (data.get("key") or {}).get("id")
+            return (data.get("key") or {}).get("id")
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "Evolution API erro %s ao enviar para %s: %s",
+                e.response.status_code,
+                to,
+                e.response.text[:200] if e.response.text else "(sem corpo)",
+            )
+            raise
+        except Exception as e:
+            logger.exception("falha ao conectar com Evolution API para %s: %s", to, str(e))
+            raise
 
     async def send_message(self, phone_number: str, message: str) -> str | None:
         """Alias de send_text para compatibilidade com interface pública."""

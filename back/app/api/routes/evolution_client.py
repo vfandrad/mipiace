@@ -48,16 +48,29 @@ async def send_client_message(request: ClientMessageRequest) -> ClientMessageRes
     adapter = EvolutionAdapter(settings)
 
     try:
-        await adapter.send_message(
+        message_id = await adapter.send_message(
             phone_number=request.phone_number,
             message=request.message,
         )
-        return ClientMessageResponse(status="sent", message_id=None)
+        if not message_id:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Falha ao enviar mensagem (sem ID retornado)",
+            )
+        return ClientMessageResponse(status="sent", message_id=message_id)
+    except HTTPException:
+        raise
     except Exception as e:
+        error_detail = str(e)
+        if "400" in error_detail or "conectado" in error_detail.lower():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="WhatsApp não está conectado. Escaneie o QR code para reconectar.",
+            ) from e
         logger.exception("Falha ao enviar mensagem para %s", request.phone_number)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erro ao enviar mensagem: {str(e)}",
+            detail=f"Erro ao enviar: {error_detail[:100]}",
         ) from e
 
 
