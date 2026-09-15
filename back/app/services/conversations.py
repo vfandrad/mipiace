@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Conversation, ConversationMessage, Customer
+from app.domain.enums import ConversationState
 from app.schemas.conversation import ConversationMessageRead, ConversationRead
 
 #: Corta a prévia pra caber numa linha da lista (o histórico tem o texto inteiro).
@@ -94,7 +95,23 @@ async def list_messages(
 async def set_handoff(
     session: AsyncSession, conversation: Conversation, *, handoff: bool
 ) -> Conversation:
-    """`handoff=True` faz o agente parar de responder este telefone."""
+    """`handoff=True` faz o agente parar de responder este telefone.
+
+    Devolver a conversa para o bot (`handoff=False`) precisa também tirá-la do
+    estado ATENDIMENTO_HUMANO: a máquina de estados fica calada com base no
+    ESTADO (`machine.run`), não neste booleano. Sem isso, uma conversa que o
+    próprio bot escalou — o que acontece depois de MAX_NLU_FAILURES falhas —
+    ficaria muda para sempre, mesmo o lojista clicando em "devolver ao bot".
+
+    O carrinho é preservado de propósito: o cliente pode ter montado o pedido
+    antes da escalada e não deve perdê-lo. Só o contador de falhas é zerado,
+    senão a próxima incompreensão escalaria a conversa na hora de novo.
+    """
     conversation.handoff = handoff
+
+    if not handoff and conversation.state == ConversationState.ATENDIMENTO_HUMANO:
+        conversation.state = ConversationState.SAUDACAO
+        conversation.fail_count = 0
+
     await session.flush()
     return conversation

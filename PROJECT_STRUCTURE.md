@@ -81,7 +81,7 @@ mipiace/
 │   ├── db/schema.sql         AS TABELAS — fonte de verdade do banco
 │   ├── db/seed.sql           cardápio inicial
 │   ├── requirements.txt
-│   ├── tests/                81 testes, nenhum precisa de Postgres no ar
+│   ├── tests/                118 testes, nenhum precisa de Postgres no ar
 │   └── app/
 │       ├── main.py           cria o app e monta as rotas
 │       ├── agent/            a conversa do WhatsApp
@@ -175,10 +175,11 @@ Com `handoff=true`, o `runner` registra a mensagem no histórico mas **não
 responde nada**. O painel continua espelhando a conversa inteira, inclusive o
 que o lojista digitar do próprio celular (é o que `handle_outbound_echo` faz).
 
-> ⚠️ **Limitação conhecida:** desligar o handoff no painel não faz o bot voltar
-> a responder numa conversa que ele mesmo escalou, porque `machine.run()` cala
-> o bot pelo **estado** (`ATENDIMENTO_HUMANO`) e o botão do painel só mexe no
-> **booleano** `handoff`. Ver seção 12.
+**Devolver a conversa para o bot** (`handoff=false` no painel) tira a conversa
+do estado `ATENDIMENTO_HUMANO` e zera o contador de falhas — ver
+`services/conversations.py::set_handoff()`. As duas coisas precisam andar
+juntas porque a máquina cala o bot pelo **estado**, não pelo booleano. O
+carrinho é preservado: o cliente pode ter montado o pedido antes da escalada.
 
 ---
 
@@ -397,14 +398,21 @@ visíveis no navegador:
 
 ## 13. Dívidas conhecidas
 
-Coisas reais que um dev novo vai esbarrar. Nenhuma foi corrigida porque todas
-mudam comportamento — precisam de decisão antes.
+Coisas reais que um dev novo vai esbarrar. As que sobraram mudam
+comportamento ou exigem decisão de produto — por isso estão documentadas em vez
+de corrigidas.
 
 | # | Dívida | Risco |
 |---|---|---|
-| 1 | **Conversa em atendimento humano nunca volta para o bot.** `machine.run()` cala o bot pelo **estado**; o botão do painel só muda o **booleano** `handoff`. Nada em produção faz `ATENDIMENTO_HUMANO → SAUDACAO`. Uma conversa que o bot escalou sozinho fica muda para sempre. | **Alto** — acontece em produção hoje |
-| 2 | **Divergência de centavo.** `domain/cart.py` calcula sem arredondar (é o que o cliente lê no WhatsApp); `services/pricing.py` arredonda por etapa (é o que grava no pedido). | Médio |
-| 3 | **Não há sistema de migração.** `db/models.py` e `db/schema.sql` descrevem as mesmas tabelas e só divergem em runtime. Mudança de schema exige `psql` na mão. | Médio |
-| 4 | **O caminho de pagamento não tem teste.** Webhook, idempotência e `pix_provider` são o código de maior risco e têm cobertura zero. | Médio |
-| 5 | **Retirada na loja está pela metade.** `Intent.ESCOLHER_RETIRADA` existe e o prompt fala dele, mas nenhum handler trata e `checkout.py` fixa `ENTREGA`. Decidir: remover ou implementar. | Baixo |
-| 6 | **4 das 5 views SQL não são usadas.** `services/metrics.py` reimplementa as mesmas agregações. | Baixo |
+| 1 | **Divergência de centavo.** `domain/cart.py` calcula sem arredondar (é o que o cliente lê no WhatsApp); `services/pricing.py` arredonda por etapa (é o que grava no pedido). Hoje é latente — todos os preços do cardápio têm 2 casas, então os dois resultados batem. Aparece se algum `extra_price` tiver fração de centavo. Corrigir exige mover `money()` para `domain/`, senão vira import circular. | Médio |
+| 2 | **Não há sistema de migração.** `db/models.py` e `db/schema.sql` descrevem as mesmas tabelas e só divergem em runtime. Mudança de schema exige `psql` na mão. | Médio |
+| 3 | **Retirada na loja está pela metade.** `Intent.ESCOLHER_RETIRADA` existe e o prompt fala dele, mas nenhum handler trata e `checkout.py` fixa `ENTREGA`. Decidir: remover ou implementar. | Baixo |
+| 4 | **4 das 5 views SQL não são usadas.** `services/metrics.py` reimplementa as mesmas agregações. Mexer exige recriar o banco (ver dívida 2). | Baixo |
+
+### Corrigidas
+
+- **Conversa em atendimento humano nunca voltava para o bot** — `set_handoff()`
+  agora devolve o estado para `SAUDACAO`. Coberto por `tests/test_conversations.py`.
+- **Caminho de pagamento sem teste** — `tests/test_payments.py` cobre
+  idempotência, transições de status, tradução do vocabulário do Mercado Pago,
+  validação da assinatura e o provedor falso.
