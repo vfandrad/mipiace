@@ -39,12 +39,9 @@ O banco aplica `back/db/schema.sql` e `back/db/seed.sql` na primeira subida:
 o cardápio já nasce com os três tamanhos (M 240ml, G 500ml e COMBO 2 G 1000ml)
 e os 31 sabores. Para recomeçar do zero: `docker compose down -v`.
 
-Pedidos nascem vazios — Kanban e Dashboard aparecem zerados. Para olhar as duas
-telas com dado dentro, aplique os pedidos de demonstração (não roda sozinho):
-
-```bash
-docker compose exec -T db psql -U postgres -d postgres < back/db/seed_demo.sql
-```
+Pedidos, clientes e conversas nascem vazios: só o cardápio é semeado. Kanban e
+Dashboard aparecem zerados até o agente atender o primeiro cliente de verdade —
+não existe dado fabricado em lugar nenhum.
 
 Para subir também o gateway de WhatsApp:
 `docker compose --profile whatsapp up -d`.

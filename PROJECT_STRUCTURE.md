@@ -80,7 +80,6 @@ mipiace/
 ├── back/
 │   ├── db/schema.sql         AS TABELAS — fonte de verdade do banco
 │   ├── db/seed.sql           cardápio real (3 tamanhos + 31 sabores)
-│   ├── db/seed_demo.sql      pedidos fabricados p/ ver Kanban e Dashboard
 │   ├── requirements.txt
 │   ├── tests/                118 testes, nenhum precisa de Postgres no ar
 │   └── app/
@@ -395,7 +394,6 @@ visíveis no navegador:
 | **mudar o que o bot fala** | `back/app/agent/renderer.py` |
 | **adicionar/tirar sabor** | não é código: tela **Produtos** do painel |
 | **marcar sabor como sem lactose** | tela **Produtos**, ao criar ou editar o sabor |
-| **ver Kanban/Dashboard com dado** | aplicar `back/db/seed_demo.sql` (instruções no topo do arquivo) |
 | **mudar a taxa de entrega** | variável `DELIVERY_FEE` |
 | **mudar quantas falhas até chamar humano** | variável `MAX_NLU_FAILURES` |
 | **adicionar um estado à conversa** | `domain/enums.py` (o nome) + `agent/states.py` (as transições) + `agent/machine.py` (o handler) |

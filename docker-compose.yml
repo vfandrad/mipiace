@@ -230,6 +230,31 @@ services:
       - evolution_instances:/evolution/instances
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Tunel Cloudflare - da um endereco HTTPS publico ao backend.
+  #
+  # Existe por uma razao so: o webhook do Mercado Pago. O Pix e criado com uma
+  # `notification_url` derivada de PUBLIC_BASE_URL, e o MP nao consegue chamar
+  # `localhost`. Sem o tunel o cliente recebe o copia-e-cola mas o pagamento
+  # nunca e confirmado sozinho.
+  #
+  #   docker compose --profile tunnel up -d
+  #   docker compose logs tunnel | grep trycloudflare.com
+  #
+  # O endereco do tunel rapido MUDA a cada reinicio do container. Quando mudar,
+  # atualize PUBLIC_BASE_URL no .env, reinicie o backend e recadastre a URL no
+  # painel do Mercado Pago.
+  # ---------------------------------------------------------------------------
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: mipiace-tunnel
+    profiles: ["tunnel"]
+    depends_on:
+      backend:
+        condition: service_started
+    command: tunnel --no-autoupdate --url http://backend:8000
+    restart: unless-stopped
+
 volumes:
   pgdata:
   supabase_db_config:
