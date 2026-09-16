@@ -58,6 +58,17 @@ class Settings(BaseSettings):
     # é um token compartilhado na query string da URL cadastrada em WEBHOOK_GLOBAL_URL.
     evolution_webhook_token: str | None = None
 
+    # --- Ritmo de envio no WhatsApp (ver app/agent/pacing.py) ----------------
+    # O cliente é não-oficial: o que protege o número é o bot não se comportar
+    # como bot. Estes três números são o freio.
+    #: Velocidade média de digitação simulada, em palavras por minuto.
+    wa_typing_wpm: float = 45.0
+    #: Intervalo mínimo entre duas mensagens para o MESMO contato.
+    wa_min_seconds_between_messages: float = 3.0
+    #: Teto da instância inteira, por minuto (a comunidade situa o risco a
+    #: partir de ~20/min; ficamos abaixo de propósito).
+    wa_max_messages_per_minute: int = 12
+
     # --- Mercado Pago --------------------------------------------------------
     mp_access_token: str | None = None
     mp_webhook_secret: str | None = None

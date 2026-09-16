@@ -26,6 +26,7 @@ from typing import Any, Protocol
 import httpx
 from pydantic import BaseModel, Field
 
+from app.agent.pacing import throttle, typing_delay_ms
 from app.core.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -86,24 +87,45 @@ class EvolutionAdapter:
         return f"{base}/message/sendText/{instance}"
 
     async def send_text(self, to: str, text: str) -> str | None:
-        """Envia texto e devolve o id da mensagem na Evolution API (ou None se falhou)."""
+        """Envia texto e devolve o id da mensagem na Evolution API (ou None se falhou).
+
+        Não sai daqui nada instantâneo: o envio espera a vez no `throttle` e
+        chega à Evolution API pedindo "digitando..." por um tempo proporcional
+        ao tamanho do texto. O porquê está em `app/agent/pacing.py`.
+        """
         if not self._settings.evolution_api_key:
             logger.warning(
                 "Evolution API não configurada; mensagem não enviada para %s", to
             )
             return None
 
-        payload = {"number": to, "text": text}
+        await throttle.acquire(to)
+        delay_ms = typing_delay_ms(text)
+
+        payload = {
+            "number": to,
+            "text": text,
+            # A Evolution segura a mensagem por `delay` ms exibindo o status de
+            # "digitando..." antes de soltar — é ela que faz a pausa, não nós.
+            "delay": delay_ms,
+            "presence": "composing",
+            # Prévia de link é uma requisição extra feita pelo número e um
+            # traço a mais de automação; o bot manda copia-e-cola do Pix, não
+            # link clicável.
+            "linkPreview": False,
+        }
         headers = {
             "apikey": self._settings.evolution_api_key,
             "Content-Type": "application/json; charset=utf-8",
         }
+        # A chamada só retorna depois que o delay correu no servidor.
+        timeout = delay_ms / 1000 + 20.0
 
         try:
             if self._client is not None:
                 response = await self._client.post(self._send_url, json=payload, headers=headers)
             else:
-                async with httpx.AsyncClient(timeout=15.0) as client:
+                async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await client.post(self._send_url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()

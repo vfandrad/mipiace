@@ -213,6 +213,36 @@ sai da máquina.
 
 ---
 
+## Manter o número do WhatsApp vivo
+
+O canal é um cliente não-oficial (Evolution API, Baileys por baixo). O que
+derruba um número nesse cenário quase nunca é o conteúdo: é o padrão de envio.
+Três defesas, em ordem de importância:
+
+1. **O sistema não tem como enviar mensagem para quem não escreveu primeiro.**
+   O agente só é acionado pelo webhook de mensagem recebida, e o aviso de Pix
+   pago só vai para quem tem pedido aberto. Não existe disparo em massa, lista
+   de transmissão nem envio para número frio — é isso, mais do que qualquer
+   ajuste, que mantém o número no ar.
+2. **O bot demora como gente demora.** `back/app/agent/pacing.py` simula
+   digitação a ~45 palavras por minuto (sorteadas, não fixas) e manda o status
+   "digitando..." pelo tempo correspondente, entre 1,2s e 8s.
+3. **Existe um teto.** No máximo uma mensagem a cada 3s para o mesmo contato e
+   12 por minuto na instância inteira, contra o caso patológico — um laço ou
+   uma tempestade de webhooks é o que perde o número de verdade.
+
+Ajustáveis por `WA_TYPING_WPM`, `WA_MIN_SECONDS_BETWEEN_MESSAGES` e
+`WA_MAX_MESSAGES_PER_MINUTE`.
+
+Na instância da Evolution: `groupsIgnore=true` (o bot nem recebe grupo),
+`readMessages=true`, `alwaysOnline=false` e `syncFullHistory=false`.
+
+> Nada disso torna o banimento impossível. Usar cliente não-oficial contraria
+> os termos do WhatsApp, e o risco é da conta. Pareie um chip dedicado à loja,
+> nunca o número pessoal do dono.
+
+---
+
 ## Segurança
 
 - Todas as rotas `/api/*` exigem `X-API-Key` (`ADMIN_API_KEY`).
