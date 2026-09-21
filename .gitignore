@@ -1,6 +1,9 @@
 # Segredos — NUNCA versionar
 .env
 .env.local
+# Pega .env.prod e qualquer outra variante; os .example continuam versionados.
+.env.*
+!.env.*.example
 **/.env
 !**/.env.example
 *.pem

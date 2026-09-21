@@ -1,70 +1,48 @@
+# =============================================================================
+# Caddy — a única porta aberta do servidor. Termina o TLS e distribui.
+#
+#   https://<dominio>/api/*        -> backend  (exige X-API-Key)
+#   https://<dominio>/webhooks/*   -> backend  (valida o próprio remetente)
+#   https://<dominio>/health       -> backend
+#   https://<dominio>/*            -> painel   (o nginx do front faz o
+#                                               fallback de SPA sozinho)
+#
+# O certificado é emitido e renovado sozinho pelo Let's Encrypt, desde que o
+# DNS do domínio já aponte para o IP deste servidor ANTES da primeira subida.
+#
+# Duas coisas que de propósito NÃO estão publicadas:
+#   * /docs e /openapi.json — o Swagger não precisa estar na internet; quem
+#     precisar lê de dentro do servidor (`curl localhost:8000/docs`).
+#   * o Supabase Studio — é um administrador de banco completo, exposto sem
+#     autenticação própria. O acesso é por túnel SSH, ver DEPLOY.md.
+# =============================================================================
 {
-  # Configurações globais do Caddy
-  auto_https on
-  email {$ACME_EMAIL:-admin@example.com}
+	email {$ACME_EMAIL}
 }
 
-# Domínio de produção — substituir por seu domínio real
-{$DOMAIN:-localhost} {
-  # Logs
-  log {
-    output stdout
-    format json
-  }
+{$DOMAIN} {
+	log {
+		output stdout
+		format json
+	}
 
-  # Compressão de resposta
-  encode gzip
+	encode gzip
 
-  # Frontend (SPA React)
-  handle /assets/* {
-    reverse_proxy frontend:8080
-    header Cache-Control "public, max-age=31536000, immutable"
-  }
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
 
-  handle / {
-    reverse_proxy frontend:8080
-    # SPA: qualquer rota desconhecida volta ao index.html
-    try_files {path} /index.html
-  }
+	handle /webhooks/* {
+		reverse_proxy backend:8000
+	}
 
-  # Backend API
-  handle /api/* {
-    reverse_proxy backend:8000
-  }
+	handle /health {
+		reverse_proxy backend:8000
+	}
 
-  handle /docs {
-    reverse_proxy backend:8000
-  }
-
-  handle /openapi.json {
-    reverse_proxy backend:8000
-  }
-
-  handle /webhooks/* {
-    reverse_proxy backend:8000
-  }
-
-  # Health check
-  handle /health {
-    reverse_proxy backend:8000
-  }
-
-  # Redirect HTTP para HTTPS
-  handle {
-    redir https://{host}{uri} permanent
-  }
-}
-
-# Supabase Studio (opcional, atrás de autenticação básica)
-admin.{$DOMAIN:-localhost} {
-  log {
-    output stdout
-    format json
-  }
-
-  basicauth / {
-    {$STUDIO_USER:-admin} {$STUDIO_PASS:-changeme}
-  }
-
-  reverse_proxy studio:3000
+	# Tudo o mais é o painel. Precisa ser o último bloco: `handle` casa por
+	# especificidade, e este, sem caminho, é o pega-tudo.
+	handle {
+		reverse_proxy frontend:8080
+	}
 }

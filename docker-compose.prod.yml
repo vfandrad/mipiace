@@ -37,6 +37,8 @@ services:
         max-size: "50m"
         max-file: "3"
 
+  # Administrador de banco completo e sem senha própria: em produção ele não
+  # ganha porta nenhuma. Para usar, túnel SSH (ver DEPLOY.md).
   studio:
     restart: always
     logging:
@@ -44,7 +46,8 @@ services:
       options:
         max-size: "50m"
         max-file: "3"
-    ports: []  # Sem exposição em produção (ou atrás de autenticação Caddy)
+    ports:
+      - "127.0.0.1:54323:3000"
 
   backend:
     restart: always
@@ -57,7 +60,10 @@ services:
           cpus: '0.5'
           memory: 512M
     ports:
-      - "8000:8000"  # Atrás do Caddy, mas internamente
+      # Só no loopback: quem entrega isto para a internet é o Caddy. Sem o
+      # "127.0.0.1:" o Docker abre a porta no IP público e fura o proxy — e,
+      # com ela, o /docs e as rotas /api sem passar por lugar nenhum.
+      - "127.0.0.1:8000:8000"
     environment:
       ENVIRONMENT: production
       DEBUG: "false"
@@ -78,7 +84,7 @@ services:
           cpus: '0.5'
           memory: 256M
     ports:
-      - "8080:8080"  # Atrás do Caddy
+      - "127.0.0.1:8080:8080"  # idem: só o Caddy alcança
     logging:
       driver: "json-file"
       options:
@@ -137,7 +143,10 @@ services:
         reservations:
           cpus: '0.5'
           memory: 256M
-    ports: []  # Sem exposição direta; comunicação interna
+    ports:
+      # Só no loopback do servidor. O backend fala com ela pela rede interna do
+      # compose; o manager (parear QR) você alcança por túnel SSH — ver DEPLOY.md.
+      - "127.0.0.1:8081:8080"
     logging:
       driver: "json-file"
       options:
