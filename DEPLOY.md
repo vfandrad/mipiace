@@ -386,3 +386,70 @@ docker compose --env-file .env.prod logs db
 **`OOMKilled` nos logs** — falta memória; aumente os limites em
 `docker-compose.prod.yml`. **`too many connections`** — ajuste o pool na
 `DATABASE_URL`: `...?pool_size=20&max_overflow=40&pool_recycle=3600`.
+
+---
+
+## 11. Alternativa: Easypanel (Hostinger)
+
+Em vez das seções 1 a 5, dá para deixar um painel cuidar de Docker, TLS e
+deploy. O caminho é mais curto e testado: a Hostinger tem um template de VPS
+com o Easypanel já instalado, e o Easypanel sabe subir um serviço do tipo
+**Compose** direto de um repositório Git, rodando `docker compose up --build -d`
+e interpolando `${VAR}` a partir das variáveis que você preenche na interface.
+
+O que você deixa de fazer à mão: instalar Docker, configurar `ufw`, escrever
+Caddyfile, emitir certificado, lembrar os comandos de deploy. O Traefik do
+Easypanel faz o HTTPS, e cada `git push` pode disparar redeploy sozinho.
+
+Use o **`docker-compose.easypanel.yml`**, não o `docker-compose.yml`. O de
+desenvolvimento tem `container_name`, portas publicadas e `profiles` — as três
+coisas que o Easypanel ou recusa ou ignora silenciosamente (um serviço atrás de
+profile nunca sobe, porque ele não passa `--profile`). O arquivo do Easypanel
+já vem sem elas e sem Caddy e túnel, que ali não fazem falta.
+
+**Passo a passo**
+
+1. **Suba o repositório para o GitHub.** Pode ser privado; o Easypanel conecta
+   pela sua conta do GitHub.
+2. **VPS na Hostinger** com o template Ubuntu 24.04 + Easypanel. O painel
+   responde em `http://SEU_IP:3000` — crie a conta de admin na primeira visita.
+3. **DNS:** registro A do domínio para o IP da VPS. Dois nomes:
+   `mipiace.com.br` (painel) e `api.mipiace.com.br` (backend).
+4. **No Easypanel:** novo projeto → **New Service** → **Compose** → source Git,
+   apontando para o repositório, branch `main`, e o caminho do arquivo
+   `docker-compose.easypanel.yml`.
+5. **Environment:** cole as variáveis (as mesmas do `.env.prod.example`, menos
+   `DOMAIN` e `ACME_EMAIL`, que o Easypanel resolve). Deixe marcado *Create
+   .env file* — é dele que sai a interpolação.
+6. **Deploy.** A primeira subida constrói as duas imagens e aplica
+   `schema.sql` + `seed.sql` no banco novo.
+7. **Domains**, dentro do serviço:
+
+   | Serviço interno | Porta | Domínio |
+   |---|---|---|
+   | `frontend` | 8080 | `mipiace.com.br` |
+   | `backend` | 8000 | `api.mipiace.com.br` |
+
+   Marque HTTPS com o certificate resolver padrão.
+8. **Confira** que `PUBLIC_BASE_URL` e `VITE_API_BASE_URL` apontam para
+   `https://api.mipiace.com.br` e `CORS_ORIGINS` para `https://mipiace.com.br`.
+   Mudou? Redeploy — as `VITE_*` entram no bundle em tempo de build, reiniciar
+   não basta.
+9. **WhatsApp:** a Evolution não tem domínio de propósito. Para parear, dê a
+   ela um domínio temporário (porta 8080) na aba Domains, crie a instância pela
+   API como na seção 4 — pelo manager ela nasce sem webhook e o bot fica mudo —,
+   escaneie o QR e **remova o domínio depois**.
+10. **Mercado Pago:** webhook em `https://api.mipiace.com.br/webhooks/mercadopago`
+    (seção 5).
+
+**O que foi verificado aqui antes de recomendar:** o `docker-compose.easypanel.yml`
+passa no `docker compose config` sem `container_name`, portas nem profiles; a
+interpolação chega nos build args; e uma imagem construída por ele carrega no
+bundle a `VITE_ADMIN_API_KEY` e a `VITE_API_BASE_URL` que vieram do ambiente —
+que era o ponto de falha mais provável do plano.
+
+**O que continua sendo seu:** backup do volume `pgdata` (seção 7 — o Easypanel
+não faz backup do seu banco por você), as credenciais do Mercado Pago e o risco
+de banimento do WhatsApp (seção 9), que num IP de datacenter é maior do que em
+casa. E como não há Alembic, mudança em `back/db/schema.sql` continua exigindo
+`psql` à mão.
