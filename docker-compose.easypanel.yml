@@ -82,6 +82,9 @@ services:
       EVOLUTION_WEBHOOK_TOKEN: ${EVOLUTION_WEBHOOK_TOKEN}
       MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN}
       MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET}
+      # Vazio = atende qualquer cliente. Com numeros dentro, so eles conversam
+      # com o agente -- e o bot nao consegue enviar para mais ninguem.
+      ALLOWED_PHONES: ${ALLOWED_PHONES:-}
     # O Traefik do Easypanel procura o container pelo nome no padrao antigo do
     # Compose v1 ("projeto_servico_composeService", com underscore), mas o
     # Compose v2 nomeia com hifen e sufixo ("..._...-frontend-1"). O dominio

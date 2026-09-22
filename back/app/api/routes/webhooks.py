@@ -22,7 +22,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
-from app.agent.whatsapp import EvolutionAdapter
+from app.agent.whatsapp import EvolutionAdapter, phone_allowed
 from app.agent.runner import handle_inbound, handle_outbound_echo
 from app.api.deps import SessionDep
 from app.core.config import get_settings
@@ -87,6 +87,14 @@ async def evolution_webhook(
 
     sessionmaker = get_sessionmaker()
     for message in messages:
+        # Trava de contatos: com ALLOWED_PHONES preenchida, mensagem de
+        # qualquer outro número é descartada aqui, antes de virar conversa no
+        # banco. Não responde, não registra, não existe.
+        if not phone_allowed(message.phone):
+            logger.info(
+                "mensagem de %s ignorada: fora de ALLOWED_PHONES", message.phone
+            )
+            continue
         try:
             async with sessionmaker() as db:
                 if message.from_me:

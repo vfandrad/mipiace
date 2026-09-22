@@ -213,6 +213,29 @@ sai da máquina.
 
 ---
 
+## Trancar o sistema em um contato
+
+`ALLOWED_PHONES` vazia é o estado normal: o agente atende quem chegar. Com
+números dentro (separados por vírgula), o sistema vira uma sala fechada —
+mensagem de qualquer outro número é descartada na entrada do webhook, antes de
+virar conversa no banco, e o `EvolutionAdapter` se recusa a enviar para fora da
+lista. São dois cadeados de propósito: o segundo garante que nenhum caminho do
+sistema, nem o aviso de Pix pago, alcance um terceiro.
+
+Serve para deixar a loja no ar e testar pelo WhatsApp de verdade sem o risco de
+atender um cliente pela metade. Para abrir a loja, esvazie a variável.
+
+```bash
+ALLOWED_PHONES=5569993061196
+```
+
+A comparação normaliza o número: DDI + DDD + os 8 últimos dígitos. É o que faz
+`+55 69 99306-1196` e `556993061196` (sem o nono dígito, como o WhatsApp às
+vezes entrega) valerem como a mesma linha, sem confundir com o mesmo final em
+outro DDD.
+
+---
+
 ## Manter o número do WhatsApp vivo
 
 O canal é um cliente não-oficial (Evolution API, Baileys por baixo). O que

@@ -134,6 +134,8 @@ services:
       EVOLUTION_WEBHOOK_TOKEN: ${EVOLUTION_WEBHOOK_TOKEN:-dev-evolution-webhook-token}
       MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN:-}
       MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET:-}
+      # Trava de contatos: vazio atende todo mundo; com número, só ele.
+      ALLOWED_PHONES: ${ALLOWED_PHONES:-}
     ports:
       - "8000:8000"
     restart: unless-stopped

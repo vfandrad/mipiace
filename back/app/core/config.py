@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     # é um token compartilhado na query string da URL cadastrada em WEBHOOK_GLOBAL_URL.
     evolution_webhook_token: str | None = None
 
+    # --- Trava de contatos ---------------------------------------------------
+    # Lista de telefones autorizados a conversar com o agente. VAZIA = aberto,
+    # que é o estado normal de produção. Com um número dentro, o sistema vira
+    # uma sala fechada: mensagem de qualquer outro número é descartada e o bot
+    # se recusa a enviar para fora da lista. É o modo de testar com a loja no
+    # ar sem risco de atender cliente de verdade pela metade.
+    allowed_phones: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
     # --- Ritmo de envio no WhatsApp (ver app/agent/pacing.py) ----------------
     # O cliente é não-oficial: o que protege o número é o bot não se comportar
     # como bot. Estes três números são o freio.
@@ -78,6 +86,20 @@ class Settings(BaseSettings):
     pix_expiration_minutes: int = 30
     session_ttl_minutes: int = 60
     max_nlu_failures: int = 3  # depois disso, cai para atendimento humano
+
+    @field_validator("allowed_phones", mode="before")
+    @classmethod
+    def _split_phones(cls, value: object) -> object:
+        """Aceita "5511...,5569..." do .env; guarda só os dígitos."""
+        if isinstance(value, str):
+            value = [p for p in value.split(",")]
+        if isinstance(value, list):
+            return [
+                "".join(ch for ch in str(p) if ch.isdigit())
+                for p in value
+                if "".join(ch for ch in str(p) if ch.isdigit())
+            ]
+        return value
 
     @field_validator("cors_origins", mode="before")
     @classmethod

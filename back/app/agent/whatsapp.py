@@ -33,6 +33,50 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Trava de contatos
+# ---------------------------------------------------------------------------
+
+def _only_digits(value: str) -> str:
+    return "".join(ch for ch in value if ch.isdigit())
+
+
+def _normalize_br(digits: str) -> str:
+    """Põe o mesmo celular brasileiro sempre na mesma forma.
+
+    O WhatsApp entrega o número ora com o nono dígito (5569993061196), ora sem
+    (556993061196), e o lojista digita com "+", espaço e traço. A diferença
+    fica no MEIO do número, então comparar por sufixo não resolve: o que
+    identifica a linha é DDI + DDD + os 8 últimos dígitos. Fora do formato
+    brasileiro (12 ou 13 dígitos começando em 55) devolvemos como está, e a
+    comparação passa a ser literal — melhor recusar um número exótico do que
+    deixar entrar um parecido.
+    """
+    if digits.startswith("55") and len(digits) in (12, 13):
+        return digits[:4] + digits[-8:]
+    return digits
+
+
+def phone_allowed(phone: str, settings: Settings | None = None) -> bool:
+    """O agente pode falar com este número?
+
+    Com `ALLOWED_PHONES` vazia a resposta é sempre sim — é o estado normal de
+    produção. Preenchida, o sistema vira uma sala fechada: serve para deixar a
+    loja no ar e testar pelo WhatsApp de verdade sem risco de atender um
+    cliente pela metade.
+    """
+    settings = settings or get_settings()
+    if not settings.allowed_phones:
+        return True
+
+    digits = _only_digits(phone)
+    if len(digits) < 8:
+        return False
+
+    alvo = _normalize_br(digits)
+    return any(_normalize_br(a) == alvo for a in settings.allowed_phones)
+
+
+# ---------------------------------------------------------------------------
 # Contrato
 # ---------------------------------------------------------------------------
 
@@ -96,6 +140,16 @@ class EvolutionAdapter:
         if not self._settings.evolution_api_key:
             logger.warning(
                 "Evolution API não configurada; mensagem não enviada para %s", to
+            )
+            return None
+
+        # Segundo cadeado da trava de contatos. O primeiro está na entrada do
+        # webhook; este existe porque é o que garante que nenhum caminho do
+        # sistema — nem o aviso de Pix pago, nem um bug futuro — consiga mandar
+        # mensagem para um terceiro enquanto a loja está em teste.
+        if not phone_allowed(to, self._settings):
+            logger.warning(
+                "envio bloqueado: %s fora de ALLOWED_PHONES", to
             )
             return None
 
