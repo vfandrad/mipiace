@@ -8,7 +8,13 @@ export default {
   theme: {
     container: {
       center: true,
-      padding: "2rem",
+      // 2rem fixo comia 64px de uma tela de 390px. A margem agora acompanha o
+      // tamanho do aparelho.
+      padding: {
+        DEFAULT: "1rem",
+        sm: "1.5rem",
+        lg: "2rem",
+      },
       screens: {
         "2xl": "1400px",
       },

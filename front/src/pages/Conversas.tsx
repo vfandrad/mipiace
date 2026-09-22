@@ -45,9 +45,9 @@ const Conversas = () => {
   const handoff = useHandoffMutation();
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen-safe bg-background">
       <Header />
-      <main className="container py-6 space-y-4">
+      <main className="container py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Conversas</h1>
@@ -78,7 +78,7 @@ const Conversas = () => {
               </h2>
               <p className="text-xs text-muted-foreground">Atualiza sozinho a cada 10s</p>
             </div>
-            <div className="max-h-[70vh] overflow-y-auto scrollbar-thin">
+            <div className="max-h-[45dvh] lg:max-h-[70dvh] overflow-y-auto scrollbar-thin">
               <ConversationList
                 conversations={conversations}
                 selectedId={selectedId}
@@ -139,7 +139,7 @@ const Conversas = () => {
                   </p>
                 )}
 
-                <div className="flex-1 overflow-y-auto scrollbar-thin max-h-[62vh]">
+                <div className="flex-1 overflow-y-auto scrollbar-thin max-h-[55dvh] lg:max-h-[62dvh]">
                   <MessageThread
                     messages={messagesQuery.data ?? []}
                     isLoading={messagesQuery.isLoading}

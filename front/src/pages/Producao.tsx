@@ -38,9 +38,9 @@ const Producao = () => {
   const cancelledCount = orders.filter((order) => order.status === 'cancelado').length;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen-safe bg-background">
       <Header />
-      <main className="container py-6">
+      <main className="container py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Produção</h1>

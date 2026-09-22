@@ -46,9 +46,9 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen-safe bg-background">
       <Header />
-      <main className="container py-6 space-y-6">
+      <main className="container py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>

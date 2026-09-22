@@ -117,14 +117,44 @@
     @apply border-border;
   }
 
+  html {
+    /* O Safari do iOS aumenta a fonte sozinho ao girar para paisagem; isto
+       desliga esse "ajuste" e mantem o layout igual nas duas orientacoes. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    /* Tira o retangulo cinza que o iOS pisca em cima de tudo que e tocado. */
+    -webkit-tap-highlight-color: transparent;
+    /* Nenhuma tela do painel rola na horizontal: o que vazar e bug, e aqui
+       vira invisivel em vez de virar uma pagina que balanca de lado. */
+    overflow-x: hidden;
   }
 
-  /* Smooth transitions */
-  * {
+  /* Transicao so no que reage ao toque/mouse. Aplicar em `*` custa caro no
+     Safari do iPhone: o navegador passa a observar mudanca de cor em todos os
+     elementos da arvore, inclusive nas listas longas de pedidos e mensagens. */
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  [role='button'],
+  [role='tab'] {
     @apply transition-colors duration-150;
+  }
+
+  /* Alvo de toque minimo da Apple (44pt). Vale para os botoes de icone, que
+     sem isto ficam com ~32px e erram o dedo. */
+  @media (pointer: coarse) {
+    button,
+    a[role='button'],
+    [role='tab'] {
+      touch-action: manipulation;
+    }
   }
 }
 
@@ -156,9 +186,12 @@
     @apply bg-card rounded-lg border border-border/50 p-4 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer;
   }
 
-  /* Kanban column */
+  /* Kanban column
+     A altura minima de 500px so faz sentido quando as colunas estao lado a
+     lado. Empilhadas no celular, tres colunas vazias viravam 1500px de rolagem
+     para nao mostrar nada. */
   .kanban-column {
-    @apply bg-secondary/50 rounded-xl p-4 min-h-[500px];
+    @apply bg-secondary/50 rounded-xl p-4 md:min-h-[500px];
   }
 
   /* Action button */
@@ -188,6 +221,10 @@
   .scrollbar-thin {
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--border)) transparent;
+    /* Sem isto, chegar ao fim de uma lista interna no iOS continua o gesto na
+       pagina inteira e o usuario "perde" a tela de vista. */
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
 
   .scrollbar-thin::-webkit-scrollbar {
@@ -231,5 +268,31 @@
     50% {
       box-shadow: 0 0 0 8px hsl(var(--status-new) / 0);
     }
+  }
+}
+
+@layer utilities {
+  /* Area segura do iPhone: a faixa do notch em cima e a barra do indicador de
+     home embaixo. Com viewport-fit=cover no index.html a pagina passa a ocupar
+     esses pedacos, entao quem encosta neles precisa se afastar. */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .px-safe {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  /* Altura da tela que o Safari do iOS realmente mostra. `100vh` la conta a
+     area coberta pelas barras do navegador, entao o rodape da pagina nasce
+     escondido e so aparece depois que a barra some. */
+  .min-h-screen-safe {
+    min-height: 100vh; /* fallback para navegador sem dvh */
+    min-height: 100dvh;
   }
 }

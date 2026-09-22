@@ -51,9 +51,9 @@ const Produtos = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen-safe bg-background">
       <Header />
-      <main className="container py-6 space-y-6">
+      <main className="container py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] space-y-6">
         <ProductsHeader onNewProduct={() => setShowNewProduct(true)} />
 
         {isError ? (

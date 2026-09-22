@@ -46,13 +46,19 @@ export function Header() {
   }, [updateIndicator]);
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border bg-card/80 backdrop-blur-sm">
-      <div className="container flex h-16 items-center justify-between">
-        <Link to="/" className="flex items-center gap-2">
-          <img src={logoMiPiace} alt="Mi Piace Gelato" className="h-10 object-contain" />
+    // pt-safe: com viewport-fit=cover a pagina entra por baixo da barra de
+    // status do iPhone, e o header grudado no topo ficaria atras do notch.
+    <header className="sticky top-0 z-50 w-full border-b border-border bg-card/80 backdrop-blur-sm pt-safe">
+      <div className="container flex h-16 items-center justify-between gap-2">
+        <Link to="/" className="flex shrink-0 items-center gap-2">
+          <img
+            src={logoMiPiace}
+            alt="Mi Piace Gelato"
+            className="h-8 sm:h-10 object-contain"
+          />
         </Link>
 
-        <nav ref={navRef} className="relative flex items-center bg-secondary rounded-lg p-1">
+        <nav ref={navRef} className="relative flex shrink-0 items-center bg-secondary rounded-lg p-1">
           {/* Indicador deslizante */}
           {indicator && (
             <div
@@ -70,9 +76,13 @@ export function Header() {
                 to={item.path}
                 ref={el => { itemRefs.current[i] = el; }}
                 className={cn(
-                  'relative z-10 flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors duration-200',
+                  // min-h/min-w de 44px é o alvo de toque mínimo da Apple: no
+                  // celular o rótulo some e sobra só o ícone, que sem isto
+                  // ficava com ~32px e errava o dedo.
+                  'relative z-10 flex min-h-11 min-w-11 items-center justify-center gap-2 px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition-colors duration-200',
                   isActive ? 'text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
                 )}
+                aria-label={item.label}
               >
                 <Icon className="h-4 w-4" />
                 <span className="hidden sm:inline">{item.label}</span>
