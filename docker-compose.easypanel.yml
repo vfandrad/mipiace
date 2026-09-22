@@ -82,6 +82,16 @@ services:
       EVOLUTION_WEBHOOK_TOKEN: ${EVOLUTION_WEBHOOK_TOKEN}
       MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN}
       MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET}
+    # O Traefik do Easypanel procura o container pelo nome no padrao antigo do
+    # Compose v1 ("projeto_servico_composeService", com underscore), mas o
+    # Compose v2 nomeia com hifen e sufixo ("..._...-frontend-1"). O dominio
+    # respondia 502 por causa disso. O apelido de rede abaixo faz o nome que o
+    # Traefik procura resolver, sem precisar de container_name (que o proprio
+    # Easypanel desaconselha, por colidir entre projetos).
+    networks:
+      default:
+        aliases:
+          - mi-piace_mi-piace_backend
     restart: unless-stopped
 
   frontend:
@@ -95,6 +105,16 @@ services:
     depends_on:
       backend:
         condition: service_started
+    # O Traefik do Easypanel procura o container pelo nome no padrao antigo do
+    # Compose v1 ("projeto_servico_composeService", com underscore), mas o
+    # Compose v2 nomeia com hifen e sufixo ("..._...-frontend-1"). O dominio
+    # respondia 502 por causa disso. O apelido de rede abaixo faz o nome que o
+    # Traefik procura resolver, sem precisar de container_name (que o proprio
+    # Easypanel desaconselha, por colidir entre projetos).
+    networks:
+      default:
+        aliases:
+          - mi-piace_mi-piace_frontend
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
