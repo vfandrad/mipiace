@@ -165,6 +165,12 @@ services:
       WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
     volumes:
       - evolution_instances:/evolution/instances
+    # Mesmo motivo do apelido no frontend/backend: o Traefik do Easypanel
+    # procura o container pelo nome com underscore, que o Compose v2 nao cria.
+    networks:
+      default:
+        aliases:
+          - mi-piace_mi-piace_evolution-api
     restart: unless-stopped
 
 volumes:
