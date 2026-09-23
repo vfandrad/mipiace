@@ -41,7 +41,7 @@ ON CONFLICT (id) DO NOTHING;
 -- ----------------------------------------------------------------------------
 -- Categorias de sabor
 -- ----------------------------------------------------------------------------
-INSERT INTO flavor_categories (id, name, sort_order) VALUES
+INSERT INTO complement_categories (id, name, sort_order) VALUES
     ('66666666-6666-4666-8666-000000000001', 'Sem lactose', 1),
     ('66666666-6666-4666-8666-000000000002', 'Com lactose', 2)
 ON CONFLICT (id) DO NOTHING;
@@ -56,7 +56,7 @@ ON CONFLICT (id) DO NOTHING;
 -- seja a escolha. A coluna `extra_price` continua existindo (o painel deixa
 -- cobrar por um complemento, e o pedido congela o valor da venda), mas o
 -- cardápio da casa não usa.
-INSERT INTO complements (group_id, name, extra_price, is_available, sort_order, flavor_category_id)
+INSERT INTO complements (group_id, name, extra_price, is_available, sort_order, category_id)
 SELECT g.id, s.nome, s.extra, true, s.ordem, s.categoria_id
 FROM (VALUES
         ('22222222-2222-4222-8222-000000000010'::uuid),

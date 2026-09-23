@@ -6,10 +6,12 @@
  */
 
 /**
- * Categoria do sabor em si ("Sem lactose" / "Com lactose") — é atributo do
- * sabor, não do grupo. Vem de `GET /api/flavor-categories` e quase nunca muda.
+ * Classificação de complemento que vale em qualquer produto ("Sem lactose",
+ * "Vegetariano"). É atributo do complemento, não do grupo de escolha, e quem
+ * define a lista é o lojista — numa gelateria não são as mesmas de uma
+ * hamburgueria.
  */
-export interface FlavorCategory {
+export interface ComplementCategory {
   id: string;
   name: string;
   sort_order?: number;
@@ -22,8 +24,8 @@ export interface Complement {
   extra_price: number;
   is_available: boolean;
   sort_order?: number;
-  /** null = sabor sem categoria definida (ou complemento que não é sabor). */
-  flavor_category_id?: string | null;
+  /** null = complemento sem classificação. */
+  category_id?: string | null;
 }
 
 export interface ComplementGroup {
@@ -68,7 +70,7 @@ export interface GroupInput {
   is_required: boolean;
 }
 
-export interface FlavorCategoryInput {
+export interface ComplementCategoryInput {
   name: string;
   sort_order?: number;
 }
@@ -77,8 +79,11 @@ export interface ComplementInput {
   name: string;
   extra_price: number;
   is_available: boolean;
-  flavor_category_id?: string | null;
+  category_id?: string | null;
 }
 
+/** O que pode ser reordenado arrastando no painel. */
+export type ReorderKind = 'product' | 'group' | 'complement' | 'category';
+
 /** Tipo de entidade do catálogo — usado nas rotas genéricas de PATCH/DELETE. */
-export type CatalogEntity = 'product' | 'group' | 'complement' | 'flavorCategory';
+export type CatalogEntity = 'product' | 'group' | 'complement' | 'category';

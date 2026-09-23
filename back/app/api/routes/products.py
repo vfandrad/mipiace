@@ -11,15 +11,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Response, status
 
-from app.api.deps import SessionDep, not_found
+from app.api.deps import SessionDep, bad_request, not_found
 from app.services import catalog
 from app.schemas.product import (
     ComplementCreate,
     ComplementRead,
     ComplementUpdate,
-    FlavorCategoryCreate,
-    FlavorCategoryRead,
-    FlavorCategoryUpdate,
+    ComplementCategoryCreate,
+    ComplementCategoryRead,
+    ComplementCategoryUpdate,
     GroupCreate,
     GroupRead,
     GroupUpdate,
@@ -27,55 +27,71 @@ from app.schemas.product import (
     ProductList,
     ProductRead,
     ProductUpdate,
+    ReorderRequest,
 )
 
 router = APIRouter(prefix="/api", tags=["catálogo"])
 
 
-@router.get("/flavor-categories", response_model=list[FlavorCategoryRead])
-async def list_flavor_categories(session: SessionDep) -> list[FlavorCategoryRead]:
-    categories = await catalog.list_flavor_categories(session)
-    return [FlavorCategoryRead.model_validate(c) for c in categories]
+@router.get("/complement-categories", response_model=list[ComplementCategoryRead])
+async def list_complement_categories(session: SessionDep) -> list[ComplementCategoryRead]:
+    categories = await catalog.list_complement_categories(session)
+    return [ComplementCategoryRead.model_validate(c) for c in categories]
 
 
 @router.post(
-    "/flavor-categories",
-    response_model=FlavorCategoryRead,
+    "/complement-categories",
+    response_model=ComplementCategoryRead,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_flavor_category(
-    payload: FlavorCategoryCreate, session: SessionDep
-) -> FlavorCategoryRead:
-    category = await catalog.create_flavor_category(session, payload.model_dump())
+async def create_category(
+    payload: ComplementCategoryCreate, session: SessionDep
+) -> ComplementCategoryRead:
+    category = await catalog.create_category(session, payload.model_dump())
     await session.commit()
-    return FlavorCategoryRead.model_validate(category)
+    return ComplementCategoryRead.model_validate(category)
 
 
-@router.patch("/flavor-categories/{category_id}", response_model=FlavorCategoryRead)
-async def update_flavor_category(
-    category_id: UUID, payload: FlavorCategoryUpdate, session: SessionDep
-) -> FlavorCategoryRead:
-    category = await catalog.get_flavor_category(session, category_id)
+@router.patch("/complement-categories/{category_id}", response_model=ComplementCategoryRead)
+async def update_category(
+    category_id: UUID, payload: ComplementCategoryUpdate, session: SessionDep
+) -> ComplementCategoryRead:
+    category = await catalog.get_category(session, category_id)
     if category is None:
         raise not_found("Categoria não encontrada.")
     await catalog.update_item(session, category, payload.model_dump(exclude_unset=True))
     await session.commit()
-    return FlavorCategoryRead.model_validate(category)
+    return ComplementCategoryRead.model_validate(category)
 
 
 @router.delete(
-    "/flavor-categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT
+    "/complement-categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT
 )
-async def delete_flavor_category(category_id: UUID, session: SessionDep) -> Response:
+async def delete_category(category_id: UUID, session: SessionDep) -> Response:
     """Apagar a categoria não apaga sabor nenhum.
 
-    O vínculo em `complements.flavor_category_id` é ON DELETE SET NULL: os
+    O vínculo em `complements.category_id` é ON DELETE SET NULL: os
     sabores continuam no cardápio, só deixam de estar agrupados.
     """
-    category = await catalog.get_flavor_category(session, category_id)
+    category = await catalog.get_category(session, category_id)
     if category is None:
         raise not_found("Categoria não encontrada.")
     await catalog.delete_item(session, category)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/catalog/reorder", status_code=status.HTTP_204_NO_CONTENT)
+async def reorder_catalog(payload: ReorderRequest, session: SessionDep) -> Response:
+    """Grava a ordem que o lojista montou arrastando os itens no painel.
+
+    Uma requisição para a lista inteira, e não uma por item: a ordem é uma
+    coisa só, e meia ordem gravada sai torta no cardápio do WhatsApp.
+    """
+    try:
+        await catalog.reorder(session, kind=payload.kind, ids=payload.ids)
+    except ValueError as exc:
+        raise bad_request(str(exc)) from exc
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

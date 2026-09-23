@@ -1,13 +1,16 @@
 /**
- * Edição de qualquer nível do cardápio: produto, categoria do produto (grupo)
- * e complemento/sabor.
+ * Edição de qualquer nível do cardápio: produto, grupo de opções e item.
  *
  * A regra desta tela: **o que dá para definir na criação tem que dar para
  * editar depois**. Antes daqui só saíam nome e preço, então descrição,
- * disponibilidade, ordem e as regras de escolha do grupo (obrigatório? quantos
- * sabores?) eram definidas uma vez e nunca mais — para trocar "escolha 2
- * sabores" por "escolha 3" o lojista tinha que apagar a categoria inteira e
- * perder os 31 sabores junto.
+ * disponibilidade e as regras de escolha do grupo (obrigatório? quantas
+ * opções?) eram definidas uma vez e nunca mais — para trocar "escolha 3" por
+ * "escolha 1 a 2" o lojista teria que apagar o grupo inteiro e recadastrar os
+ * 31 itens dentro dele.
+ *
+ * A ordem de exibição não está aqui de propósito: digitar 0, 1, 2 em cada item
+ * é trabalho de planilha, e ninguém lembra qual número sobrou livre. Ela se
+ * muda arrastando, direto na lista.
  */
 
 import { useEffect, useState } from 'react';
@@ -23,7 +26,7 @@ import type {
   CatalogEntity,
   Complement,
   ComplementGroup,
-  FlavorCategory,
+  ComplementCategory,
   Product,
 } from '@/types/catalog';
 
@@ -34,14 +37,14 @@ export type EditTarget =
 
 interface Props {
   editTarget: EditTarget | null;
-  flavorCategories: FlavorCategory[];
+  categories: ComplementCategory[];
   onClose: () => void;
   onSave: (entity: CatalogEntity, id: string, data: Record<string, unknown>) => Promise<unknown>;
 }
 
 const TITULOS: Record<EditTarget['type'], string> = {
   product: 'Editar produto',
-  group: 'Editar categoria',
+  group: 'Editar grupo de opções',
   complement: 'Editar item',
 };
 
@@ -51,7 +54,6 @@ interface Form {
   description: string;
   price: string;
   available: boolean;
-  sortOrder: string;
   categoryId: string;
   minChoices: string;
   maxChoices: string;
@@ -63,7 +65,6 @@ const VAZIO: Form = {
   description: '',
   price: '0',
   available: true,
-  sortOrder: '0',
   categoryId: '',
   minChoices: '0',
   maxChoices: '1',
@@ -80,7 +81,6 @@ function carregar(target: EditTarget): Form {
       description: product.description ?? '',
       price: String(product.base_price ?? 0),
       available: product.is_available,
-      sortOrder: String(product.sort_order ?? 0),
     };
   }
 
@@ -88,7 +88,6 @@ function carregar(target: EditTarget): Form {
     const group = target.item;
     return {
       ...base,
-      sortOrder: String(group.sort_order ?? 0),
       minChoices: String(group.min_choices),
       maxChoices: String(group.max_choices),
       required: group.is_required,
@@ -100,8 +99,7 @@ function carregar(target: EditTarget): Form {
     ...base,
     price: String(complement.extra_price ?? 0),
     available: complement.is_available,
-    sortOrder: String(complement.sort_order ?? 0),
-    categoryId: complement.flavor_category_id ?? '',
+    categoryId: complement.category_id ?? '',
   };
 }
 
@@ -110,7 +108,7 @@ function numero(valor: string, minimo = 0): number {
   return Number.isNaN(parsed) ? minimo : Math.max(minimo, parsed);
 }
 
-export const EditItemSheet = ({ editTarget, flavorCategories, onClose, onSave }: Props) => {
+export const EditItemSheet = ({ editTarget, categories, onClose, onSave }: Props) => {
   const [form, setForm] = useState<Form>(VAZIO);
   const { loading, run } = useAsyncSubmit();
 
@@ -124,23 +122,20 @@ export const EditItemSheet = ({ editTarget, flavorCategories, onClose, onSave }:
   const min = numero(form.minChoices);
   const max = numero(form.maxChoices, 1);
   // Um grupo obrigatório com mínimo 0 é contraditório, e o backend recusa: o
-  // agente decide "falta escolher sabor?" olhando exatamente esse mínimo.
+  // agente decide "falta escolher alguma coisa?" olhando esse mínimo.
   const erroDeEscolhas =
     editTarget?.type === 'group'
       ? max < min
         ? 'O máximo não pode ser menor que o mínimo.'
         : form.required && min < 1
-          ? 'Categoria obrigatória precisa de no mínimo 1 escolha.'
+          ? 'Grupo obrigatório precisa de no mínimo 1 escolha.'
           : null
       : null;
 
   const handleSave = () => {
     if (!editTarget) return;
     run(async () => {
-      const data: Record<string, unknown> = {
-        name: form.name.trim(),
-        sort_order: numero(form.sortOrder),
-      };
+      const data: Record<string, unknown> = { name: form.name.trim() };
 
       if (editTarget.type === 'product') {
         data.description = form.description.trim() || null;
@@ -153,7 +148,7 @@ export const EditItemSheet = ({ editTarget, flavorCategories, onClose, onSave }:
       } else {
         data.extra_price = Number.parseFloat(form.price) || 0;
         data.is_available = form.available;
-        data.flavor_category_id = form.categoryId || null;
+        data.category_id = form.categoryId || null;
       }
 
       await onSave(editTarget.type, editTarget.item.id, data);
@@ -214,14 +209,14 @@ export const EditItemSheet = ({ editTarget, flavorCategories, onClose, onSave }:
 
           {editTarget?.type === 'complement' && (
             <div className="space-y-2">
-              <Label htmlFor="edit-category">Categoria do sabor</Label>
+              <Label htmlFor="edit-category">Categoria do item</Label>
               <Select
                 id="edit-category"
                 value={form.categoryId}
                 onChange={(e) => set('categoryId', e.target.value)}
               >
                 <option value="">Não se aplica</option>
-                {flavorCategories.map((category) => (
+                {categories.map((category) => (
                   <option key={category.id} value={category.id}>
                     {category.name}
                   </option>
@@ -229,7 +224,7 @@ export const EditItemSheet = ({ editTarget, flavorCategories, onClose, onSave }:
               </Select>
               <p className="text-xs text-muted-foreground">
                 É por ela que o cardápio do WhatsApp sai agrupado. Para criar ou
-                renomear categorias, use “Categorias de sabor” no topo da tela.
+                renomear, use “Categorias” no topo da tela.
               </p>
             </div>
           )}
@@ -287,20 +282,6 @@ export const EditItemSheet = ({ editTarget, flavorCategories, onClose, onSave }:
               />
             </div>
           )}
-
-          <div className="space-y-2">
-            <Label htmlFor="edit-sort">Ordem de exibição</Label>
-            <Input
-              id="edit-sort"
-              type="number"
-              min={0}
-              value={form.sortOrder}
-              onChange={(e) => set('sortOrder', e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Menor número aparece primeiro, no painel e no WhatsApp.
-            </p>
-          </div>
 
           <Button
             className="w-full"

@@ -1,11 +1,16 @@
 /**
- * Categorias de sabor: criar, renomear, reordenar e excluir.
+ * Categorias de complemento: criar, renomear, reordenar e excluir.
  *
- * Esta tela faltava. O cadastro do sabor sempre teve o campo "categoria do
- * sabor", mas as opções vinham do `seed.sql`: quem cadastrasse um produto novo
- * encontrava um select com duas opções de gelateria e nenhum lugar para criar
- * as suas. Como a lista é dado do lojista — "Sem lactose" numa sorveteria,
- * outra coisa em outra loja —, ela precisa ser editável aqui.
+ * Classificam um complemento em qualquer produto: "Sem lactose" numa
+ * gelateria, "Vegetariano" numa hamburgueria, "Salgadas" numa pizzaria. É por
+ * elas que o cardápio do WhatsApp sai agrupado e que o agente responde "tem
+ * opção sem lactose?".
+ *
+ * Esta tela faltava. O campo sempre existiu no cadastro do complemento, mas as
+ * opções vinham do `seed.sql`: quem cadastrasse um produto novo encontrava um
+ * select com duas opções de gelateria e nenhum lugar para criar as suas. Como
+ * a lista é dado do lojista, ela precisa ser editável aqui — é o que permite
+ * o mesmo sistema atender outro tipo de estabelecimento sem tocar em código.
  *
  * Excluir uma categoria NÃO apaga sabor nenhum: o vínculo é
  * `ON DELETE SET NULL`, então os sabores continuam no cardápio, apenas sem
@@ -23,21 +28,23 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SortableList } from '@/components/common/SortableList';
 import { useAsyncSubmit } from '@/hooks/use-async-submit';
-import type { FlavorCategory, FlavorCategoryInput } from '@/types/catalog';
+import type { ComplementCategory, ComplementCategoryInput } from '@/types/catalog';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  categories: FlavorCategory[];
+  categories: ComplementCategory[];
   /** Quantos sabores usam cada categoria — para avisar antes de excluir. */
   usageByCategory: Record<string, number>;
-  onCreate: (data: FlavorCategoryInput) => Promise<unknown>;
-  onRename: (id: string, data: Partial<FlavorCategoryInput>) => Promise<unknown>;
+  onCreate: (data: ComplementCategoryInput) => Promise<unknown>;
+  onRename: (id: string, data: Partial<ComplementCategoryInput>) => Promise<unknown>;
   onDelete: (id: string, name: string, usage: number) => void;
+  onReorder: (ids: string[]) => void;
 }
 
-export const FlavorCategoriesDialog = ({
+export const ComplementCategoriesDialog = ({
   open,
   onOpenChange,
   categories,
@@ -45,6 +52,7 @@ export const FlavorCategoriesDialog = ({
   onCreate,
   onRename,
   onDelete,
+  onReorder,
 }: Props) => {
   const [novoNome, setNovoNome] = useState('');
   const [editandoId, setEditandoId] = useState<string | null>(null);
@@ -73,24 +81,27 @@ export const FlavorCategoriesDialog = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Categorias de sabor</DialogTitle>
+          <DialogTitle>Categorias de complemento</DialogTitle>
         </DialogHeader>
 
         <p className="text-sm text-muted-foreground">
-          Agrupam os sabores no cardápio que o agente manda pelo WhatsApp, e são
-          o que responde “tem sabor sem lactose?”.
+          Classificam um item em qualquer produto — “Sem lactose”, “Vegetariano”,
+          “Picante”. Agrupam o cardápio que o agente manda pelo WhatsApp e são o
+          que responde “tem opção sem lactose?”. Arraste para mudar a ordem.
         </p>
 
-        <ul className="divide-y divide-border rounded-md border border-border">
+        <div className="rounded-md border border-border">
           {categories.length === 0 && (
-            <li className="px-3 py-6 text-center text-sm text-muted-foreground">
+            <p className="px-3 py-6 text-center text-sm text-muted-foreground">
               Nenhuma categoria ainda.
-            </li>
+            </p>
           )}
-          {categories.map((category) => {
+          <SortableList items={categories} onReorder={onReorder}>
+            {(category, handle) => {
             const usos = usageByCategory[category.id] ?? 0;
             return (
-              <li key={category.id} className="flex items-center gap-2 px-3 py-2">
+              <div className="flex items-center gap-1 border-b border-border px-1 py-2 last:border-b-0 sm:gap-2 sm:px-3">
+                {handle}
                 {editandoId === category.id ? (
                   <>
                     <Input
@@ -119,8 +130,8 @@ export const FlavorCategoriesDialog = ({
                       <p className="truncate text-sm font-medium">{category.name}</p>
                       <p className="text-xs text-muted-foreground">
                         {usos === 0
-                          ? 'nenhum sabor usa'
-                          : `${usos} ${usos === 1 ? 'sabor usa' : 'sabores usam'}`}
+                          ? 'nenhum item usa'
+                          : `${usos} ${usos === 1 ? 'item usa' : 'itens usam'}`}
                       </p>
                     </div>
                     <Button
@@ -146,10 +157,11 @@ export const FlavorCategoriesDialog = ({
                     </Button>
                   </>
                 )}
-              </li>
+              </div>
             );
-          })}
-        </ul>
+            }}
+          </SortableList>
+        </div>
 
         <div className="space-y-2">
           <Label htmlFor="nova-categoria">Nova categoria</Label>

@@ -18,7 +18,7 @@
 --      que é o que permite trocar o n8n por uma máquina de estados em código.
 --   6. webhook_events dá idempotência: o Mercado Pago reenvia notificações e
 --      hoje isso reprocessaria o mesmo pagamento várias vezes.
---   7. flavor_categories separa os sabores em "sem lactose" / "com lactose".
+--   7. complement_categories separa os sabores em "sem lactose" / "com lactose".
 --      É um atributo do sabor, não do grupo de escolha: o mesmo sabor pode
 --      aparecer em vários produtos (pote, casquinha, milkshake) e continuar
 --      na mesma categoria. Sem isso o agente de WhatsApp não consegue
@@ -63,10 +63,16 @@ CREATE TABLE products (
 );
 CREATE INDEX idx_products_available ON products (is_available) WHERE is_available;
 
--- Categoria de sabor: "Sem lactose" / "Com lactose". Existe fora de products/
--- complement_groups porque é um atributo do SABOR em si (vale em qualquer
--- produto que o venda), não do grupo de escolha de um produto específico.
-CREATE TABLE flavor_categories (
+-- Categoria do complemento: uma classificação que vale em QUALQUER produto.
+-- Numa gelateria é "Sem lactose"/"Com lactose"; numa pizzaria seria "Salgadas"
+-- e "Doces"; numa hamburgueria, "Vegetariano". Existe fora de products/
+-- complement_groups porque é atributo do complemento em si, não do grupo de
+-- escolha de um produto específico — o mesmo item aparece em vários produtos e
+-- continua na mesma categoria.
+--
+-- É ela que deixa o agente responder "tem opção sem lactose?" e mandar o
+-- cardápio agrupado sem nada disso estar escrito no código.
+CREATE TABLE complement_categories (
     id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name       text NOT NULL UNIQUE,
     sort_order integer NOT NULL DEFAULT 0,
@@ -97,13 +103,13 @@ CREATE TABLE complements (
     extra_price        numeric(10, 2) NOT NULL DEFAULT 0 CHECK (extra_price >= 0),
     is_available       boolean NOT NULL DEFAULT true,
     sort_order         integer NOT NULL DEFAULT 0,
-    -- NULL para complementos que não são sabores (cobertura, adicional, calda).
-    flavor_category_id uuid REFERENCES flavor_categories (id) ON DELETE SET NULL,
+    -- NULL para complemento que não se classifica (cobertura, adicional).
+    category_id        uuid REFERENCES complement_categories (id) ON DELETE SET NULL,
     created_at         timestamptz NOT NULL DEFAULT now(),
     updated_at         timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_complements_group           ON complements (group_id);
-CREATE INDEX idx_complements_flavor_category ON complements (flavor_category_id) WHERE flavor_category_id IS NOT NULL;
+CREATE INDEX idx_complements_category ON complements (category_id) WHERE category_id IS NOT NULL;
 
 -- ============================================================================
 -- CLIENTES
@@ -273,7 +279,7 @@ CREATE UNIQUE INDEX uq_messages_provider_id ON conversation_messages (provider_m
 -- ============================================================================
 -- Triggers de updated_at
 -- ============================================================================
-CREATE TRIGGER trg_flavor_categories_updated BEFORE UPDATE ON flavor_categories FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_complement_categories_updated BEFORE UPDATE ON complement_categories FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_products_updated      BEFORE UPDATE ON products          FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_groups_updated        BEFORE UPDATE ON complement_groups FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_complements_updated   BEFORE UPDATE ON complements       FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -325,14 +331,14 @@ WHERE o.payment_status = 'pago' AND o.status <> 'cancelado'
 GROUP BY 1;
 
 -- Escolhas por categoria de sabor (sem lactose x com lactose)
-CREATE VIEW vw_flavor_category_sales AS
+CREATE VIEW vw_category_sales AS
 SELECT fc.name    AS categoria,
        count(*)   AS escolhas
 FROM order_item_complements oic
 JOIN order_items oi        ON oi.id = oic.order_item_id
 JOIN orders o               ON o.id = oi.order_id
 JOIN complements c          ON c.id = oic.complement_id
-JOIN flavor_categories fc   ON fc.id = c.flavor_category_id
+JOIN complement_categories fc   ON fc.id = c.category_id
 WHERE o.payment_status = 'pago' AND o.status <> 'cancelado'
 GROUP BY 1;
 

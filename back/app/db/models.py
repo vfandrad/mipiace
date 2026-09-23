@@ -114,10 +114,14 @@ class Product(Base):
     )
 
 
-class FlavorCategory(Base):
-    """Atributo do sabor em si ("Sem lactose" / "Com lactose"), não do grupo."""
+class ComplementCategory(Base):
+    """Classificação de complemento que vale em qualquer produto.
 
-    __tablename__ = "flavor_categories"
+    "Sem lactose" numa gelateria, "Vegetariano" numa hamburgueria. É atributo
+    do complemento em si, não do grupo de escolha de um produto.
+    """
+
+    __tablename__ = "complement_categories"
 
     id: Mapped[uuid.UUID] = _pk()
     name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
@@ -183,16 +187,16 @@ class Complement(Base):
     sort_order: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
-    # NULL para complementos que não são sabores (cobertura, adicional, calda).
-    flavor_category_id: Mapped[uuid.UUID | None] = mapped_column(
+    # NULL para complemento que não se classifica (cobertura, adicional).
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUuid(as_uuid=True),
-        ForeignKey("flavor_categories.id", ondelete="SET NULL"),
+        ForeignKey("complement_categories.id", ondelete="SET NULL"),
     )
     created_at: Mapped[datetime] = _timestamp()
     updated_at: Mapped[datetime] = _timestamp()
 
     group: Mapped[ComplementGroup] = relationship(back_populates="complements")
-    flavor_category: Mapped[FlavorCategory | None] = relationship(lazy="selectin")
+    category: Mapped[ComplementCategory | None] = relationship(lazy="selectin")
 
 
 # ============================================================================
@@ -494,7 +498,7 @@ __all__ = [
     "Conversation",
     "ConversationMessage",
     "Customer",
-    "FlavorCategory",
+    "ComplementCategory",
     "Order",
     "OrderItem",
     "OrderItemComplement",

@@ -25,12 +25,13 @@ import { CreateProductDialog } from '@/components/produtos/CreateProductDialog';
 import { CreateGroupDialog } from '@/components/produtos/CreateGroupDialog';
 import { CreateComplementDialog } from '@/components/produtos/CreateComplementDialog';
 import { EditItemSheet, type EditTarget } from '@/components/produtos/EditItemSheet';
-import { FlavorCategoriesDialog } from '@/components/produtos/FlavorCategoriesDialog';
+import { ComplementCategoriesDialog } from '@/components/produtos/ComplementCategoriesDialog';
+import { SortableList } from '@/components/common/SortableList';
 import { DeleteConfirmDialog } from '@/components/produtos/DeleteConfirmDialog';
 
 const Produtos = () => {
   const catalog = useProducts();
-  const { products, flavorCategories, isLoading, isError, error } = catalog;
+  const { products, complementCategories, isLoading, isError, error } = catalog;
 
   const [filtro, setFiltro] = useState('');
   // Edição em massa: ids dos complementos marcados. Um Set porque a operação
@@ -80,7 +81,7 @@ const Produtos = () => {
     for (const product of products) {
       for (const group of product.groups) {
         for (const complement of group.complements) {
-          const id = complement.flavor_category_id;
+          const id = complement.category_id;
           if (id) contagem[id] = (contagem[id] ?? 0) + 1;
         }
       }
@@ -164,15 +165,21 @@ const Produtos = () => {
             className="border border-dashed rounded-lg py-12"
           />
         ) : (
-          <div className="space-y-6">
-            {visiveis.map((product) => (
-              <Card key={product.id} className={product.is_available ? undefined : 'opacity-70'}>
+          <SortableList
+            items={visiveis}
+            onReorder={catalog.reorderProducts}
+            disabled={Boolean(termo)}
+            className="space-y-6"
+          >
+            {(product, dragHandle) => (
+              <Card className={product.is_available ? undefined : 'opacity-70'}>
                 {/* Nome e preço em cima, controles ao lado: numa faixa de
                     390px, nome + preço + interruptor + dois botões na mesma
                     linha não cabem, e o título era o primeiro a ser cortado. */}
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
+                    {!termo && <div className="pt-1">{dragHandle}</div>}
+                    <div className="min-w-0 flex-1">
                       <CardTitle className="truncate text-lg sm:text-xl">
                         {product.name}
                       </CardTitle>
@@ -220,11 +227,18 @@ const Produtos = () => {
                 </CardHeader>
 
                 <CardContent className="space-y-4">
-                  {product.groups.map((group) => (
+                  <SortableList
+                    items={product.groups}
+                    onReorder={(ids) => catalog.reorderGroups(product.id, ids)}
+                    disabled={Boolean(termo)}
+                    className="space-y-4"
+                  >
+                    {(group, groupHandle) => (
                     <GroupCard
-                      key={group.id}
                       group={group}
-                      flavorCategories={flavorCategories}
+                      dragHandle={!termo ? groupHandle : undefined}
+                      onReorderComplements={(ids) => catalog.reorderComplements(group.id, ids)}
+                      categories={complementCategories}
                       filtro={termo}
                       selecionados={selecionados}
                       onToggleSelecao={alternarSelecao}
@@ -258,7 +272,8 @@ const Produtos = () => {
                       }
                       onAddComplement={() => setNewComplementGroupId(group.id)}
                     />
-                  ))}
+                    )}
+                  </SortableList>
 
                   <Button
                     variant="outline"
@@ -267,12 +282,12 @@ const Produtos = () => {
                     onClick={() => setNewGroupProduct({ id: product.id, name: product.name })}
                   >
                     <FolderPlus className="mr-2 h-4 w-4 shrink-0" />
-                    <span className="truncate">Nova categoria</span>
+                    <span className="truncate">Novo grupo de opções</span>
                   </Button>
                 </CardContent>
               </Card>
-            ))}
-          </div>
+            )}
+          </SortableList>
         )}
 
         {/* Barra de edição em massa. Fixa no rodapé porque a seleção acontece
@@ -334,19 +349,20 @@ const Produtos = () => {
           open={!!newComplementGroupId}
           onOpenChange={(open) => !open && setNewComplementGroupId(null)}
           groupId={newComplementGroupId ?? ''}
-          flavorCategories={flavorCategories}
+          categories={complementCategories}
           onCreate={catalog.createComplement}
         />
-        <FlavorCategoriesDialog
+        <ComplementCategoriesDialog
           open={showCategories}
           onOpenChange={setShowCategories}
-          categories={flavorCategories}
+          categories={complementCategories}
           usageByCategory={usoDasCategorias}
-          onCreate={catalog.createFlavorCategory}
-          onRename={(id, data) => catalog.editItem('flavorCategory', id, data)}
+          onCreate={catalog.createComplementCategory}
+          onRename={(id, data) => catalog.editItem('category', id, data)}
+          onReorder={catalog.reorderCategories}
           onDelete={(id, name, usage) =>
             setDeleteTarget({
-              entity: 'flavorCategory',
+              entity: 'category',
               id,
               name,
               // Excluir categoria não apaga sabor: o vínculo vira nulo.
@@ -359,7 +375,7 @@ const Produtos = () => {
         />
         <EditItemSheet
           editTarget={editTarget}
-          flavorCategories={flavorCategories}
+          categories={complementCategories}
           onClose={() => setEditTarget(null)}
           onSave={catalog.editItem}
         />

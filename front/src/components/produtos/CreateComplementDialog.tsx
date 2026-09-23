@@ -12,13 +12,13 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useAsyncSubmit } from '@/hooks/use-async-submit';
-import type { ComplementInput, FlavorCategory } from '@/types/catalog';
+import type { ComplementInput, ComplementCategory } from '@/types/catalog';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   groupId: string;
-  flavorCategories: FlavorCategory[];
+  categories: ComplementCategory[];
   /** O grupo vai na rota (`POST /api/groups/{id}/complements`). */
   onCreate: (groupId: string, data: ComplementInput) => Promise<unknown>;
 }
@@ -27,7 +27,7 @@ export const CreateComplementDialog = ({
   open,
   onOpenChange,
   groupId,
-  flavorCategories,
+  categories,
   onCreate,
 }: Props) => {
   const [name, setName] = useState('');
@@ -43,7 +43,7 @@ export const CreateComplementDialog = ({
         name: name.trim(),
         extra_price: Number.parseFloat(price) || 0,
         is_available: available,
-        flavor_category_id: categoryId || null,
+        category_id: categoryId || null,
       });
       setName('');
       setPrice('');
@@ -82,14 +82,14 @@ export const CreateComplementDialog = ({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="complement-category">Categoria do sabor</Label>
+            <Label htmlFor="complement-category">Categoria do item</Label>
             <Select
               id="complement-category"
               value={categoryId}
               onChange={(e) => setCategoryId(e.target.value)}
             >
               <option value="">Não se aplica</option>
-              {flavorCategories.map((category) => (
+              {categories.map((category) => (
                 <option key={category.id} value={category.id}>
                   {category.name}
                 </option>

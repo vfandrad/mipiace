@@ -63,9 +63,9 @@ export const CreateGroupDialog = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Nova categoria para "{productName}"</DialogTitle>
+          <DialogTitle>Novo grupo de opções para "{productName}"</DialogTitle>
           <DialogDescription>
-            A categoria pertence só a este produto. Ex.: os "Sabores" do Pote 500ml são
+            O grupo pertence só a este produto. Ex.: os "Sabores" do Pote 500ml são
             independentes dos "Sabores" do Pote 240ml.
           </DialogDescription>
         </DialogHeader>
@@ -105,7 +105,7 @@ export const CreateGroupDialog = ({
             <div>
               <Label htmlFor="group-required">Obrigatório</Label>
               <p className="text-xs text-muted-foreground">
-                O agente só fecha o item depois de preencher esta categoria.
+                O agente só fecha o item depois de preencher este grupo.
               </p>
             </div>
             <Switch id="group-required" checked={required} onCheckedChange={setRequired} />
@@ -116,7 +116,7 @@ export const CreateGroupDialog = ({
             Cancelar
           </Button>
           <Button onClick={handleSubmit} disabled={loading || !name.trim()}>
-            {loading ? 'Criando...' : 'Criar categoria'}
+            {loading ? 'Criando...' : 'Criar grupo'}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -22,7 +22,7 @@ export const ProductsHeader = ({ onNewProduct, onManageCategories, onRefresh }: 
         className="min-h-11 sm:min-h-10"
       >
         <Tags className="mr-2 h-4 w-4" />
-        <span className="hidden sm:inline">Categorias de sabor</span>
+        <span className="hidden sm:inline">Categorias de item</span>
         <span className="sm:hidden">Categorias</span>
       </Button>
       {/* Botão principal da tela: ocupa o resto da faixa no celular. */}

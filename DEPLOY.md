@@ -301,6 +301,27 @@ PROFILE=whatsapp ./deploy.sh
 > `back/db/schema.sql`, o banco existente **não** se atualiza sozinho — a
 > alteração tem que ser aplicada à mão com `psql`.
 
+### Alterações de schema já publicadas
+
+Rode uma vez, no banco que já existe, antes de subir a versão correspondente.
+São idempotentes na prática: se já rodaram, o `psql` reclama que o objeto não
+existe mais e nada acontece.
+
+**Categoria de sabor virou categoria de complemento** (o sistema deixou de
+presumir que todo complemento é sabor, para atender outros tipos de loja):
+
+```sql
+ALTER TABLE flavor_categories RENAME TO complement_categories;
+ALTER TABLE complements RENAME COLUMN flavor_category_id TO category_id;
+ALTER INDEX IF EXISTS idx_complements_flavor_category RENAME TO idx_complements_category;
+```
+
+**Sabor não cobra a mais** (se quiser o cardápio sem acréscimo por sabor):
+
+```sql
+UPDATE complements SET extra_price = 0 WHERE extra_price <> 0;
+```
+
 **Trocar segredos:**
 
 | Segredo | Como |

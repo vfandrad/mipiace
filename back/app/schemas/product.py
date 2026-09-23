@@ -8,6 +8,7 @@ aqui, não espalhado nas rotas.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from decimal import Decimal
 from uuid import UUID
 
@@ -27,7 +28,7 @@ class ComplementRead(ORMModel):
     extra_price: Money
     is_available: bool
     sort_order: int
-    flavor_category_id: UUID | None = None
+    category_id: UUID | None = None
 
 
 class GroupRead(ORMModel):
@@ -150,7 +151,7 @@ class ComplementCreate(BaseModel):
     extra_price: Money = Decimal("0")
     is_available: bool = True
     sort_order: int = Field(default=0, ge=0)
-    flavor_category_id: UUID | None = None
+    category_id: UUID | None = None
 
     @field_validator("name")
     @classmethod
@@ -163,7 +164,7 @@ class ComplementUpdate(BaseModel):
     extra_price: Money | None = None
     is_available: bool | None = None
     sort_order: int | None = Field(default=None, ge=0)
-    flavor_category_id: UUID | None = None
+    category_id: UUID | None = None
 
     @field_validator("name")
     @classmethod
@@ -171,13 +172,13 @@ class ComplementUpdate(BaseModel):
         return _clean_name(value) if value is not None else None
 
 
-class FlavorCategoryRead(ORMModel):
+class ComplementCategoryRead(ORMModel):
     id: UUID
     name: str
     sort_order: int
 
 
-class FlavorCategoryCreate(BaseModel):
+class ComplementCategoryCreate(BaseModel):
     """Categoria de sabor ("Sem lactose", "Clássicos", "Frutados"...).
 
     É o lojista que decide quais existem: numa sorveteria são restrições, numa
@@ -194,7 +195,7 @@ class FlavorCategoryCreate(BaseModel):
         return _clean_name(value)
 
 
-class FlavorCategoryUpdate(BaseModel):
+class ComplementCategoryUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     sort_order: int | None = Field(default=None, ge=0)
 
@@ -204,13 +205,20 @@ class FlavorCategoryUpdate(BaseModel):
         return _clean_name(value) if value is not None else None
 
 
+class ReorderRequest(BaseModel):
+    """A nova ordem de uma lista, como ela ficou na tela depois do arrasto."""
+
+    kind: Literal["product", "group", "complement", "category"]
+    ids: list[UUID] = Field(min_length=1, max_length=500)
+
+
 __all__ = [
     "ComplementCreate",
     "ComplementRead",
     "ComplementUpdate",
-    "FlavorCategoryCreate",
-    "FlavorCategoryRead",
-    "FlavorCategoryUpdate",
+    "ComplementCategoryCreate",
+    "ComplementCategoryRead",
+    "ComplementCategoryUpdate",
     "GroupCreate",
     "GroupRead",
     "GroupUpdate",
@@ -218,4 +226,5 @@ __all__ = [
     "ProductList",
     "ProductRead",
     "ProductUpdate",
+    "ReorderRequest",
 ]

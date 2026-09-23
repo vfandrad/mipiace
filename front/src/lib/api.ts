@@ -11,12 +11,13 @@ import type {
   Complement,
   ComplementGroup,
   ComplementInput,
-  FlavorCategoryInput,
-  FlavorCategory,
+  ComplementCategoryInput,
+  ComplementCategory,
   GroupInput,
   Product,
   ProductInput,
   ProductListResponse,
+  ReorderKind,
 } from '@/types/catalog';
 import type { ApiOrder, OrderStatus } from '@/types/order';
 import type {
@@ -198,33 +199,43 @@ export function deleteProduct(id: string): Promise<void> {
 }
 
 /**
- * Categorias de sabor ("Sem lactose", "Frutados"...).
+ * Categorias de complemento ("Sem lactose", "Frutados", "Vegetariano"...).
  *
- * São dado do lojista, não constante do sistema: cada loja agrupa o cardápio
- * do seu jeito, e é por essas categorias que o agente responde "tem sabor sem
- * lactose?" e monta o cardápio que manda no WhatsApp.
+ * São dado do lojista, não constante do sistema: cada loja classifica os
+ * complementos do seu jeito, e é por elas que o agente responde "tem opção sem
+ * lactose?" e monta o cardápio agrupado que manda no WhatsApp.
  */
-export async function fetchFlavorCategories(): Promise<FlavorCategory[]> {
-  const data = await request<FlavorCategory[]>('/api/flavor-categories');
-  return unwrapList<FlavorCategory>(data, 'flavor_categories');
+export async function fetchComplementCategories(): Promise<ComplementCategory[]> {
+  const data = await request<ComplementCategory[]>('/api/complement-categories');
+  return unwrapList<ComplementCategory>(data, 'complement_categories');
 }
 
-export function createFlavorCategory(data: FlavorCategoryInput): Promise<FlavorCategory> {
-  return request<FlavorCategory>('/api/flavor-categories', { method: 'POST', body: data });
+export function createComplementCategory(data: ComplementCategoryInput): Promise<ComplementCategory> {
+  return request<ComplementCategory>('/api/complement-categories', { method: 'POST', body: data });
 }
 
-export function updateFlavorCategory(
+export function updateComplementCategory(
   id: string,
-  data: Partial<FlavorCategoryInput>,
-): Promise<FlavorCategory> {
-  return request<FlavorCategory>(`/api/flavor-categories/${id}`, {
+  data: Partial<ComplementCategoryInput>,
+): Promise<ComplementCategory> {
+  return request<ComplementCategory>(`/api/complement-categories/${id}`, {
     method: 'PATCH',
     body: data,
   });
 }
 
-export function deleteFlavorCategory(id: string): Promise<void> {
-  return request<void>(`/api/flavor-categories/${id}`, { method: 'DELETE' });
+/**
+ * Grava a ordem em que o lojista arrastou os itens de uma lista.
+ *
+ * Uma requisição para a lista inteira: a ordem é uma coisa só, e um PATCH por
+ * item deixaria o cardápio meio ordenado se um deles falhasse.
+ */
+export function reorderCatalog(kind: ReorderKind, ids: string[]): Promise<void> {
+  return request<void>('/api/catalog/reorder', { method: 'POST', body: { kind, ids } });
+}
+
+export function deleteComplementCategory(id: string): Promise<void> {
+  return request<void>(`/api/complement-categories/${id}`, { method: 'DELETE' });
 }
 
 export function createGroup(productId: string, data: GroupInput): Promise<ComplementGroup> {

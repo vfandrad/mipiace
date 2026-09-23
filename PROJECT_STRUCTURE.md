@@ -224,9 +224,18 @@ escreve no banco: o lojista liga e desliga `is_available` conforme o que saiu
 do freezer, e o agente enxerga a mudança na próxima mensagem (ele lê o catálogo
 a cada turno).
 
-Cada sabor carrega uma **categoria de lactose** ("Sem lactose" / "Com lactose"),
-editável no painel ao criar ou editar o sabor. É atributo do sabor, não do
-grupo — por isso mora em `flavor_categories` e não no grupo de escolha.
+Cada complemento pode carregar uma **categoria** ("Sem lactose" numa
+gelateria, "Vegetariano" numa hamburgueria), criada e editada no painel em
+*Categorias de item*. É atributo do complemento, não do grupo de escolha — por
+isso mora em `complement_categories`, valendo para todo produto que venda
+aquele item. É ela que agrupa o cardápio do WhatsApp e responde "tem opção sem
+lactose?", sem nada disso estar escrito no código: em outra loja, outras
+categorias, o mesmo sistema.
+
+**A ordem é arrastada, não digitada.** Produtos, grupos, itens e categorias se
+reordenam arrastando pela alça ⠿, e o painel grava a lista inteira de uma vez
+em `POST /api/catalog/reorder` — `sort_order` vira a posição. O campo numérico
+saiu da tela: ninguém lembra qual número sobrou livre.
 
 Sabor indisponível não some do catálogo que o agente recebe — ele precisa saber
 que existe para responder *"hoje não tem pistache"* em vez de *"não entendi"*.
@@ -370,7 +379,7 @@ visíveis no navegador:
 
 | Arquivo | Linhas | Rotas |
 |---|---|---|
-| `products.py` | 182 | `/api/products`, `/api/groups`, `/api/complements`, `/api/flavor-categories` |
+| `products.py` | 240 | `/api/products`, `/api/groups`, `/api/complements`, `/api/complement-categories`, `/api/catalog/reorder` |
 | `orders.py` | 62 | `/api/orders` — lista, detalhe, resumo, mudar status |
 | `metrics.py` | 49 | `/api/metrics/*` — dashboard |
 | `conversations.py` | 64 | `/api/conversations` — lista, mensagens, handoff |

@@ -1,7 +1,7 @@
 /**
- * Categoria de um produto e seus complementos.
+ * Grupo de opções de um produto e os complementos dentro dele.
  *
- * Duas decisões que valem comentário, porque a versão anterior errava nas duas:
+ * Decisões que valem comentário, porque a versão anterior errava nelas:
  *
  * 1. **Não é tabela.** Eram 4 colunas (nome, preço, disponível, ações) dentro
  *    de um `overflow-auto`. Numa tela de 390px isso virava rolagem horizontal
@@ -10,28 +10,37 @@
  *    fica em cima e preço + controles embaixo; a partir de `sm` tudo cabe numa
  *    linha só.
  *
- * 2. **Começa fechada.** Cada um dos três tamanhos tem sua própria lista com os
- *    31 sabores, então a página abria com 93 linhas. Fechada, o cabeçalho já
- *    responde a pergunta do dia ("quantos sabores estão no ar?") e quem precisa
- *    mexer abre só a categoria que interessa.
+ * 2. **Começa fechado.** Cada um dos três tamanhos tem sua própria lista com os
+ *    31 sabores, então a página abria com 93 linhas. Fechado, o cabeçalho já
+ *    responde a pergunta do dia ("quantos estão no ar?") e quem precisa mexer
+ *    abre só o grupo que interessa.
+ *
+ * 3. **A regra de escolha fica visível e editável no cabeçalho.** "escolhe 3"
+ *    é o que faz o agente pedir três opções antes de fechar o item; estava em
+ *    letra miúda e o botão que a edita ficava escondido no rodapé do grupo —
+ *    na prática não dava para trocar "escolha 3" por "escolha 1 a 2".
  */
 
+import type { ReactNode } from 'react';
 import { Plus, Pencil, Trash2, ChevronRight } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { SortableList } from '@/components/common/SortableList';
 import { formatCurrency } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import type { Complement, ComplementGroup, FlavorCategory } from '@/types/catalog';
+import type { Complement, ComplementCategory, ComplementGroup } from '@/types/catalog';
 
 interface Props {
   /** O grupo já traz seus complementos aninhados. */
   group: ComplementGroup;
-  flavorCategories: FlavorCategory[];
+  categories: ComplementCategory[];
   isSaving: boolean;
-  /** Termo de busca ativo: com filtro, a categoria nasce aberta. */
+  /** Termo de busca ativo: com filtro, o grupo nasce aberto. */
   filtro?: string;
+  /** Alça de arrasto do próprio grupo, vinda da lista de cima. */
+  dragHandle?: ReactNode;
   /** Ids dos complementos marcados para edição em massa. */
   selecionados: Set<string>;
   onToggleSelecao: (id: string) => void;
@@ -39,30 +48,39 @@ interface Props {
   onToggleComplement: (complement: Complement) => void;
   onEditComplement: (complement: Complement) => void;
   onDeleteComplement: (complement: Complement) => void;
+  onReorderComplements: (ids: string[]) => void;
   onEditGroup: () => void;
   onDeleteGroup: () => void;
   onAddComplement: () => void;
 }
 
-/** Nome da categoria do sabor, ou undefined quando o complemento não é sabor. */
+/** Nome da categoria do complemento, ou undefined quando ele não tem uma. */
 function categoryName(
   complement: Complement,
-  categories: FlavorCategory[],
+  categories: ComplementCategory[],
 ): string | undefined {
-  return categories.find((c) => c.id === complement.flavor_category_id)?.name;
+  return categories.find((c) => c.id === complement.category_id)?.name;
+}
+
+/** "escolhe 3" / "escolhe 1 a 2" — a regra que o agente segue na conversa. */
+function regraDeEscolha(group: ComplementGroup): string {
+  if (group.min_choices === group.max_choices) return `escolhe ${group.min_choices}`;
+  return `escolhe ${group.min_choices} a ${group.max_choices}`;
 }
 
 export const GroupCard = ({
   group,
-  flavorCategories,
+  categories,
   isSaving,
   filtro,
+  dragHandle,
   selecionados,
   onToggleSelecao,
   onSelecionarGrupo,
   onToggleComplement,
   onEditComplement,
   onDeleteComplement,
+  onReorderComplements,
   onEditGroup,
   onDeleteGroup,
   onAddComplement,
@@ -72,6 +90,9 @@ export const GroupCard = ({
   const ids = group.complements.map((c) => c.id);
   const marcadosAqui = ids.filter((id) => selecionados.has(id)).length;
   const todosMarcados = total > 0 && marcadosAqui === total;
+  // Arrastar com a busca ativa reordenaria uma lista PARCIAL: a posição
+  // gravada seria a das linhas visíveis, não a real.
+  const podeArrastar = !filtro;
 
   return (
     <Card className="overflow-hidden">
@@ -80,10 +101,11 @@ export const GroupCard = ({
       <details open={Boolean(filtro)} className="group/details">
         <summary
           className={cn(
-            'flex cursor-pointer list-none items-center gap-3 px-4 py-3',
+            'flex cursor-pointer list-none items-center gap-2 px-2 py-3 sm:px-4 sm:gap-3',
             'hover:bg-muted/50 [&::-webkit-details-marker]:hidden',
           )}
         >
+          {dragHandle}
           <ChevronRight
             className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open/details:rotate-90"
             aria-hidden
@@ -92,32 +114,57 @@ export const GroupCard = ({
           <div className="min-w-0 flex-1">
             <p className="truncate font-semibold leading-tight">{group.name}</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {/* A conta que importa no dia a dia: quantos sabores estão no ar. */}
+              {/* A conta que importa no dia a dia: quantos estão no ar. */}
               <span className={cn(disponiveis === 0 && 'font-medium text-destructive')}>
                 {disponiveis} de {total} disponíveis
               </span>
-              {' · '}
-              {group.is_required ? 'Obrigatório' : 'Opcional'}
-              {' · '}
-              escolhe {group.min_choices === group.max_choices
-                ? group.min_choices
-                : `${group.min_choices}–${group.max_choices}`}
             </p>
           </div>
+
+          {/* A regra de escolha ao lado do botão que a edita: é ela que decide
+              quantas opções o agente pede antes de fechar o item. */}
+          <Badge
+            variant={group.is_required ? 'default' : 'secondary'}
+            className="hidden shrink-0 sm:inline-flex"
+          >
+            {group.is_required ? 'Obrigatório' : 'Opcional'} · {regraDeEscolha(group)}
+          </Badge>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 shrink-0 sm:h-9 sm:w-9"
+            aria-label={`Editar regras de ${group.name}`}
+            onClick={(e) => {
+              // Dentro de <summary>: sem isto o clique abriria/fecharia o grupo.
+              e.preventDefault();
+              e.stopPropagation();
+              onEditGroup();
+            }}
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
         </summary>
+
+        {/* No celular o selo não cabe na linha do título; aqui ele reaparece. */}
+        <p className="px-4 pb-2 text-xs text-muted-foreground sm:hidden">
+          {group.is_required ? 'Obrigatório' : 'Opcional'} · {regraDeEscolha(group)}
+        </p>
 
         <div className="border-t border-border">
           {total === 0 ? (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-              Sem complementos nesta categoria
+              Nenhum item neste grupo
             </p>
           ) : (
-            <ul>
-              {group.complements.map((complement) => (
-                <li
-                  key={complement.id}
+            <SortableList
+              items={group.complements}
+              onReorder={onReorderComplements}
+              disabled={!podeArrastar}
+            >
+              {(complement, handle) => (
+                <div
                   className={cn(
-                    'flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/60 px-4 py-2 last:border-b-0',
+                    'flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border/60 px-2 py-2 sm:gap-x-3 sm:px-4',
                     !complement.is_available && 'bg-muted/30',
                   )}
                 >
@@ -125,6 +172,7 @@ export const GroupCard = ({
                       inteira e os controles descem para a segunda, em vez de
                       espremerem tudo numa faixa de 390px. */}
                   <div className="flex min-w-0 basis-full items-center gap-2 sm:flex-1 sm:basis-auto">
+                    {podeArrastar && handle}
                     <input
                       type="checkbox"
                       checked={selecionados.has(complement.id)}
@@ -140,9 +188,9 @@ export const GroupCard = ({
                     >
                       {complement.name}
                     </span>
-                    {categoryName(complement, flavorCategories) && (
+                    {categoryName(complement, categories) && (
                       <Badge variant="secondary" className="shrink-0 font-normal">
-                        {categoryName(complement, flavorCategories)}
+                        {categoryName(complement, categories)}
                       </Badge>
                     )}
                   </div>
@@ -181,9 +229,9 @@ export const GroupCard = ({
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
                   </div>
-                </li>
-              ))}
-            </ul>
+                </div>
+              )}
+            </SortableList>
           )}
 
           <div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted/20 px-4 py-3">
@@ -201,13 +249,6 @@ export const GroupCard = ({
               <Plus className="mr-2 h-4 w-4" />
               Adicionar item
             </Button>
-            {/* Editar a categoria mexe nas regras de escolha (obrigatória?
-                quantos sabores?). Sem isto, mudar "escolha 2" para "escolha 3"
-                exigia excluir a categoria e recadastrar os sabores todos. */}
-            <Button variant="ghost" size="sm" className="min-h-11 sm:min-h-9" onClick={onEditGroup}>
-              <Pencil className="mr-2 h-4 w-4" />
-              Editar categoria
-            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -215,7 +256,7 @@ export const GroupCard = ({
               onClick={onDeleteGroup}
             >
               <Trash2 className="mr-2 h-4 w-4" />
-              Excluir categoria
+              Excluir grupo
             </Button>
           </div>
         </div>

@@ -109,7 +109,7 @@ curl -X POST localhost:8000/api/simulator/payments/SEU_ORDER_ID/approve \
 ## Testes
 
 ```bash
-cd back  && pytest          # 188 testes
+cd back  && pytest          # 191 testes
 cd front && npm run test    # 40 testes
 cd front && npm run lint    # eslint
 ```
@@ -121,7 +121,7 @@ cd front && npm run lint    # eslint
 | Rota | Tela | O que faz |
 |---|---|---|
 | `/producao` | Produção | Kanban dos pedidos: preparando → entrega → finalizado |
-| `/produtos` | Produtos | CRUD do cardápio — é aqui que se liga e desliga sabor do dia |
+| `/produtos` | Produtos | CRUD do cardápio — liga e desliga o item do dia, arrasta a ordem, define as regras de escolha |
 | `/conversas` | Conversas | Espelho das conversas do WhatsApp + botão de assumir o atendimento |
 | `/dashboard` | Dashboard | Vendas, ticket médio, pedidos por status |
 

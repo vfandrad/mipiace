@@ -10,17 +10,18 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   createComplement,
-  createFlavorCategory,
+  createComplementCategory,
   createGroup,
   createProduct,
   deleteComplement,
-  deleteFlavorCategory,
+  deleteComplementCategory,
   deleteGroup,
   deleteProduct,
-  fetchFlavorCategories,
+  fetchComplementCategories,
   fetchProducts,
+  reorderCatalog,
   updateComplement,
-  updateFlavorCategory,
+  updateComplementCategory,
   updateGroup,
   updateProduct,
 } from '@/lib/api';
@@ -28,14 +29,15 @@ import type {
   CatalogEntity,
   Complement,
   ComplementInput,
-  FlavorCategoryInput,
+  ComplementCategoryInput,
   GroupInput,
   Product,
   ProductInput,
+  ReorderKind,
 } from '@/types/catalog';
 
 export const PRODUCTS_QUERY_KEY = ['products'] as const;
-const FLAVOR_CATEGORIES_QUERY_KEY = ['flavor-categories'] as const;
+const CATEGORIES_QUERY_KEY = ['complement-categories'] as const;
 
 function describe(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -67,8 +69,8 @@ export function useProducts() {
   // Lista curta, mas não imutável: o lojista cria e renomeia categoria pelo
   // painel, então ela é recarregada junto com o resto quando muda.
   const categoriesQuery = useQuery({
-    queryKey: FLAVOR_CATEGORIES_QUERY_KEY,
-    queryFn: fetchFlavorCategories,
+    queryKey: CATEGORIES_QUERY_KEY,
+    queryFn: fetchComplementCategories,
   });
 
   const products = query.data ?? [];
@@ -95,7 +97,7 @@ export function useProducts() {
       entity: 'product' | 'complement';
       id: string;
       is_available: boolean;
-    }) =>
+    }): Promise<unknown> =>
       entity === 'product'
         ? updateProduct(id, { is_available })
         : updateComplement(id, { is_available }),
@@ -125,15 +127,15 @@ export function useProducts() {
     }) => {
       if (entity === 'product') return updateProduct(id, data as Partial<ProductInput>);
       if (entity === 'group') return updateGroup(id, data as Partial<GroupInput>);
-      if (entity === 'flavorCategory') {
-        return updateFlavorCategory(id, data as Partial<FlavorCategoryInput>);
+      if (entity === 'category') {
+        return updateComplementCategory(id, data as Partial<ComplementCategoryInput>);
       }
       return updateComplement(id, data as Partial<ComplementInput>);
     },
     onSuccess: () => {
       toast.success('Item atualizado');
       invalidate();
-      queryClient.invalidateQueries({ queryKey: FLAVOR_CATEGORIES_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: CATEGORIES_QUERY_KEY });
     },
     onError: (error) => toast.error('Erro ao atualizar o item', { description: describe(error) }),
   });
@@ -152,10 +154,10 @@ export function useProducts() {
     mutationFn: ({ productId, data }: { productId: string; data: GroupInput }) =>
       createGroup(productId, data),
     onSuccess: () => {
-      toast.success('Categoria criada');
+      toast.success('Grupo criado');
       invalidate();
     },
-    onError: (error) => toast.error('Erro ao criar a categoria', { description: describe(error) }),
+    onError: (error) => toast.error('Erro ao criar o grupo', { description: describe(error) }),
   });
 
   const createComplementMutation = useMutation({
@@ -174,14 +176,14 @@ export function useProducts() {
     mutationFn: ({ entity, id }: { entity: CatalogEntity; id: string }) => {
       if (entity === 'product') return deleteProduct(id);
       if (entity === 'group') return deleteGroup(id);
-      if (entity === 'flavorCategory') return deleteFlavorCategory(id);
+      if (entity === 'category') return deleteComplementCategory(id);
       return deleteComplement(id);
     },
     onMutate: ({ entity, id }) =>
       patchCache((old) => {
         // Apagar categoria não mexe na árvore de produtos: o vínculo do sabor
         // vira nulo no banco (ON DELETE SET NULL) e o sabor continua lá.
-        if (entity === 'flavorCategory') return old;
+        if (entity === 'category') return old;
         if (entity === 'product') return old.filter((p) => p.id !== id);
         if (entity === 'group') {
           return old.map((p) => ({ ...p, groups: p.groups.filter((g) => g.id !== id) }));
@@ -201,24 +203,49 @@ export function useProducts() {
     onSuccess: () => toast.success('Item excluído'),
     onSettled: () => {
       invalidate();
-      queryClient.invalidateQueries({ queryKey: FLAVOR_CATEGORIES_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: CATEGORIES_QUERY_KEY });
     },
   });
 
-  // --- Categorias de sabor --------------------------------------------------
+  // --- Ordem (arrastar e soltar) -------------------------------------------
+  // Otimista de propósito: quem arrastou já viu o item no lugar novo, e uma
+  // lista que "pula de volta" por meio segundo até o servidor responder passa
+  // a impressão de que o arrasto não pegou.
+  const reorderMutation = useMutation({
+    mutationFn: ({ kind, ids }: { kind: ReorderKind; ids: string[] }) =>
+      reorderCatalog(kind, ids),
+    onError: (error, _vars, context) => {
+      rollback(context as { previous?: Product[] } | undefined);
+      toast.error('Não consegui salvar a ordem', { description: describe(error) });
+    },
+    onSettled: () => {
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: CATEGORIES_QUERY_KEY });
+    },
+  });
+
+  /** Reordena a lista no cache antes de mandar, pela ordem de ids recebida. */
+  const ordenarPorIds = <T extends { id: string }>(lista: T[], ids: string[]): T[] => {
+    const posicao = new Map(ids.map((id, i) => [id, i]));
+    return [...lista].sort(
+      (a, b) => (posicao.get(a.id) ?? 0) - (posicao.get(b.id) ?? 0),
+    );
+  };
+
+  // --- Categorias de complemento --------------------------------------------
   const createCategoryMutation = useMutation({
-    mutationFn: createFlavorCategory,
+    mutationFn: createComplementCategory,
     onSuccess: () => {
-      toast.success('Categoria de sabor criada');
-      queryClient.invalidateQueries({ queryKey: FLAVOR_CATEGORIES_QUERY_KEY });
+      toast.success('Categoria criada');
+      queryClient.invalidateQueries({ queryKey: CATEGORIES_QUERY_KEY });
     },
     onError: (error) =>
-      toast.error('Erro ao criar a categoria de sabor', { description: describe(error) }),
+      toast.error('Erro ao criar a categoria', { description: describe(error) }),
   });
 
   return {
     products,
-    flavorCategories: categoriesQuery.data ?? [],
+    complementCategories: categoriesQuery.data ?? [],
     isLoading: query.isLoading,
     isError: query.isError,
     error: query.error,
@@ -238,8 +265,36 @@ export function useProducts() {
     createComplement: (groupId: string, data: ComplementInput) =>
       createComplementMutation.mutateAsync({ groupId, data }),
 
-    createFlavorCategory: (data: FlavorCategoryInput) =>
+    createComplementCategory: (data: ComplementCategoryInput) =>
       createCategoryMutation.mutateAsync(data),
+
+    reorderProducts: async (ids: string[]) => {
+      const context = await patchCache((old) => ordenarPorIds(old, ids));
+      reorderMutation.mutate({ kind: 'product', ids }, { onError: () => rollback(context) });
+    },
+
+    reorderGroups: async (productId: string, ids: string[]) => {
+      const context = await patchCache((old) =>
+        old.map((p) =>
+          p.id === productId ? { ...p, groups: ordenarPorIds(p.groups, ids) } : p,
+        ),
+      );
+      reorderMutation.mutate({ kind: 'group', ids }, { onError: () => rollback(context) });
+    },
+
+    reorderComplements: async (groupId: string, ids: string[]) => {
+      const context = await patchCache((old) =>
+        old.map((p) => ({
+          ...p,
+          groups: p.groups.map((g) =>
+            g.id === groupId ? { ...g, complements: ordenarPorIds(g.complements, ids) } : g,
+          ),
+        })),
+      );
+      reorderMutation.mutate({ kind: 'complement', ids }, { onError: () => rollback(context) });
+    },
+
+    reorderCategories: (ids: string[]) => reorderMutation.mutate({ kind: 'category', ids }),
 
     deleteItem: (entity: CatalogEntity, id: string) => deleteMutation.mutate({ entity, id }),
 

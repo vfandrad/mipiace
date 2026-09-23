@@ -20,7 +20,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Complement, ComplementGroup, FlavorCategory, Product
+from app.db.models import Complement, ComplementGroup, ComplementCategory, Product
 from app.domain.catalog import (
     CatalogComplement,
     CatalogGroup,
@@ -30,7 +30,7 @@ from app.domain.catalog import (
 
 #: Tudo que o CRUD do cardápio edita. Criar/editar/apagar é igual para os três,
 #: então as funções genéricas abaixo servem a todos.
-CatalogRow = Product | ComplementGroup | Complement | FlavorCategory
+CatalogRow = Product | ComplementGroup | Complement | ComplementCategory
 
 
 # ---------------------------------------------------------------------------
@@ -110,24 +110,65 @@ async def create_complement(
     return await _add(session, Complement(group_id=group_id, **data))
 
 
-async def get_flavor_category(
+async def get_category(
     session: AsyncSession, category_id: UUID
-) -> FlavorCategory | None:
-    return await session.get(FlavorCategory, category_id)
+) -> ComplementCategory | None:
+    return await session.get(ComplementCategory, category_id)
 
 
-async def create_flavor_category(
+async def create_category(
     session: AsyncSession, data: dict[str, Any]
-) -> FlavorCategory:
-    return await _add(session, FlavorCategory(**data))
+) -> ComplementCategory:
+    return await _add(session, ComplementCategory(**data))
 
 
-async def list_flavor_categories(session: AsyncSession) -> list[FlavorCategory]:
-    stmt = select(FlavorCategory).order_by(
-        FlavorCategory.sort_order, FlavorCategory.name
+async def list_complement_categories(session: AsyncSession) -> list[ComplementCategory]:
+    stmt = select(ComplementCategory).order_by(
+        ComplementCategory.sort_order, ComplementCategory.name
     )
     result = await session.scalars(stmt)
     return list(result)
+
+
+# ---------------------------------------------------------------------------
+# Ordem (arrastar e soltar no painel)
+# ---------------------------------------------------------------------------
+
+#: Qual tabela cada tipo de item reordenável usa.
+_ORDERABLE = {
+    "product": Product,
+    "group": ComplementGroup,
+    "complement": Complement,
+    "category": ComplementCategory,
+}
+
+
+async def reorder(session: AsyncSession, *, kind: str, ids: list[UUID]) -> int:
+    """Grava a ordem em que o lojista arrastou os itens.
+
+    `sort_order` vira a posição na lista — 0, 1, 2... — numa transação só. É
+    assim porque a alternativa (um PATCH por item) deixa a lista meio ordenada
+    se uma das requisições falhar no meio, e o cardápio sai torto no WhatsApp.
+
+    Ids desconhecidos são ignorados em vez de derrubar a operação: a tela pode
+    estar mostrando algo que outra aba acabou de apagar.
+    """
+    model = _ORDERABLE.get(kind)
+    if model is None:
+        raise ValueError(f"tipo não ordenável: {kind}")
+
+    encontrados = await session.scalars(select(model).where(model.id.in_(ids)))
+    por_id = {item.id: item for item in encontrados}
+    mexidos = 0
+    for posicao, item_id in enumerate(ids):
+        item = por_id.get(item_id)
+        if item is None:
+            continue
+        if item.sort_order != posicao:
+            item.sort_order = posicao
+            mexidos += 1
+    await session.flush()
+    return mexidos
 
 
 # ---------------------------------------------------------------------------
@@ -166,8 +207,8 @@ async def get_catalog_snapshot(session: AsyncSession) -> CatalogSnapshot:
                                 extra_price=complement.extra_price,
                                 is_available=complement.is_available,
                                 category=(
-                                    complement.flavor_category.name
-                                    if complement.flavor_category
+                                    complement.category.name
+                                    if complement.category
                                     else None
                                 ),
                             )
