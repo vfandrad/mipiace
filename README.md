@@ -109,7 +109,7 @@ curl -X POST localhost:8000/api/simulator/payments/SEU_ORDER_ID/approve \
 ## Testes
 
 ```bash
-cd back  && pytest          # 174 testes
+cd back  && pytest          # 168 testes
 cd front && npm run test    # 40 testes
 cd front && npm run lint    # eslint
 ```
@@ -129,70 +129,70 @@ Só a tela de **Produtos** escreve no banco. As outras três leem.
 
 ---
 
-## Máquina de estados do agente
+## Como o agente funciona
 
-Cada mensagem passa pelo LLM (que **só classifica**, nunca decide), é resolvida
-contra o catálogo real e então a máquina decide a transição. Saltos fora desta
-tabela levantam erro de propósito — é o que impede, por exemplo, gerar Pix sem
-endereço.
+A IA **traduz**, o backend **decide**. Cada mensagem vira uma lista de
+operações — o que o cliente quer fazer com o pedido — e o executor aplica cada
+uma contra o catálogo real.
 
 ```
-                            ┌──────────────┐
-              (1ª mensagem) │   SAUDACAO   │
-                            └──────┬───────┘
-                                   │ cumprimenta + cardápio
-                                   ▼
-                        ┌────────────────────────┐
-              ┌────────►│  ESCOLHENDO_PRODUTO    │◄────────┐
-              │         └───┬────────────────┬───┘         │
-              │             │                │             │
-              │  produto com│                │ produto sem │ "quero mais
-              │  grupo      │                │ grupo       │  uma coisa"
-              │  obrigatório│                │ obrigatório │
-              │             ▼                │             │
-              │  ┌────────────────────────┐  │             │
-              │  │  PERSONALIZANDO_ITEM   │  │             │
-              │  │ (valida min/max por    │  │             │
-              │  │  grupo, um de cada vez)│  │             │
-              │  └───────────┬────────────┘  │             │
-              │              │ todos os grupos OK          │
-              │              ▼                ▼            │
-              │         ┌─────────────────────────┐        │
-              └─────────┤   REVISANDO_CARRINHO    ├────────┘
-                        └───┬─────────────────────┘
-                            ▼
-                ┌────────────────────────┐
-                │  COLETANDO_ENDERECO    │
-                │ (pede só o que falta:  │
-                │  rua / número / bairro)│
-                └───────────┬────────────┘
-                            ▼
-                     ┌──────────────────────────────┐
-                     │     CONFIRMANDO_PEDIDO       │
-                     │ resumo + taxa + total        │
-                     └──────────────┬───────────────┘
-                                    │ cliente confirma
-                                    │ → cria pedido, gera Pix,
-                                    │   envia copia-e-cola
-                                    ▼
-                     ┌──────────────────────────────┐
-                     │    AGUARDANDO_PAGAMENTO      │  ← estado passivo
-                     └──────────────┬───────────────┘
-                                    │ webhook do Mercado Pago
-                                    │ (ou /api/simulator/payments/{id}/approve)
-                                    ▼
-                     ┌──────────────────────────────┐
-                     │          CONCLUIDO           │──┐
-                     └──────────────────────────────┘  │ cliente volta
-                                                       └─► SAUDACAO
-
-  Saídas possíveis de quase todos os estados:
-    • ATENDIMENTO_HUMANO — o cliente pede atendente, OU a IA falha
-      MAX_NLU_FAILURES vezes seguidas, OU o lojista clica em
-      "assumir atendimento" em /conversas. Com handoff=true o agente
-      não responde mais nada automaticamente.
-    • CANCELADO — cliente desiste ou o Pix expira.
+   "tira o primeiro, põe um grande de chocolate e quero entrega"
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │        IA         │  lê a mensagem COM o retrato
+                    │  (traduz, só isso)│  do pedido (o que já tem no
+                    └─────────┬─────────┘  carrinho, o que falta, etc.)
+                              ▼
+        REMOVE_ITEM(1) · ADD_ITEM(G, [chocolate]) · SET_FULFILLMENT(entrega)
+                              │
+                              ▼
+                    ┌───────────────────┐
+                    │     EXECUTOR      │  valida contra o catálogo,
+                    │ (decide e aplica) │  calcula preço em Decimal,
+                    └─────────┬─────────┘  nunca aceita item inventado
+                              ▼
+                        estado do pedido
 ```
+
+A IA nunca inventa produto, preço, taxa ou disponibilidade, e nunca cobra.
+
+### Os estados
+
+```
+   ┌──────────────────────────────────────────────┐
+   │                CONVERSANDO                   │  monta o pedido:
+   │  (escolher, sabores, editar, tirar, endereço)│  tudo acontece aqui
+   └───────────────────┬──────────────────────────┘
+                       │ cliente quer fechar e o pedido está completo
+                       ▼
+   ┌──────────────────────────────────────────────┐
+   │             CONFIRMANDO_PEDIDO               │  resumo + taxa + total
+   └───────────────────┬──────────────────────────┘
+                       │ confirmação CLARA ("pode ser" não passa)
+                       ▼
+   ┌──────────────────────────────────────────────┐
+   │            AGUARDANDO_PAGAMENTO              │  Pix enviado
+   └───────────────────┬──────────────────────────┘
+                       │ webhook do Mercado Pago
+                       ▼
+                   CONCLUIDO
+
+   De qualquer ponto:
+     • ATENDIMENTO_HUMANO — o cliente pede uma pessoa, ou o lojista assume
+       pelo painel. O bot para de conduzir o pedido, mas continua ouvindo:
+       avisa que está aguardando, aceita cancelamento e devolve a conversa
+       a si mesmo se o cliente preferir seguir por ali. Sem resposta da loja
+       por HANDOFF_RETURN_MINUTES, ele reassume sozinho.
+     • CANCELADO — o cliente desiste ou o Pix expira.
+```
+
+A etapa do diálogo não é estado: está nos dados do pedido (tem rascunho? falta
+endereço?). Isso é o que deixa o cliente perguntar o horário no meio da
+escolha de sabores sem perder nada.
+
+A única transição que existe para proteger alguém é a do meio: **não se cobra
+quem não viu o resumo com o total e concordou**.
 
 A tabela executável está em `back/app/agent/states.py`; os nomes dos estados,
 em `back/app/domain/enums.py`. O passo a passo de uma mensagem está no

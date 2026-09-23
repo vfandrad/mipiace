@@ -13,6 +13,7 @@ from decimal import Decimal
 import pytest
 
 from app.agent.faq import answer
+from app.core.config import get_settings
 from tests.test_agent_phrases import build_cardapio
 
 TAXA = Decimal("5.00")
@@ -24,26 +25,31 @@ def cardapio():
 
 
 def test_pagamento_e_so_pix(cardapio) -> None:
-    resposta = answer("vcs aceitam cartao?", cardapio, TAXA)
+    resposta = answer(topic="pagamento", question="vcs aceitam cartao?", raw_text=None, catalog=cardapio, settings=get_settings())
     assert resposta and "Pix" in resposta
 
 
 def test_taxa_de_entrega_sai_da_configuracao(cardapio) -> None:
-    resposta = answer("quanto fica a entrega?", cardapio, TAXA)
+    resposta = answer(topic="taxa_entrega", question="quanto fica a entrega?", raw_text=None, catalog=cardapio, settings=get_settings())
     assert resposta and "5,00" in resposta
 
 
 def test_horario_admite_que_nao_sabe(cardapio) -> None:
     """Inventar horário de loja é pior do que dizer que não sabe."""
-    resposta = answer("voces abrem que horas?", cardapio, TAXA)
-    assert resposta and "atendente" in resposta
+    resposta = answer(topic="horario", question="voces abrem que horas?", raw_text=None, catalog=cardapio, settings=get_settings())
+    assert resposta and "time" in resposta
 
 
-def test_pedido_nao_vira_faq(cardapio) -> None:
-    """"quero entrega" é escolha, não pergunta — não pode virar resposta de FAQ."""
-    assert answer("quero entrega", cardapio, TAXA) is None
-    assert answer("retirada", cardapio, TAXA) is None
-    assert answer("quero um pote grande", cardapio, TAXA) is None
+def test_preco_sai_do_catalogo(cardapio) -> None:
+    """A IA interpreta a pergunta; o valor vem do cardápio, sempre."""
+    resposta = answer(
+        topic="preco",
+        question="quanto custa o maior?",
+        raw_text=None,
+        catalog=cardapio,
+        settings=get_settings(),
+    )
+    assert resposta and "R$ 90,00" in resposta
 
 
 def test_sem_acucar_procura_no_cardapio_do_dia() -> None:
@@ -83,5 +89,11 @@ def test_sem_acucar_procura_no_cardapio_do_dia() -> None:
         ]
     )
 
-    resposta = answer("tem sorvete sem acucar?", catalogo, TAXA)
+    resposta = answer(
+        topic="restricao",
+        question="tem sorvete sem acucar?",
+        raw_text="sem açúcar",
+        catalog=catalogo,
+        settings=get_settings(),
+    )
     assert resposta and "Chocolate sem açúcar" in resposta

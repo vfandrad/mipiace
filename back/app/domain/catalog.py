@@ -22,6 +22,9 @@ def normalize(text: str) -> str:
 
 
 class CatalogComplement(BaseModel):
+    #: "Sem lactose" / "Com lactose" — é o que deixa o cardápio sair agrupado
+    #: numa mensagem só em vez de 31 linhas soltas.
+    category: str | None = None
     id: UUID
     group_id: UUID
     name: str

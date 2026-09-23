@@ -1,8 +1,14 @@
 """Tabela de transições da máquina de estados do agente.
 
-A tabela é declarativa de propósito: ela é a documentação executável do fluxo
-de pedido e o ponto onde se garante que o agente não pule etapas (por exemplo,
-gerar Pix sem endereço, ou fechar pedido com carrinho vazio).
+A tabela ficou pequena de propósito. Ela não descreve mais a etapa do diálogo
+— isso mora nos `slots` e quem lê é a IA — e sim as poucas passagens que
+precisam de garantia:
+
+    CONVERSANDO ──► CONFIRMANDO_PEDIDO ──► AGUARDANDO_PAGAMENTO ──► CONCLUIDO
+
+A única que realmente importa é a do meio: **não se cobra ninguém sem o
+cliente ter visto o resumo com o total e concordado**. Pular etapa aqui
+levanta `InvalidTransition` em vez de gerar um Pix furado.
 """
 
 from __future__ import annotations
@@ -14,76 +20,43 @@ from app.domain.enums import ConversationState as S
 if TYPE_CHECKING:  # evita ciclo de import em tempo de execução
     from app.agent.session import ConversationSession
 
-# Transições permitidas. Qualquer salto fora daqui é bug e deve levantar erro.
 TRANSITIONS: dict[S, set[S]] = {
-    S.SAUDACAO: {
-        S.ESCOLHENDO_PRODUTO,
-        S.ATENDIMENTO_HUMANO,
-        S.CANCELADO,
-    },
-    S.ESCOLHENDO_PRODUTO: {
-        S.PERSONALIZANDO_ITEM,
-        S.REVISANDO_CARRINHO,   # produto sem grupos obrigatórios
-        S.ESCOLHENDO_PRODUTO,   # não entendeu, repergunta
-        S.ATENDIMENTO_HUMANO,
-        S.CANCELADO,
-    },
-    S.PERSONALIZANDO_ITEM: {
-        S.PERSONALIZANDO_ITEM,  # ainda faltam grupos obrigatórios
-        S.REVISANDO_CARRINHO,
-        S.ATENDIMENTO_HUMANO,
-        S.CANCELADO,
-    },
-    S.REVISANDO_CARRINHO: {
-        S.ESCOLHENDO_PRODUTO,   # "quero mais uma coisa"
-        S.COLETANDO_ENDERECO,
-        S.CONFIRMANDO_PEDIDO,   # retirada na loja: pula endereço
-        S.REVISANDO_CARRINHO,
-        S.ATENDIMENTO_HUMANO,
-        S.CANCELADO,
-    },
-    S.COLETANDO_ENDERECO: {
-        S.COLETANDO_ENDERECO,   # endereço incompleto, pede o que falta
+    S.CONVERSANDO: {
+        S.CONVERSANDO,          # o diálogo inteiro acontece aqui
         S.CONFIRMANDO_PEDIDO,
         S.ATENDIMENTO_HUMANO,
         S.CANCELADO,
     },
     S.CONFIRMANDO_PEDIDO: {
-        S.AGUARDANDO_PAGAMENTO,
-        S.REVISANDO_CARRINHO,   # cliente quis mudar algo
+        S.AGUARDANDO_PAGAMENTO,  # único caminho para a cobrança
+        S.CONVERSANDO,           # cliente quis mudar algo
         S.CONFIRMANDO_PEDIDO,
         S.ATENDIMENTO_HUMANO,
         S.CANCELADO,
     },
     S.AGUARDANDO_PAGAMENTO: {
-        S.CONCLUIDO,            # webhook de pagamento aprovado
-        S.AGUARDANDO_PAGAMENTO, # cliente perguntou algo enquanto paga
+        S.CONCLUIDO,             # webhook de pagamento aprovado
+        S.AGUARDANDO_PAGAMENTO,  # cliente perguntou algo enquanto paga
+        S.CONVERSANDO,           # desistiu do Pix e voltou a montar o pedido
         S.ATENDIMENTO_HUMANO,
-        S.CANCELADO,            # Pix expirou ou cliente desistiu
+        S.CANCELADO,             # Pix expirou ou cliente desistiu
     },
     S.CONCLUIDO: {
-        S.SAUDACAO,             # cliente volta para um novo pedido
+        S.CONVERSANDO,           # cliente volta para um novo pedido
         S.ATENDIMENTO_HUMANO,
     },
     S.ATENDIMENTO_HUMANO: {
-        S.SAUDACAO,             # lojista devolve a conversa para o bot
+        S.CONVERSANDO,           # lojista devolve, ou ninguém respondeu a tempo
         S.CANCELADO,
     },
     S.CANCELADO: {
-        S.SAUDACAO,             # novo pedido depois de cancelar
+        S.CONVERSANDO,           # novo pedido depois de cancelar
     },
 }
 
 #: Estados a partir dos quais um "quero cancelar" do cliente é aceito.
 CANCELLABLE_STATES: frozenset[S] = frozenset(
-    {
-        S.ESCOLHENDO_PRODUTO,
-        S.PERSONALIZANDO_ITEM,
-        S.REVISANDO_CARRINHO,
-        S.COLETANDO_ENDERECO,
-        S.CONFIRMANDO_PEDIDO,
-        S.AGUARDANDO_PAGAMENTO,
-    }
+    {S.CONVERSANDO, S.CONFIRMANDO_PEDIDO, S.AGUARDANDO_PAGAMENTO}
 )
 
 
@@ -105,18 +78,10 @@ def assert_transition(origin: S, destination: S) -> None:
         raise InvalidTransition(origin, destination)
 
 
-#: Estados que aceitam "entrar de novo" no mesmo estado. Repetir a pergunta é
-#: parte do fluxo neles (ex.: faltam 2 dos 3 sabores, endereço incompleto);
-#: nos demais, mandar para o estado atual é ruído e a transição é ignorada.
+#: Estados que aceitam "entrar de novo" no mesmo estado — repetir a pergunta é
+#: parte do fluxo neles. Nos demais, mandar para o estado atual é ruído.
 _REENTERABLE: frozenset[S] = frozenset(
-    {
-        S.ESCOLHENDO_PRODUTO,
-        S.PERSONALIZANDO_ITEM,
-        S.REVISANDO_CARRINHO,
-        S.COLETANDO_ENDERECO,
-        S.CONFIRMANDO_PEDIDO,
-        S.AGUARDANDO_PAGAMENTO,
-    }
+    {S.CONVERSANDO, S.CONFIRMANDO_PEDIDO, S.AGUARDANDO_PAGAMENTO}
 )
 
 

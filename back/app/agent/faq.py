@@ -1,102 +1,138 @@
 """Respostas para o que o cliente pergunta e não é pedido.
 
-No teste com dez clientes simulados, quatro perguntaram coisas triviais —
-"vcs aceitam cartão?", "quanto fica a entrega?", "tem sorvete sem açúcar?",
-"que horas vocês abrem?" — e as quatro ouviram "não entendi". Uma delas chegou
-a derrubar a conversa para atendimento humano.
+No teste com dez clientes simulados, quatro fizeram perguntas triviais — "vcs
+aceitam cartão?", "quanto fica a entrega?", "tem sorvete sem açúcar?", "que
+horas vocês abrem?" — e as quatro ouviram "não entendi". Uma delas foi parar no
+atendimento humano por causa disso.
 
-O princípio aqui é estreito de propósito: **só responde o que o sistema já
-sabe de verdade**. Forma de pagamento e taxa de entrega são fato do sistema
-(Pix, `DELIVERY_FEE`); sabor sem açúcar/sem lactose sai de uma busca no
-catálogo do dia. Horário e área de entrega o sistema não conhece — e aí a
-resposta honesta é dizer isso e oferecer uma pessoa, não inventar.
+O princípio aqui é estreito de propósito: **só responde o que o sistema sabe
+de verdade**. Forma de pagamento e taxa de entrega são fato do sistema (Pix,
+`DELIVERY_FEE`); preço e disponibilidade saem do catálogo do dia. O que o
+sistema não conhece — horário, área de entrega, endereço da loja — só é
+respondido se o lojista tiver configurado; senão o bot admite que não sabe e
+oferece uma pessoa. Inventar horário de loja é pior do que não responder.
 
-Regras determinísticas, sem LLM: isto precisa funcionar igual quando o modelo
-estiver fora do ar.
+Quem classifica a pergunta é a IA (`question_topic`); quem responde é este
+módulo, com dado real. A IA nunca é a autoridade sobre preço ou taxa.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
+from app.agent import renderer as r
+from app.domain.cart import Cart
 from app.domain.catalog import CatalogSnapshot, normalize
 
-#: Como o cliente pergunta cada coisa. Ordem importa: a primeira que casar
-#: responde.
-_PAGAMENTO = ("cartao", "credito", "debito", "dinheiro", "pagamento", "paga", "pix")
-_ENTREGA = ("entrega", "frete", "taxa", "delivery", "entregam")
-_RESTRICAO = ("sem acucar", "sem açucar", "diet", "sem lactose", "zero lactose")
-_HORARIO = ("horario", "que horas", "abrem", "fecham", "aberto", "funciona")
 
+def answer(
+    *,
+    topic: str | None,
+    question: str,
+    raw_text: str | None,
+    catalog: CatalogSnapshot,
+    settings: Any,
+    cart: Cart | None = None,
+) -> str:
+    """Resposta para a pergunta do cliente. Nunca devolve vazio."""
+    texto = normalize(question or "")
 
-def _tem(texto: str, termos: tuple[str, ...]) -> bool:
-    return any(termo in texto for termo in termos)
-
-
-def answer(text: str, catalog: CatalogSnapshot, delivery_fee: Decimal) -> str | None:
-    """Resposta pronta para a pergunta, ou None se não for uma delas."""
-    texto = normalize(text)
-
-    # Só responde pergunta. "quero entrega" é escolha, não dúvida.
-    if "?" not in text and not _abre_pergunta(texto):
-        return None
-
-    if _tem(texto, _PAGAMENTO):
+    if topic == "pagamento":
         return (
-            "Por aqui o pagamento é *só no Pix* 💳\n"
-            "Quando você fechar o pedido eu já mando o código para copiar e colar."
+            "O pagamento é no *Pix* 💳\n"
+            "Quando fechar o pedido eu já mando o código para copiar e colar."
         )
 
-    if _tem(texto, _RESTRICAO):
-        return _restricao(texto, catalog)
-
-    if _tem(texto, _ENTREGA):
+    if topic == "taxa_entrega":
+        taxa: Decimal = settings.delivery_fee
         return (
-            f"A taxa de entrega é de *R$ {delivery_fee:.2f}*".replace(".", ",")
-            + ".\nSe preferir, dá para retirar na loja e não paga taxa. 🛵🏠"
+            f"A taxa de entrega é *{r.money(taxa)}*, fixa para toda a região que "
+            "atendemos.\nSe preferir retirar na loja, não tem taxa. 🛵🏠"
         )
 
-    if _tem(texto, _HORARIO):
-        # O sistema não sabe o horário da loja; fingir que sabe é pior.
+    if topic == "preco":
+        return _precos(catalog, texto)
+
+    if topic in {"restricao", "disponibilidade"}:
+        return _tem_isso(catalog, raw_text or question)
+
+    if topic == "prazo":
         return (
-            "Do horário eu não sei te dizer com certeza 🙈\n"
-            "Digite *atendente* que alguém do time confirma pra você."
+            "Assim que o Pix cai a gente já começa a montar. 🍨\n"
+            "O tempo exato depende do movimento — se quiser, eu chamo alguém do "
+            "time pra te dar uma previsão certinha."
         )
 
-    return None
+    if topic in {"horario", "area_entrega", "endereco_loja"}:
+        return _nao_sei(topic)
+
+    return (
+        "Essa eu não sei responder com certeza. 🙈 "
+        "Quer que eu chame alguém do time pra te ajudar?"
+    )
 
 
-_PALAVRAS_DE_PERGUNTA = (
-    "quanto", "qual", "quais", "como", "onde", "quando", "tem ", "voces",
-    "vcs", "aceita", "da pra", "sera que",
-)
+def _nao_sei(topic: str) -> str:
+    assunto = {
+        "horario": "do horário",
+        "area_entrega": "se entregamos nessa região",
+        "endereco_loja": "do endereço da loja",
+    }.get(topic, "disso")
+    return (
+        f"{assunto.capitalize()} eu não tenho certeza pra te falar. 🙈\n"
+        "Quer que eu chame alguém do time pra confirmar?"
+    )
 
 
-def _abre_pergunta(texto: str) -> bool:
-    return texto.startswith(_PALAVRAS_DE_PERGUNTA) or " tem " in f" {texto} "
+def _precos(catalog: CatalogSnapshot, texto: str) -> str:
+    """Preço vem do catálogo, sempre. A IA nunca diz valor."""
+    produtos = catalog.available_products
+    if not produtos:
+        return "Hoje estamos sem itens disponíveis. 😔"
+
+    # "quanto custa o maior?" / "e o pequeno?" — se der para identificar um,
+    # responde só ele; senão manda a tabela inteira, que é curta.
+    if any(p in texto for p in ("maior", "grande", "mais caro")):
+        alvo = max(produtos, key=lambda p: p.base_price)
+        return f"O *{alvo.name}* sai {r.money(alvo.base_price)}. 😊"
+    if any(p in texto for p in ("menor", "pequeno", "mais barato")):
+        alvo = min(produtos, key=lambda p: p.base_price)
+        return f"O *{alvo.name}* sai {r.money(alvo.base_price)}. 😊"
+
+    linhas = ["Os preços de hoje:"]
+    linhas += [f"• *{p.name}* — {r.money(p.base_price)}" for p in produtos]
+    return "\n".join(linhas)
 
 
-def _restricao(texto: str, catalog: CatalogSnapshot) -> str:
-    """"tem sem açúcar?" — a resposta está no cardápio do dia, não numa tabela.
+def _tem_isso(catalog: CatalogSnapshot, procurado: str) -> str:
+    """"tem sem açúcar?", "tem açaí?" — a resposta está no cardápio do dia.
 
     Os sabores mudam todo dia; procurar no catálogo é o único jeito de a
     resposta continuar verdadeira amanhã.
     """
-    sem_acucar = "acucar" in texto or "diet" in texto
-    alvo = "sem acucar" if sem_acucar else "sem lactose"
-    rotulo = "sem açúcar" if sem_acucar else "sem lactose"
-    achados = sorted(
-        {
-            complement.name
-            for product in catalog.available_products
-            for group in product.groups
-            for complement in group.available_complements
-            if alvo in normalize(complement.name)
-        }
-    )
+    alvo = normalize(procurado or "").strip()
+    if not alvo:
+        return "Me diz o que você procura que eu vejo se temos hoje. 😊"
+
+    sabores = {
+        c.name: c
+        for p in catalog.available_products
+        for g in p.groups
+        for c in g.available_complements
+    }
+
+    achados = [nome for nome in sabores if alvo in normalize(nome)]
     if not achados:
+        # Talvez seja um produto, não um sabor.
+        produtos = [p.name for p in catalog.available_products if alvo in normalize(p.name)]
+        if produtos:
+            return f"Temos sim: *{', '.join(produtos)}*. 😊"
         return (
-            f"Hoje não temos sabor *{rotulo}* no cardápio. 😔\n"
-            "Se quiser, digite *cardápio* para ver o que tem."
+            f'Hoje não temos *{procurado}* no cardápio. 🙈\n'
+            "Quer ver o que tem?"
         )
-    return f"Temos sim! Hoje de *{rotulo}*: " + ", ".join(achados) + ". 😊"
+
+    if len(achados) == 1:
+        return f"Temos sim: *{achados[0]}*. 😊"
+    return "Temos sim! Hoje: *" + "*, *".join(achados) + "*. 😊"

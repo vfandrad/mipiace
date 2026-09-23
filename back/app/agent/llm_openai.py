@@ -3,11 +3,13 @@
 Contrato e garantias:
 
 * **tool call obrigatório** (`tool_choice`): o modelo é forçado a chamar
-  `registrar_interpretacao`, cujo `parameters` espelha `NluResult`. Não sobra
+  `registrar_operacoes`, cujo `parameters` espelha `AgentPlan`. Não sobra
   texto livre para parsear.
 * **falha nunca sobe**: qualquer erro (timeout, rate limit, resposta sem tool
-  call) vira `NluResult(intent=DESCONHECIDO)`. A máquina de estados já sabe
-  repreguntar; derrubar a request do WhatsApp seria bem pior.
+  call) vira um plano vazio. O executor responde pedindo para repetir; derrubar
+  a request do WhatsApp seria bem pior.
+* **nada do modelo entra sem passar pelo enum**: ação desconhecida vira
+  `no_action`, tópico de pergunta fora da lista vira "outro".
 """
 
 from __future__ import annotations
@@ -16,11 +18,11 @@ import json
 import logging
 from typing import Any, Sequence
 
-from app.agent.llm import ExtractedAddress, NluResult, Turn
+from app.agent.llm import Turn
+from app.agent.plan import QUESTION_TOPICS, Action, Address, AgentPlan, Operation
 from app.agent.prompts import TOOL_NAME, build_system_blocks, tool_schema
 from app.core.config import Settings, get_settings
 from app.domain.catalog import CatalogSnapshot
-from app.domain.enums import ConversationState, Intent
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +36,19 @@ def _function_tool() -> dict[str, Any]:
             "name": schema["name"],
             "description": schema["description"],
             "parameters": schema["input_schema"],
+            # Structured outputs: a OpenAI passa a GARANTIR o formato. Sem
+            # isto o modelo devolvia operação sem `action` e o pedido virava
+            # "não entendi".
+            "strict": True,
         },
     }
 
 
-def _system_text(state: ConversationState, catalog: CatalogSnapshot) -> str:
+def _system_text(catalog: CatalogSnapshot, situation: str) -> str:
     """OpenAI recebe uma única mensagem de sistema; junta os blocos em um."""
-    return "\n\n".join(block["text"] for block in build_system_blocks(state, catalog))
+    return "\n\n".join(
+        block["text"] for block in build_system_blocks(catalog, situation)
+    )
 
 
 class OpenAILLMClient:
@@ -80,33 +88,35 @@ class OpenAILLMClient:
 
     # -- contrato ----------------------------------------------------------
 
-    async def extract(
+    async def interpret(
         self,
         *,
-        state: ConversationState,
         catalog: CatalogSnapshot,
         history: Sequence[Turn],
         message: str,
-    ) -> NluResult:
+        situation: str = "",
+    ) -> AgentPlan:
         try:
             client = self._ensure_client()
             response = await client.chat.completions.create(
                 model=self._settings.openai_model,
                 max_tokens=self._settings.llm_max_tokens,
-                messages=self._messages(_system_text(state, catalog), history, message),
+                messages=self._messages(
+                    _system_text(catalog, situation), history, message
+                ),
                 tools=[self._tool],
                 tool_choice={"type": "function", "function": {"name": TOOL_NAME}},
             )
         except Exception:
             # Timeout, rate limit, chave inválida: a conversa continua viva.
-            logger.exception("falha ao chamar o LLM; caindo para DESCONHECIDO")
-            return NluResult(intent=Intent.DESCONHECIDO, model=self._settings.openai_model)
+            logger.exception("falha ao chamar o LLM; plano vazio")
+            return AgentPlan(model=self._settings.openai_model)
 
-        return self._to_result(response)
+        return self._to_plan(response)
 
     # -- parsing -----------------------------------------------------------
 
-    def _to_result(self, response: Any) -> NluResult:
+    def _to_plan(self, response: Any) -> AgentPlan:
         usage = self._usage(response)
         model = getattr(response, "model", self._settings.openai_model)
 
@@ -115,32 +125,43 @@ class OpenAILLMClient:
             logger.warning(
                 "resposta do LLM sem tool call: %r", getattr(response, "id", None)
             )
-            return NluResult(intent=Intent.DESCONHECIDO, model=model, usage=usage)
+            return AgentPlan(model=model, usage=usage)
 
         try:
-            result = NluResult(
-                intent=self._intent(payload.get("intent")),
+            operations = [
+                self._operation(raw)
+                for raw in (payload.get("operations") or [])
+                if isinstance(raw, dict)
+            ]
+            plan = AgentPlan(
+                operations=operations,
                 confidence=float(payload.get("confidence") or 0.0),
-                product_query=payload.get("product_query") or None,
-                complement_queries=[
-                    str(q) for q in (payload.get("complement_queries") or []) if q
-                ],
-                product_name=payload.get("product_name") or None,
-                complement_names=[
-                    str(n) for n in (payload.get("complement_names") or []) if n
-                ],
-                quantity=self._quantity(payload.get("quantity")),
-                address=self._address(payload.get("address")),
                 customer_name=payload.get("customer_name") or None,
-                fulfillment=self._fulfillment(payload.get("fulfillment")),
             )
         except Exception:
             logger.exception("input da tool fora do contrato: %r", payload)
-            return NluResult(intent=Intent.DESCONHECIDO, model=model, usage=usage)
+            return AgentPlan(model=model, usage=usage)
 
-        result.model = model
-        result.usage = usage
-        return result
+        plan.model = model
+        plan.usage = usage
+        return plan
+
+    @classmethod
+    def _operation(cls, raw: dict[str, Any]) -> Operation:
+        return Operation(
+            action=cls._action(raw.get("action")),
+            item_index=cls._positive(raw.get("item_index")),
+            product_name=raw.get("product_name") or None,
+            quantity=cls._positive(raw.get("quantity")),
+            add_flavors=cls._names(raw.get("add_flavors")),
+            remove_flavors=cls._names(raw.get("remove_flavors")),
+            fulfillment=cls._fulfillment(raw.get("fulfillment")),
+            address=cls._address(raw.get("address")),
+            question_topic=cls._topic(raw.get("question_topic")),
+            question_text=raw.get("question_text") or None,
+            raw_text=raw.get("raw_text") or None,
+            clarification=raw.get("clarification") or None,
+        )
 
     @staticmethod
     def _tool_input(response: Any) -> dict[str, Any] | None:
@@ -165,12 +186,26 @@ class OpenAILLMClient:
         return None
 
     @staticmethod
-    def _intent(raw: Any) -> Intent:
+    def _action(raw: Any) -> Action:
         try:
-            return Intent(str(raw))
+            return Action(str(raw))
         except ValueError:
-            logger.warning("intenção fora do enum: %r", raw)
-            return Intent.DESCONHECIDO
+            logger.warning("ação fora do enum: %r", raw)
+            return Action.NO_ACTION
+
+    @staticmethod
+    def _names(raw: Any) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        return [str(name).strip() for name in raw if str(name).strip()]
+
+    @staticmethod
+    def _positive(raw: Any) -> int | None:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
 
     @staticmethod
     def _fulfillment(raw: Any) -> str | None:
@@ -179,18 +214,17 @@ class OpenAILLMClient:
         return value if value in {"entrega", "retirada"} else None
 
     @staticmethod
-    def _quantity(raw: Any) -> int | None:
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
+    def _topic(raw: Any) -> str | None:
+        value = str(raw).strip().lower() if raw else ""
+        if not value:
             return None
-        return value if value > 0 else None
+        return value if value in QUESTION_TOPICS else "outro"
 
     @staticmethod
-    def _address(raw: Any) -> ExtractedAddress | None:
+    def _address(raw: Any) -> Address | None:
         if not isinstance(raw, dict):
             return None
-        address = ExtractedAddress(**{k: v for k, v in raw.items() if v})
+        address = Address(**{k: v for k, v in raw.items() if v})
         return address if address.model_dump(exclude_none=True) else None
 
     @staticmethod

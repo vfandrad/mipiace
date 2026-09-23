@@ -14,11 +14,10 @@ from uuid import UUID
 from app.agent import renderer as r
 from app.agent.whatsapp import InboundMessage
 from app.agent.whatsapp import get_channel_adapter
-from app.agent.llm import NluResult
 from app.agent.llm import get_llm_client
+from app.agent.plan import AgentPlan
 from app.agent.checkout import AgentDeps, build_deps
-from app.agent.keywords import rule_intent
-from app.agent.machine import human_on_the_line
+from app.agent.machine import describe_situation
 from app.agent.machine import run as run_machine
 from app.agent.session import (
     ConversationSession,
@@ -31,8 +30,8 @@ from app.agent.session import (
 )
 from app.agent.states import assert_transition
 from app.core.config import get_settings
-from app.domain.catalog import CatalogSnapshot, normalize
-from app.domain.enums import ConversationState, Intent, MessageDirection, OrderChannel
+from app.domain.catalog import CatalogSnapshot
+from app.domain.enums import ConversationState, MessageDirection, OrderChannel
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +68,8 @@ async def handle_inbound(
     """Processa uma mensagem recebida e devolve o que o agente respondeu.
 
     `session` aqui é a sessão do BANCO (AsyncSession) — o estado da conversa
-    é carregado dentro. Devolve lista vazia quando a conversa está em handoff:
-    com um atendente humano na linha, o bot precisa ficar calado.
+    é carregado dentro. Em atendimento humano o executor decide o que fazer:
+    ele para de conduzir o pedido, mas continua ouvindo (ver `machine`).
     """
     if await already_seen(session, message.provider_message_id):
         logger.info(
@@ -85,25 +84,11 @@ async def handle_inbound(
     if message.profile_name and "customer_name" not in conversation.slots:
         conversation.slots["customer_name"] = message.profile_name
 
-    if human_on_the_line(conversation):
-        # Registra para o lojista ver no painel, mas não responde nada. Sair
-        # daqui é decisão da máquina (`_resume_from_human`); o corte aqui é só
-        # para não gastar chamada de LLM enquanto há gente atendendo.
-        await log_message(
-            session,
-            conversation_id=conversation.id,
-            direction=MessageDirection.ENTRADA,
-            content=message.text,
-            state_before=state_before,
-            state_after=state_before,
-            provider_message_id=message.provider_message_id,
-        )
-        await save_session(session, conversation)
-        return []
-
     catalog = await _fetch_catalog(session)
-    nlu = await _interpret(session, conversation, catalog, message.text)
-    replies = await _advance(session, conversation, catalog, nlu, message.text)
+    deps = await _build_deps(session, catalog, conversation)
+    situation = describe_situation(deps, conversation)
+    plan = await _interpret(session, conversation, catalog, message.text, situation)
+    replies = await run_machine(deps, conversation, plan, message.text)
 
     await save_session(session, conversation)
     await log_message(
@@ -113,10 +98,10 @@ async def handle_inbound(
         content=message.text,
         state_before=state_before,
         state_after=conversation.state,
-        detected_intent=nlu.intent.value,
-        confidence=nlu.confidence,
-        llm_model=nlu.model,
-        llm_usage=nlu.usage,
+        detected_intent=_first_action(plan),
+        confidence=plan.confidence,
+        llm_model=plan.model,
+        llm_usage=plan.usage,
         provider_message_id=message.provider_message_id,
     )
 
@@ -154,9 +139,13 @@ async def handle_outbound_echo(
 
 
 async def _interpret(
-    db: Any, conversation: ConversationSession, catalog: CatalogSnapshot, text: str
-) -> NluResult:
-    """Chama o LLM; qualquer falha vira DESCONHECIDO e a máquina repergunta."""
+    db: Any,
+    conversation: ConversationSession,
+    catalog: CatalogSnapshot,
+    text: str,
+    situation: str,
+) -> AgentPlan:
+    """Chama o LLM; qualquer falha vira plano vazio e o executor repergunta."""
     try:
         history = await recent_turns(db, conversation.id)
     except Exception:
@@ -164,100 +153,21 @@ async def _interpret(
         history = []
 
     try:
-        nlu = await get_llm_client().extract(
-            state=conversation.state,
+        return await get_llm_client().interpret(
             catalog=catalog,
             history=history,
             message=text,
+            situation=situation,
         )
     except Exception:
         # O cliente real já trata os próprios erros; isto é o cinto de segurança.
         logger.exception("cliente de LLM levantou exceção inesperada")
-        nlu = NluResult(intent=Intent.DESCONHECIDO)
-    return _ground(_apply_rules(nlu, text), text, catalog)
+        return AgentPlan()
 
 
-def _apply_rules(nlu: NluResult, text: str) -> NluResult:
-    """Palavra inequívoca do cliente vale mais que o rótulo do modelo.
-
-    Ver `app/agent/keywords.py` para o porquê: é a primeira etapa da NLU, e a
-    única que continua funcionando quando o LLM não responde.
-    """
-    forced = rule_intent(text)
-    if forced is None or forced is nlu.intent:
-        return nlu
-
-    logger.info(
-        "intenção por regra: %r -> %s (o modelo disse %s)",
-        text[:60],
-        forced.value,
-        nlu.intent.value,
-    )
-    return nlu.model_copy(update={"intent": forced, "confidence": 1.0})
-
-
-def _ground(nlu: NluResult, text: str, catalog: CatalogSnapshot) -> NluResult:
-    """Descarta trechos que o modelo alegou ter extraído mas não disse.
-
-    O prompt exige que product_query/complement_queries sejam cópias literais
-    da mensagem (ver `prompts.BASE_INSTRUCTIONS`), mas nada impede o modelo de
-    "puxar" um item do histórico da conversa em vez da mensagem atual — como
-    visto em produção com "fechar, vou retirar na loja" virando
-    product_query="casquinha". Sem essa checagem, `_take_product` casaria esse
-    texto contra o catálogo e inventaria um item que o cliente não pediu agora.
-    """
-    haystack = normalize(text)
-
-    product_query = nlu.product_query
-    if product_query and normalize(product_query) not in haystack:
-        logger.warning("product_query fora da mensagem, descartando: %r", product_query)
-        product_query = None
-
-    complement_queries = [
-        q for q in nlu.complement_queries if normalize(q) in haystack
-    ]
-    if len(complement_queries) != len(nlu.complement_queries):
-        logger.warning(
-            "complement_queries fora da mensagem, descartando: %r",
-            [q for q in nlu.complement_queries if q not in complement_queries],
-        )
-
-    # Os *nomes* seguem a regra oposta (são do cardápio, não da mensagem), mas
-    # passam pela mesma desconfiança: só sobrevive o que existe de verdade.
-    product_name = nlu.product_name
-    if product_name and catalog.product_by_name(product_name) is None:
-        logger.warning("product_name fora do cardápio, descartando: %r", product_name)
-        product_name = None
-
-    complement_names = [
-        name for name in nlu.complement_names if catalog.complement_by_name(name)
-    ]
-    if len(complement_names) != len(nlu.complement_names):
-        logger.warning(
-            "complement_names fora do cardápio, descartando: %r",
-            [n for n in nlu.complement_names if n not in complement_names],
-        )
-
-    return nlu.model_copy(
-        update={
-            "product_query": product_query,
-            "complement_queries": complement_queries,
-            "product_name": product_name,
-            "complement_names": complement_names,
-        }
-    )
-
-
-async def _advance(
-    db: Any,
-    conversation: ConversationSession,
-    catalog: CatalogSnapshot,
-    nlu: NluResult,
-    text: str,
-) -> list[str]:
-    deps = await _build_deps(db, catalog, conversation)
-    result = await run_machine(deps, conversation, nlu, text)
-    return result.replies
+def _first_action(plan: AgentPlan) -> str | None:
+    """O que vai para o painel na coluna de intenção."""
+    return plan.operations[0].action.value if plan.operations else None
 
 
 async def _deliver(

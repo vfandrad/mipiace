@@ -35,13 +35,13 @@ class _FlushOnlySession:
 @pytest.mark.asyncio
 async def test_assumir_atendimento_apenas_liga_o_booleano() -> None:
     """Assumir não mexe no estado: o cliente pode estar no meio do pedido."""
-    conversa = _FakeConversation(S.ESCOLHENDO_PRODUTO)
+    conversa = _FakeConversation(S.CONVERSANDO)
     session = _FlushOnlySession()
 
     await conversations_service.set_handoff(session, conversa, handoff=True)
 
     assert conversa.handoff is True
-    assert conversa.state == S.ESCOLHENDO_PRODUTO.value, "o estado não pode mudar"
+    assert conversa.state == S.CONVERSANDO.value, "o estado não pode mudar"
 
 
 @pytest.mark.asyncio
@@ -57,7 +57,7 @@ async def test_devolver_ao_bot_tira_de_atendimento_humano() -> None:
     await conversations_service.set_handoff(session, conversa, handoff=False)
 
     assert conversa.handoff is False
-    assert conversa.state == S.SAUDACAO.value, "o bot precisa voltar a responder"
+    assert conversa.state == S.CONVERSANDO.value, "o bot precisa voltar a responder"
 
 
 @pytest.mark.asyncio
@@ -85,12 +85,12 @@ async def test_devolver_ao_bot_preserva_o_carrinho() -> None:
 @pytest.mark.asyncio
 async def test_devolver_ao_bot_fora_de_atendimento_humano_nao_mexe_no_estado() -> None:
     """Handoff ligado no meio do pedido: desligar só devolve o fluxo onde estava."""
-    conversa = _FakeConversation(S.COLETANDO_ENDERECO, handoff=True, fail_count=2)
+    conversa = _FakeConversation(S.CONVERSANDO, handoff=True, fail_count=2)
     session = _FlushOnlySession()
 
     await conversations_service.set_handoff(session, conversa, handoff=False)
 
-    assert conversa.state == S.COLETANDO_ENDERECO.value
+    assert conversa.state == S.CONVERSANDO.value
     assert conversa.fail_count == 2, "não era uma escalada do bot; nada a zerar"
 
 
@@ -98,4 +98,4 @@ def test_transicao_de_volta_e_permitida_pela_maquina() -> None:
     """O estado para onde o toggle devolve precisa ser alcançável de verdade."""
     from app.agent.states import can_transition
 
-    assert can_transition(S.ATENDIMENTO_HUMANO, S.SAUDACAO)
+    assert can_transition(S.ATENDIMENTO_HUMANO, S.CONVERSANDO)

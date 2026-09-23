@@ -17,7 +17,6 @@ from uuid import uuid4
 
 import pytest
 
-from app.agent.keywords import rule_intent
 from app.agent.resolver import MatchStatus, resolve_complement, resolve_product
 from app.domain.catalog import (
     CatalogComplement,
@@ -25,7 +24,6 @@ from app.domain.catalog import (
     CatalogProduct,
     CatalogSnapshot,
 )
-from app.domain.enums import Intent
 
 
 def build_cardapio() -> CatalogSnapshot:
@@ -125,40 +123,6 @@ def test_sabores_pelo_nome(cardapio) -> None:
         assert match.complement is not None and match.complement.name == esperado
 
 
-@pytest.mark.parametrize(
-    "frase, esperado",
-    [
-        # A que quebrou o fechamento em produção: o modelo classificava
-        # "retirada" como finalizar_pedido e o checkout repetia a pergunta.
-        ("retirada", Intent.ESCOLHER_RETIRADA),
-        ("vou retirar na loja", Intent.ESCOLHER_RETIRADA),
-        ("entrega", Intent.ESCOLHER_ENTREGA),
-        ("delivery por favor", Intent.ESCOLHER_ENTREGA),
-        ("cardapio", Intent.VER_CARDAPIO),
-        ("quero falar com um atendente", Intent.FALAR_COM_HUMANO),
-        ("cancelar", Intent.CANCELAR),
-        ("sim", Intent.CONFIRMAR),
-        ("nao", Intent.NEGAR),
-    ],
-)
-def test_palavra_inequivoca_dispensa_o_modelo(frase, esperado) -> None:
-    """Segura o atendimento também quando o LLM dá timeout."""
-    assert rule_intent(frase) is esperado
-
-
-@pytest.mark.parametrize(
-    "frase",
-    [
-        "não quero entrega",           # duas palavras, intenções opostas
-        "quero um pote de pistache",   # nenhuma palavra de comando
-        "",
-        "me manda o cardapio de sabores que tem hoje ai por favor",  # frase longa
-    ],
-)
-def test_na_duvida_a_regra_se_cala(frase) -> None:
-    assert rule_intent(frase) is None
-
-
 @pytest.mark.parametrize("frase", ["quero dois potes", "quero 2 potes", "um pote"])
 def test_quantidade_sem_tamanho_pergunta_em_vez_de_chutar(cardapio, frase) -> None:
     """Regressão do teste com cliente simulado.
@@ -170,22 +134,3 @@ def test_quantidade_sem_tamanho_pergunta_em_vez_de_chutar(cardapio, frase) -> No
     match = resolve_product(frase, cardapio)
     assert match.status is MatchStatus.AMBIGUOUS
     assert len(match.candidates) >= 3
-
-
-@pytest.mark.parametrize(
-    "pergunta",
-    [
-        "quanto fica a entrega?",   # levou um cliente simulado ao atendimento humano
-        "vcs aceitam cartao?",
-        "tem entrega hoje?",
-        "qual o horario de voces?",
-    ],
-)
-def test_pergunta_nao_vira_comando(pergunta) -> None:
-    """"quanto fica a entrega?" não é escolher entrega.
-
-    Como a regra respondia `escolher_entrega`, o estado não esperava aquilo,
-    virava falha — e três perguntas assim jogavam o cliente no atendimento
-    humano, onde o bot fica calado.
-    """
-    assert rule_intent(pergunta) is None

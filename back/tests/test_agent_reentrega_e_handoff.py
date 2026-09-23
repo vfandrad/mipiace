@@ -1,10 +1,9 @@
-"""Duas garantias da borda do canal, aprendidas num atendimento real.
+"""Duas garantias da borda do canal, aprendidas em conversa real.
 
 1. **Reentrega.** O WhatsApp entrega pelo menos uma vez. Quando a mesma
-   mensagem chegou duas vezes, o agente rodou duas vezes: a segunda já com o
-   estado adiantado, respondendo "não entendi" a uma pergunta que ninguém
-   tinha feito — e três dessas levaram a conversa para atendimento humano em
-   quatro mensagens.
+   mensagem chegava duas vezes, o agente rodava duas vezes — a segunda já com
+   o estado adiantado, respondendo "não entendi" a uma pergunta que ninguém
+   tinha feito.
 2. **Volta do handoff.** Escalar para humano só ajuda se houver humano. Sem
    resposta da loja dentro da janela, o bot reassume em vez de deixar o
    cliente falando sozinho.
@@ -17,13 +16,13 @@ from typing import Any
 import pytest
 
 from app.agent.machine import human_on_the_line, run
+from app.agent.plan import Action, AgentPlan, Operation
 from app.agent.runner import handle_inbound
 from app.agent.whatsapp import InboundMessage
 from app.core.config import get_settings
 from app.domain.enums import ConversationState as S
-from app.domain.enums import Intent
 
-from tests.test_agent_machine import build_deps, build_session, nlu
+from tests.test_agent_machine import build_deps, build_session, op, plano
 
 
 class _JaVista:
@@ -70,27 +69,29 @@ async def test_mensagem_sem_id_do_provedor_segue_o_fluxo() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bot_fica_calado_enquanto_a_loja_responde() -> None:
-    deps, session = build_deps(), build_session(S.ATENDIMENTO_HUMANO)
-    session.handoff = True
-    session.touch_handoff()
+async def test_bot_nao_conduz_o_pedido_enquanto_a_loja_atende() -> None:
+    deps, session = build_deps(), build_session()
+    await run(deps, session, plano(op(Action.REQUEST_HUMAN)), "quero um atendente")
 
     assert human_on_the_line(session) is True
-    assert (await run(deps, session, nlu(Intent.SAUDAR), "oi")).replies == []
+    replies = await run(deps, session, AgentPlan(), "oi?")
+    # Não conduz, mas também não some: avisa que está esperando.
+    assert replies and "aguardando" in replies[0].lower()
 
 
 @pytest.mark.asyncio
 async def test_bot_reassume_quando_ninguem_atende(monkeypatch) -> None:
-    deps, session = build_deps(), build_session(S.ATENDIMENTO_HUMANO)
-    session.handoff = True
-    session.touch_handoff()
+    deps, session = build_deps(), build_session()
+    await run(deps, session, plano(op(Action.REQUEST_HUMAN)), "atendente")
     monkeypatch.setattr(get_settings(), "handoff_return_minutes", 0)
 
-    result = await run(deps, session, nlu(Intent.SAUDAR), "oi")
+    replies = await run(
+        deps, session, plano(op(Action.ADD_ITEM, product_name="Casquinha")), "quero casquinha"
+    )
 
-    assert result.replies, "o cliente escreveu de novo e ninguém respondeu"
+    assert replies
     assert session.handoff is False
-    assert session.state is S.ESCOLHENDO_PRODUTO
+    assert session.state is S.CONVERSANDO
     assert "handoff_since" not in session.slots
 
 

@@ -102,7 +102,7 @@ class FakeStore:
         key = (phone, channel)
         if key not in self.conversations:
             self.conversations[key] = ConversationSession(
-                id=uuid4(), phone=phone, channel=channel, state=S.SAUDACAO
+                id=uuid4(), phone=phone, channel=channel, state=S.CONVERSANDO
             )
         return self.conversations[key]
 
@@ -237,18 +237,18 @@ def flow(monkeypatch: pytest.MonkeyPatch):
 async def test_fluxo_feliz_ate_o_pix(flow) -> None:
     # 1. Saudação: apresenta o cardápio e abre a escolha de produto.
     replies = await flow.say("oi")
-    assert flow.state is S.ESCOLHENDO_PRODUTO
+    assert flow.state is S.CONVERSANDO
     assert any("Pote 500ml" in reply for reply in replies)
 
     # 2. Produto com grupo obrigatório: entra na personalização.
     replies = await flow.say("quero um pote 500ml")
-    assert flow.state is S.PERSONALIZANDO_ITEM
-    assert "Sabores" in replies[0]
+    assert flow.state is S.CONVERSANDO
+    assert "sabores" in replies[0].lower()
     assert flow.conversation.cart.is_empty
 
     # 3. Os três sabores de uma vez fecham o grupo obrigatório.
     replies = await flow.say("pistache, morango e chocolate belga")
-    assert flow.state is S.REVISANDO_CARRINHO
+    assert flow.state is S.CONVERSANDO
     cart = flow.conversation.cart
     assert len(cart.items) == 1
     assert [c.name for c in cart.items[0].complements] == [
@@ -260,12 +260,12 @@ async def test_fluxo_feliz_ate_o_pix(flow) -> None:
 
     # 4. Fechar o pedido pergunta a modalidade antes de qualquer endereço.
     replies = await flow.say("pode fechar")
-    assert flow.state is S.REVISANDO_CARRINHO
-    assert "entrega" in replies[0].lower() and "retirada" in replies[0].lower()
+    assert flow.state is S.CONVERSANDO
+    assert "entregue" in replies[0].lower() and "retirar" in replies[0].lower()
 
     # 4b. Escolhida a entrega, aí sim vem o endereço.
     replies = await flow.say("entrega")
-    assert flow.state is S.COLETANDO_ENDERECO
+    assert flow.state is S.CONVERSANDO
     assert "endereço" in replies[0].lower()
 
     # 5. Endereço completo leva ao resumo final com taxa e total.
@@ -275,7 +275,7 @@ async def test_fluxo_feliz_ate_o_pix(flow) -> None:
     assert "R$ 32,00" in resumo          # subtotal
     assert "R$ 5,00" in resumo           # taxa de entrega
     assert "R$ 37,00" in resumo          # total
-    assert "Rua Das Flores" in resumo
+    assert "Rua das Flores" in resumo
 
     # 6. Confirmação cria o pedido, gera o Pix e trava em AGUARDANDO_PAGAMENTO.
     replies = await flow.say("sim")
@@ -289,9 +289,9 @@ async def test_fluxo_feliz_ate_o_pix(flow) -> None:
 
     # O endereço chegou ao serviço de pedidos no formato do contrato.
     address = flow.created["kwargs"]["address"]
-    assert address["rua"] == "Rua Das Flores"
+    assert address["rua"] == "Rua das Flores"
     assert address["numero"] == "123"
-    assert address["bairro"] == "Centro"
+    assert "Centro" in address["bairro"]
 
     # 7. O webhook de pagamento fecha a conversa.
     await runner.notify_payment_approved(object(), order.id)
@@ -311,22 +311,29 @@ async def test_conversa_e_registrada_para_auditoria(flow) -> None:
     entradas = [m for m in flow.store.messages if m["direction"] is MessageDirection.ENTRADA]
     saidas = [m for m in flow.store.messages if m["direction"] is MessageDirection.SAIDA]
     assert len(entradas) == 1
-    assert entradas[0]["detected_intent"] == "saudar"
-    assert entradas[0]["llm_model"] == "fake-rules-v1"
+    assert entradas[0]["detected_intent"] == "no_action"
+    assert entradas[0]["llm_model"] == "fake"
     assert entradas[0]["llm_usage"] is not None
     assert saidas
 
 
 @pytest.mark.asyncio
-async def test_pedir_atendente_silencia_o_bot(flow) -> None:
+async def test_pedir_atendente_nao_mata_a_conversa(flow) -> None:
+    """Escalar não pode virar silêncio: era o defeito mais caro do agente."""
     await flow.say("oi")
     replies = await flow.say("quero falar com um atendente")
     assert replies
     assert flow.state is S.ATENDIMENTO_HUMANO
     assert flow.conversation.handoff is True
 
-    # A partir daqui o bot não responde mais nada.
-    assert await flow.say("e aí, tem novidade?") == []
+    # O bot para de conduzir o pedido, mas continua ouvindo e avisando.
+    esperando = await flow.say("e aí, tem novidade?")
+    assert esperando and "aguardando" in esperando[0].lower()
+
+    # E devolve a conversa para si mesmo se o cliente quiser seguir por ali.
+    voltou = await flow.say("deixa, quero um casquinha mesmo")
+    assert voltou
+    assert flow.conversation.handoff is False
 
 
 @pytest.mark.asyncio
@@ -334,7 +341,7 @@ async def test_item_fora_do_cardapio_nao_entra_no_carrinho(flow) -> None:
     await flow.say("oi")
     replies = await flow.say("quero uma pizza de calabresa")
     assert flow.conversation.cart.is_empty
-    assert flow.state is S.ESCOLHENDO_PRODUTO
+    assert flow.state is S.CONVERSANDO
     assert replies
 
 
@@ -351,7 +358,7 @@ async def test_cancelar_no_meio_do_pedido(flow) -> None:
 
     # E uma nova mensagem recomeça a conversa.
     await flow.say("oi de novo")
-    assert flow.state is S.ESCOLHENDO_PRODUTO
+    assert flow.state is S.CONVERSANDO
 
 
 @pytest.mark.asyncio
@@ -366,7 +373,7 @@ async def test_fluxo_de_retirada_nao_cobra_taxa(flow) -> None:
     await flow.say("pistache, morango e chocolate belga")
 
     replies = await flow.say("pode fechar")
-    assert "retirada" in replies[0].lower()
+    assert "retirar" in replies[0].lower()
 
     replies = await flow.say("vou retirar na loja")
     assert flow.state is S.CONFIRMANDO_PEDIDO

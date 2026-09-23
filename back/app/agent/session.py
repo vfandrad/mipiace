@@ -23,7 +23,7 @@ from sqlalchemy import text
 from app.agent.llm import Turn
 from app.core.config import get_settings
 from app.domain.cart import Cart
-from app.domain.enums import ConversationState, MessageDirection
+from app.domain.enums import ConversationState, MessageDirection, parse_state
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class ConversationSession:
 
     def reset_flow(self) -> None:
         """Zera o pedido em construção mantendo a identidade do cliente."""
-        self.state = ConversationState.SAUDACAO
+        self.state = ConversationState.CONVERSANDO
         self.slots = {}
         self.cart = Cart()
         self.active_order_id = None
@@ -123,11 +123,8 @@ def _dump_slots(slots: dict[str, Any]) -> str:
 
 
 def _as_state(raw: Any) -> ConversationState:
-    try:
-        return ConversationState(str(raw))
-    except ValueError:
-        logger.warning("estado desconhecido em conversations: %r", raw)
-        return ConversationState.SAUDACAO
+    """Aceita os nomes antigos: há conversas gravadas antes da redução."""
+    return parse_state(str(raw))
 
 
 def _as_uuid(raw: Any) -> UUID | None:
@@ -173,7 +170,7 @@ async def load_or_create(
 ) -> ConversationSession:
     """Busca a conversa do telefone/canal, criando se for a primeira mensagem.
 
-    Sessão vencida (`expires_at` no passado) reinicia em SAUDACAO: um cliente
+    Sessão vencida (`expires_at` no passado) reinicia do zero: um cliente
     que sumiu por uma hora e voltou não deve cair no meio de um carrinho antigo.
     """
     result = await db.execute(
@@ -197,7 +194,7 @@ async def load_or_create(
             {
                 "phone": phone,
                 "channel": channel,
-                "state": ConversationState.SAUDACAO.value,
+                "state": ConversationState.CONVERSANDO.value,
                 "slots": "{}",
                 "cart": "[]",
                 "expires_at": _expires_at(),
@@ -208,7 +205,7 @@ async def load_or_create(
             id=_as_uuid(new_id),  # type: ignore[arg-type]
             phone=phone,
             channel=channel,
-            state=ConversationState.SAUDACAO,
+            state=ConversationState.CONVERSANDO,
         )
 
     session = _row_to_session(row)

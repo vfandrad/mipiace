@@ -81,7 +81,7 @@ mipiace/
 │   ├── db/schema.sql         AS TABELAS — fonte de verdade do banco
 │   ├── db/seed.sql           cardápio real (3 tamanhos + 31 sabores)
 │   ├── requirements.txt
-│   ├── tests/                174 testes, nenhum precisa de Postgres no ar
+│   ├── tests/                168 testes, nenhum precisa de Postgres no ar
 │   └── app/
 │       ├── main.py           cria o app e monta as rotas
 │       ├── agent/            a conversa do WhatsApp
@@ -112,15 +112,14 @@ mipiace/
 |---|---|---|
 | 1 | `api/routes/webhooks.py` → `evolution_webhook()` | Chega o POST da Evolution API. Valida o token da query string. |
 | 2 | `agent/whatsapp.py` → `EvolutionAdapter.parse_webhook()` | Extrai a mensagem do payload do Baileys. Ignora grupo, status e transmissão. |
-| 2b | `agent/inbox.py` → `submit()` | Espera ~3s por mais balões do mesmo cliente e junta tudo num turno só. O webhook responde 200 na hora; o resto roda fora da request. |
-| 3 | `agent/runner.py` → `handle_inbound()` | Daqui em diante é o agente. Orquestra os passos 4 a 9. Mensagem reentregue pelo canal (mesmo `provider_message_id`) para aqui. |
-| 4 | `agent/session.py` → `load_or_create()` | Carrega o estado da conversa do Postgres (ou cria, se for a 1ª mensagem). Sessão vencida recomeça do zero. |
-| 5 | `agent/llm.py` + `agent/prompts.py` | Chama a IA. Ela devolve **só** `NluResult`: a intenção, trechos literais da mensagem e a qual item do cardápio eles correspondem. Nunca decide o próximo passo. |
-| 5b | `agent/keywords.py` → `rule_intent()` | Palavra inequívoca ("retirada", "cardápio", "atendente") vale mais que o rótulo do modelo — e continua funcionando quando o LLM cai. |
-| 6 | `agent/runner.py` → `_ground()` | Descarta trecho que a IA alegou ter extraído mas que não está na mensagem, e nome de item que não está no cardápio. |
-| 7 | `agent/machine.py` → `run()` | **O cérebro.** Decide o próximo estado e o que responder. |
-| 8 | `agent/resolver.py` | Casa o texto livre ("pote de pistache") com o catálogo real. Se não casar, repergunta. |
-| 9 | `agent/renderer.py` | Transforma a decisão em texto de WhatsApp. |
+| 2b | `agent/inbox.py` → `submit()` | Espera ~3s por mais balões do mesmo cliente e junta tudo num turno só. O webhook responde 200 na hora. |
+| 3 | `agent/runner.py` → `handle_inbound()` | Daqui em diante é o agente. Mensagem reentregue pelo canal (mesmo `provider_message_id`) para aqui. |
+| 4 | `agent/session.py` → `load_or_create()` | Carrega o estado da conversa do Postgres. Sessão vencida recomeça do zero. |
+| 5 | `agent/machine.py` → `describe_situation()` | Monta o retrato do pedido agora: o que está no carrinho, que sabores faltam, se há um resumo esperando confirmação. |
+| 6 | `agent/llm.py` + `agent/prompts.py` | A IA lê a mensagem COM esse retrato e devolve um `AgentPlan`: a lista de **operações** que o cliente quis fazer. |
+| 7 | `agent/machine.py` → `run()` | **O executor.** Valida cada operação contra o catálogo real e aplica ao pedido. |
+| 8 | `agent/faq.py` | Responde as perguntas que não são pedido, com dado do sistema (Pix, taxa, cardápio do dia). |
+| 9 | `agent/renderer.py` | Transforma o resultado em texto de WhatsApp. |
 | 10 | `agent/session.py` → `save_session()` + `log_message()` | Grava o novo estado e a mensagem no histórico. |
 | 11 | `agent/whatsapp.py` → `send_text()` | Envia a resposta. |
 
@@ -129,71 +128,70 @@ pedido (`services/orders.py`) e pede o Pix (`services/payments.py`).
 
 ---
 
-## 5. State Machine + Agent
+## 5. A IA e a máquina de estados
 
 ### A divisão de trabalho
 
-O ponto central do desenho, e o motivo de o agente ser confiável:
+O ponto central do desenho:
 
-| A IA faz | A IA **nunca** faz |
+> A IA tem **liberdade** para interpretar linguagem natural e decidir qual
+> operação o cliente quer. Ela não tem **autoridade** para inventar produto,
+> preço, taxa ou disponibilidade, nem para cobrar. Ela traduz; o backend
+> valida contra o catálogo real e aplica.
+
+| A IA faz | O backend faz |
 |---|---|
-| classificar a intenção ("quer escolher produto") | escolher o próximo estado |
-| copiar trechos literais da mensagem ("pote grande") | dar a palavra final sobre o que entra no carrinho |
-| dizer a qual item do cardápio o trecho se refere ("G - 500ml") | calcular preço |
-| extrair endereço, quantidade, nome | emitir id de nada |
+| entender "troca o morango por chocolate" | decidir que isso é editar o item 1, e não criar outro |
+| dizer a qual item do cardápio o cliente se referiu | conferir se ele existe e está disponível |
+| extrair endereço, quantidade, sabores, forma de entrega | calcular preço, taxa e total em `Decimal` |
+| apontar ambiguidade em vez de chutar | recusar cobrança sem confirmação clara |
 
-O palpite da IA sobre o item (`product_name`) é **nome**, nunca id, e só vale
-depois de existir de verdade no `CatalogSnapshot`. Foi ele que destravou "quero
-um pote grande": o texto do cliente não se parece com o nome do produto no
-cardápio (que é o tamanho), e a IA era proibida de traduzir um no outro.
+### Operações, não intenções
 
-Tudo da coluna da direita é da máquina de estados, com o catálogo real em mãos
-e preço em `Decimal`. É isso que impede o bot de aceitar um sabor que não
-existe ou de inventar um valor.
+A IA devolve um `AgentPlan` — uma lista de operações (`agent/plan.py`):
 
-### Duas camadas de grounding
+```
+ADD_ITEM        UPDATE_ITEM      REPLACE_ITEM     REMOVE_ITEM
+UPDATE_QUANTITY DUPLICATE_ITEM   SET_FULFILLMENT  UPDATE_ADDRESS
+SHOW_MENU       SHOW_CART        SHOW_TOTAL       ANSWER_QUESTION
+CLOSE_ORDER     CONFIRM_ORDER    CANCEL_ORDER     REQUEST_HUMAN
+ASK_CLARIFICATION                NO_ACTION
+```
 
-1. `runner._ground()` — descarta o que a IA "extraiu" mas não está na mensagem
-   (caso real: "fechar, vou retirar na loja" virava `product_query="casquinha"`,
-   puxado do histórico) **e** o nome de item que não existe no cardápio.
-2. `resolver.resolve_product()` — casa o texto contra o catálogo, olhando nome
-   e descrição ("pote grande" → `G - 500ml`). Não casou, não existe: a máquina
-   repergunta. Dois candidatos igualmente bons viram "qual dos dois?".
+Uma mensagem pode trazer várias: *"tira o primeiro, põe um grande de chocolate
+e quero entrega"* são três operações num turno só. Antes existia só uma
+intenção por mensagem, e "editar" não existia — por isso toda correção virava
+item novo e a conta subia.
 
-### Os 10 estados
+O `strict` das structured outputs da OpenAI garante o formato. Sem ele o
+modelo devolvia operação sem o campo `action` e o pedido inteiro virava "não
+entendi".
 
-`SAUDACAO` → `ESCOLHENDO_PRODUTO` → `PERSONALIZANDO_ITEM` →
-`REVISANDO_CARRINHO` → `COLETANDO_ENDERECO` → `CONFIRMANDO_PEDIDO` →
-`AGUARDANDO_PAGAMENTO` → `CONCLUIDO`, mais `ATENDIMENTO_HUMANO` e `CANCELADO`.
+### Os 6 estados
 
-O diagrama completo está no [README](README.md#máquina-de-estados-do-agente).
-A tabela executável está em `agent/states.py`: toda mudança de estado passa por
-`advance()`, que valida contra ela. Pular etapa levanta `InvalidTransition` —
-de propósito, para virar erro em vez de pedido furado.
+`CONVERSANDO` → `CONFIRMANDO_PEDIDO` → `AGUARDANDO_PAGAMENTO` → `CONCLUIDO`,
+mais `ATENDIMENTO_HUMANO` e `CANCELADO`.
 
-### Transferência para atendimento humano
+Eram dez: havia um estado para cada etapa do diálogo (saudação, escolhendo
+produto, personalizando item, revisando carrinho, coletando endereço). A etapa
+já estava nos `slots` — tem rascunho? o carrinho está vazio? falta endereço? —
+e ter as duas coisas fazia o agente brigar consigo mesmo: o cliente falava de
+sabor num estado que só aceitava produto e ouvia "não entendi".
 
-Acontece de três formas:
+Sobraram os estados que carregam **garantia**, não etapa. A que importa é uma
+só, e está em `agent/states.py`: só se chega a `AGUARDANDO_PAGAMENTO` vindo de
+`CONFIRMANDO_PEDIDO` — ninguém é cobrado sem ter visto o resumo com o total e
+concordado. Resposta morna ("pode ser") não passa: o executor pergunta de novo.
 
-1. o cliente pede ("quero falar com atendente");
-2. a IA falha `MAX_NLU_FAILURES` vezes seguidas (padrão: 3);
-3. o lojista clica em "assumir" na tela de Conversas.
+Conversas gravadas com os nomes antigos continuam abrindo (`parse_state` em
+`domain/enums.py`).
 
-Com `handoff=true`, o `runner` registra a mensagem no histórico mas **não
-responde nada**. O painel continua espelhando a conversa inteira, inclusive o
-que o lojista digitar do próprio celular (é o que `handle_outbound_echo` faz).
+### O rascunho do item
 
-**O silêncio tem prazo.** Escalar para humano só ajuda o cliente se houver um
-humano, e às onze da noite frequentemente não há. Cada fala da loja pelo
-celular renova o relógio (`touch_handoff`); passados `HANDOFF_RETURN_MINUTES`
-(padrão 15) sem nenhuma, a próxima mensagem do cliente devolve a conversa ao
-bot — `machine.human_on_the_line()` decide, `_resume_from_human()` executa.
-
-**Devolver a conversa para o bot** (`handoff=false` no painel) tira a conversa
-do estado `ATENDIMENTO_HUMANO` e zera o contador de falhas — ver
-`services/conversations.py::set_handoff()`. As duas coisas precisam andar
-juntas porque a máquina cala o bot pelo **estado**, não pelo booleano. O
-carrinho é preservado: o cliente pode ter montado o pedido antes da escalada.
+O item em construção vive em `slots["draft"]` e é **mutável**: "pote médio" →
+"pistache" → "não, troca por chocolate" → "na verdade quero o grande" mexem
+todos no mesmo objeto. Ele só vira item do carrinho quando está completo, e é
+por isso que nada entra no pedido pela metade.
 
 ---
 
@@ -308,7 +306,7 @@ Todas em `back/app/core/config.py`. Com `FAKE_MODE=true` nenhuma chave externa
 | `DELIVERY_FEE` | `5.00` | taxa de entrega |
 | `PIX_EXPIRATION_MINUTES` | `30` | validade do QR |
 | `SESSION_TTL_MINUTES` | `60` | depois disso a conversa recomeça |
-| `MAX_NLU_FAILURES` | `3` | falhas seguidas antes de chamar humano |
+| `MAX_NLU_FAILURES` | `3` | incompreensões seguidas antes de OFERECER uma pessoa (o bot nunca cala) |
 | `WA_DEBOUNCE_SECONDS` | `3` | espera por mais balões antes de responder; `0` desliga |
 | `HANDOFF_RETURN_MINUTES` | `15` | silêncio máximo em atendimento humano antes de o bot reassumir |
 
@@ -328,20 +326,22 @@ visíveis no navegador:
 
 | Arquivo | Linhas | O que faz |
 |---|---|---|
-| `runner.py` | 348 | Orquestra um turno: sessão → IA → máquina → banco → canal. É o único ponto que o mundo externo chama. |
-| `machine.py` | 713 | **A máquina de estados.** Um handler por estado. Decide transição e resposta. |
-| `checkout.py` | 237 | O fechamento: `AgentDeps`, criar o pedido, gerar o Pix, consultar status. É a parte com efeito colateral. |
-| `states.py` | 128 | A tabela de transições e `advance()`, a única porta de mudança de estado. |
-| `resolver.py` | 228 | Casa texto livre com o catálogo real, por nome E descrição (exato → termo → substring → descrição → similaridade). |
-| `renderer.py` | 418 | **Todo texto que o bot fala.** Funções puras. Mude o tom aqui, sem tocar em regra. |
-| `session.py` | 430 | O estado da conversa no Postgres, e o log de mensagens. Usa SQL textual de propósito. |
+| `plan.py` | 147 | **O contrato com a IA:** as operações (`Action`) e o `AgentPlan`. |
+| `machine.py` | 1037 | **O executor.** Valida cada operação contra o catálogo e aplica ao pedido. |
+| `runner.py` | 258 | Orquestra um turno: sessão → situação → IA → executor → banco → canal. |
+| `checkout.py` | 192 | O fechamento: `AgentDeps`, criar o pedido, gerar o Pix, consultar status. É a parte com efeito colateral. |
+| `states.py` | 93 | A tabela de transições e `advance()` — hoje só o que garante que não se cobra sem confirmação. |
+| `resolver.py` | 260 | Casa texto livre com o catálogo real, por nome E descrição (exato → termo → substring → descrição → similaridade). |
+| `renderer.py` | 483 | **Todo texto que o bot fala.** Funções puras. Mude o tom aqui, sem tocar em regra. |
+| `faq.py` | 138 | Responde pergunta que não é pedido, só com dado que o sistema tem de verdade. |
+| `session.py` | 432 | O estado da conversa no Postgres, e o log de mensagens. Usa SQL textual de propósito. |
 | `whatsapp.py` | 336 | Os canais: `EvolutionAdapter` (WhatsApp real) e `ConsoleAdapter` (fake/testes). |
-| `llm.py` | 114 | O contrato (`NluResult`) e a escolha do cliente de IA. |
-| `prompts.py` | 224 | As instruções e o schema da tool. É aqui que se ajusta o que a IA extrai. |
-| `llm_openai.py` | 203 | Cliente OpenAI com function calling. |
-| `llm_fake.py` | 386 | IA falsa determinística baseada em regras. É o padrão em `FAKE_MODE`. |
 | `inbox.py` | 109 | Junta os balões seguidos do mesmo cliente num turno só (debounce de borda final). |
-| `keywords.py` | 74 | Regras de intenção para as palavras inequívocas — a 1ª etapa da NLU, e a que sobrevive ao LLM fora do ar. |
+| `llm.py` | 78 | O contrato do cliente de IA e a escolha entre real e falso. |
+| `prompts.py` | 301 | As instruções e o schema das operações. É aqui que se ajusta o que a IA pode dizer. |
+| `llm_openai.py` | 244 | Cliente OpenAI com function calling e structured outputs (`strict`). |
+| `llm_fake.py` | 291 | IA falsa determinística. É o padrão em `FAKE_MODE` e nos testes. |
+| `pacing.py` | 115 | O ritmo de envio no WhatsApp (digitação, teto por minuto). |
 
 ### `back/app/services/` — regra de negócio + banco
 
@@ -413,7 +413,7 @@ visíveis no navegador:
 | **adicionar/tirar sabor** | não é código: tela **Produtos** do painel |
 | **marcar sabor como sem lactose** | tela **Produtos**, ao criar ou editar o sabor |
 | **mudar a taxa de entrega** | variável `DELIVERY_FEE` |
-| **mudar quantas falhas até chamar humano** | variável `MAX_NLU_FAILURES` |
+| **mudar quantas falhas até oferecer humano** | variável `MAX_NLU_FAILURES` |
 | **adicionar um estado à conversa** | `domain/enums.py` (o nome) + `agent/states.py` (as transições) + `agent/machine.py` (o handler) |
 | **mudar o que a IA extrai** | `back/app/agent/prompts.py` |
 | **mudar as colunas do Kanban** | `front/src/pages/Producao.tsx` + `front/src/lib/status.ts` |

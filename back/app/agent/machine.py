@@ -1,9 +1,31 @@
-"""Máquina de estados do agente — quem realmente conduz o pedido.
+"""Executor: aplica ao pedido as operações que a IA entendeu.
 
-O LLM só entrega `NluResult`. Todo o resto (qual o próximo estado, qual produto
-existe, quanto custa, quando gerar o Pix) é decidido aqui, com o catálogo real
-em mãos e preço em `Decimal`. Toda mudança de estado passa por
-`assert_transition`, então pular etapa vira erro em vez de pedido furado.
+A divisão de trabalho, que é o ponto do desenho:
+
+    mensagem → LLM → operações → ESTE MÓDULO → estado do pedido
+                                      ↓
+                              catálogo + Decimal
+                                      ↓
+                                  resposta
+
+A IA tem liberdade para interpretar linguagem natural e dizer *qual operação*
+o cliente quer. Ela não tem autoridade para inventar produto, preço, taxa ou
+disponibilidade, nem para cobrar: cada operação é validada aqui contra o
+catálogo real, e só uma confirmação explícita sobre um resumo que o cliente
+viu gera Pix.
+
+O que mudou em relação à versão anterior, e por quê:
+
+- **Editar deixou de ser adicionar.** Havia uma operação só (escolher
+  produto), então "troca chocolate por fior di latte" e "remove o item 1"
+  viravam item novo — cada tentativa de corrigir o pedido aumentava a conta.
+- **O item em construção é um rascunho mutável.** "pote médio" → "pistache" →
+  "não, troca por chocolate" → "na verdade quero o grande" mexem todos no
+  mesmo objeto.
+- **Pergunta não derruba o fluxo.** `ANSWER_QUESTION` responde e devolve o
+  cliente exatamente para onde ele estava.
+- **A etapa do diálogo saiu dos estados e foi para os slots.** Restaram os
+  estados que carregam garantia (ver `states.py`).
 """
 
 from __future__ import annotations
@@ -11,13 +33,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any, Awaitable, Callable, Sequence
+from typing import Any, Sequence
 from uuid import UUID
 
 from app.agent import faq
 from app.agent import renderer as r
 from app.agent.checkout import (
-    AWAITING_FULFILLMENT_SLOT,
     AgentDeps,
     address_of,
     final_summary,
@@ -26,871 +47,991 @@ from app.agent.checkout import (
     order_status_reply,
     place_order,
     set_fulfillment,
-    start_checkout,
 )
-from app.agent.llm import NluResult
-from app.agent.resolver import (
-    MatchStatus,
-    clean_query,
-    pick_by_number,
-    resolve_complement,
-    resolve_product,
-    split_queries,
-)
+from app.agent.plan import Action, AgentPlan, Operation
+from app.agent.resolver import MatchStatus, resolve_product
 from app.agent.session import ConversationSession
-from app.core.config import get_settings
 from app.agent.states import CANCELLABLE_STATES, advance as _go, can_transition
+from app.core.config import get_settings
 from app.domain.cart import CartComplement, CartItem
 from app.domain.catalog import CatalogGroup, CatalogProduct, normalize
 from app.domain.enums import ConversationState as S
-from app.domain.enums import FulfillmentType, Intent
+from app.domain.enums import FulfillmentType
 
 logger = logging.getLogger(__name__)
 
-#: Palavras que valem como "chega, pode seguir" dentro de um grupo opcional.
-_DONE_WORDS = frozenset({"nao", "nao quero", "so isso", "pronto", "chega", "ok", "e so isso"})
-
-#: Intenções que, no meio da escolha de sabores, claramente não são sabor.
-_NOT_A_FLAVOR = frozenset(
-    {
-        Intent.FINALIZAR_PEDIDO,
-        Intent.ESCOLHER_RETIRADA,
-        Intent.ESCOLHER_ENTREGA,
-        Intent.INFORMAR_ENDERECO,
-        Intent.ADICIONAR_MAIS,
-    }
-)
+#: Slots usados pelo executor.
+DRAFT = "draft"                      # item em construção (rascunho mutável)
+CLOSING = "closing"                  # o cliente já disse que quer fechar
+AWAITING_CONFIRM = "awaiting_confirm"  # resumo final na tela, esperando "sim"
+LAST_OFFER = "last_offer"            # a última lista numerada que mostramos
 
 
-@dataclass(slots=True)
-class MachineResult:
-    replies: list[str] = field(default_factory=list)
-    state: S = S.SAUDACAO
+@dataclass
+class _Turn:
+    """O que aconteceu neste turno, para compor UMA resposta no fim.
 
-
-# ---------------------------------------------------------------------------
-# Helpers de estado
-# ---------------------------------------------------------------------------
-
-def _offer(session: ConversationSession, ids: Sequence[Any]) -> None:
-    """Registra a lista numerada que acabamos de mostrar (para aceitar "2")."""
-    session.slots["options"] = [str(i) for i in ids]
-
-
-def _offered(session: ConversationSession) -> list[str]:
-    return list(session.slots.get("options") or [])
-
-
-def _fail(
-    session: ConversationSession,
-    deps: AgentDeps,
-    reprompt: Callable[[], list[str]] | None = None,
-) -> list[str]:
-    """Reparo progressivo: repete a pergunta, depois oferece saída, depois escala.
-
-    `reprompt` é a pergunta do estado atual (o cardápio, os sabores que faltam,
-    os campos do endereço). Mostrá-la de novo é o que transforma "não entendi"
-    numa conversa que o cliente consegue continuar — sem ela, ele só sabe que
-    errou, não o que responder.
+    Sem isto o bot responde uma mensagem por operação e vira metralhadora:
+    "Tirei o X." / "Adicionei o Y." / "Anotei entrega." / "Qual o endereço?".
     """
-    session.fail_count += 1
-    if session.fail_count >= deps.settings.max_nlu_failures:
-        return _to_human(session, requested=False)
 
-    replies = [r.fallback(session.fail_count, with_reprompt=reprompt is not None)]
-    if reprompt is not None:
-        replies += reprompt()
-    return replies
+    notes: list[str] = field(default_factory=list)   # o que o bot confirma/responde
+    changed: bool = False                            # mexeu no pedido?
+    answered: bool = False                           # respondeu pergunta?
+    finished: list[str] | None = None                # resposta final (Pix, cancelamento)
 
-
-def _back_to_choosing(session: ConversationSession) -> None:
-    """Volta para a escolha de produto respeitando a tabela de transições."""
-    if session.state is S.PERSONALIZANDO_ITEM:
-        _go(session, S.REVISANDO_CARRINHO)
-    elif session.state in {S.CANCELADO, S.CONCLUIDO}:
-        _go(session, S.SAUDACAO)
-    _go(session, S.ESCOLHENDO_PRODUTO)
+    def say(self, *texts: str) -> None:
+        self.notes.extend(t for t in texts if t)
 
 
-def _to_human(session: ConversationSession, *, requested: bool = True) -> list[str]:
+# ---------------------------------------------------------------------------
+# Rascunho do item (slots["draft"])
+# ---------------------------------------------------------------------------
+
+def _draft(session: ConversationSession) -> dict[str, Any] | None:
+    draft = session.slots.get(DRAFT)
+    return draft if isinstance(draft, dict) else None
+
+
+def _start_draft(
+    session: ConversationSession, product: CatalogProduct, quantity: int = 1
+) -> dict[str, Any]:
+    draft = {
+        "product_id": str(product.id),
+        "product_name": product.name,
+        "unit_base_price": str(product.base_price),
+        "quantity": max(1, quantity),
+        "flavors": [],
+    }
+    session.slots[DRAFT] = draft
+    return draft
+
+
+def _draft_product(deps: AgentDeps, draft: dict[str, Any]) -> CatalogProduct | None:
+    return deps.catalog.product_by_id(UUID(draft["product_id"]))
+
+
+def _first_open_group(
+    deps: AgentDeps, draft: dict[str, Any]
+) -> tuple[CatalogProduct | None, CatalogGroup | None]:
+    """O grupo obrigatório que ainda não fechou, se houver."""
+    product = _draft_product(deps, draft)
+    if product is None:
+        return None, None
+    for group in product.required_groups:
+        escolhidos = [f for f in draft["flavors"] if f["group_id"] == str(group.id)]
+        if len(escolhidos) < group.min_choices:
+            return product, group
+    return product, None
+
+
+def _draft_complete(deps: AgentDeps, draft: dict[str, Any]) -> bool:
+    _, group = _first_open_group(deps, draft)
+    return group is None
+
+
+def _commit_draft(deps: AgentDeps, session: ConversationSession) -> CartItem | None:
+    """Move o rascunho para o carrinho. Só quando ele está completo."""
+    draft = _draft(session)
+    if draft is None or not _draft_complete(deps, draft):
+        return None
+    item = CartItem(
+        product_id=UUID(draft["product_id"]),
+        product_name=draft["product_name"],
+        unit_base_price=Decimal(draft["unit_base_price"]),
+        quantity=int(draft["quantity"]),
+        complements=[
+            CartComplement(
+                id=UUID(f["id"]),
+                group_id=UUID(f["group_id"]),
+                name=f["name"],
+                extra_price=Decimal(f["extra_price"]),
+            )
+            for f in draft["flavors"]
+        ],
+    )
+    session.cart.items.append(item)
+    session.slots.pop(DRAFT, None)
+    return item
+
+
+# ---------------------------------------------------------------------------
+# Alvos (qual item a operação atinge)
+# ---------------------------------------------------------------------------
+
+def _target_index(session: ConversationSession, op: Operation) -> int | None:
+    """Qual item do carrinho a operação aponta, contando a partir de 1."""
+    itens = session.cart.items
+    if not itens:
+        return None
+
+    if op.item_index is not None and 1 <= op.item_index <= len(itens):
+        return op.item_index - 1
+
+    if op.product_name:
+        alvo = normalize(op.product_name)
+        achados = [i for i, item in enumerate(itens) if normalize(item.product_name) == alvo]
+        if len(achados) == 1:
+            return achados[0]
+        if achados:
+            return achados[-1]  # dois iguais: mexe no último, como gente espera
+
+    if len(itens) == 1:
+        return 0
+    return None
+
+
+def _group_of(deps: AgentDeps, item: CartItem) -> CatalogGroup | None:
+    product = deps.catalog.product_by_id(item.product_id)
+    if product is None:
+        return None
+    return product.required_groups[0] if product.required_groups else None
+
+
+# ---------------------------------------------------------------------------
+# Resolução de nomes (a IA propõe, o catálogo decide)
+# ---------------------------------------------------------------------------
+
+def _find_product(deps: AgentDeps, op: Operation) -> tuple[CatalogProduct | None, str | None]:
+    """Produto da operação, ou o motivo de não ter dado.
+
+    Devolve `(produto, problema)`. O nome vem da IA, mas quem diz se existe,
+    se está disponível e se é ambíguo é o catálogo.
+    """
+    nome = (op.product_name or "").strip()
+    if nome:
+        product = deps.catalog.product_by_name(nome)
+        if product is not None:
+            if not product.is_available:
+                return None, r.product_unavailable(product.name)
+            return product, None
+
+    texto = (op.raw_text or op.product_name or "").strip()
+    if not texto:
+        return None, None
+
+    match = resolve_product(texto, deps.catalog)
+    if match.ok:
+        return match.product, None
+    if match.status is MatchStatus.AMBIGUOUS:
+        return None, r.product_ambiguous(match.candidates)
+    if match.status is MatchStatus.UNAVAILABLE:
+        nome_ = match.candidates[0].name if match.candidates else texto
+        return None, r.product_unavailable(nome_)
+    return None, r.product_not_found(texto)
+
+
+def _find_flavors(
+    group: CatalogGroup, nomes: Sequence[str]
+) -> tuple[list[Any], list[str]]:
+    """Casa nomes de sabor com o grupo. Devolve (achados, problemas)."""
+    achados, problemas = [], []
+    for nome in nomes:
+        alvo = normalize(nome)
+        escolha = next(
+            (c for c in group.complements if normalize(c.name) == alvo), None
+        )
+        if escolha is None:
+            problemas.append(r.complement_not_found(nome, group))
+            continue
+        if not escolha.is_available:
+            problemas.append(r.complement_unavailable(escolha.name))
+            continue
+        achados.append(escolha)
+    return achados, problemas
+
+
+def _apply_flavors(
+    draft_or_item: Any,
+    group: CatalogGroup,
+    *,
+    add: Sequence[Any],
+    remove_names: Sequence[str],
+    turn: _Turn,
+    is_draft: bool,
+) -> None:
+    """Tira e põe sabores no MESMO item, respeitando o máximo e sem repetir."""
+    atuais: list[Any] = draft_or_item["flavors"] if is_draft else draft_or_item.complements
+    repetidos: list[str] = []
+    mexeu = False
+
+    # Remoções primeiro: é o que faz "troca X por Y" caber no mesmo item.
+    for nome in remove_names:
+        alvo = normalize(nome)
+        for atual in list(atuais):
+            nome_atual = atual["name"] if is_draft else atual.name
+            if normalize(nome_atual) == alvo:
+                atuais.remove(atual)
+                turn.say(r.flavor_removed(nome_atual))
+                turn.changed = True
+                mexeu = True
+                break
+
+    for escolha in add:
+        if len(atuais) >= group.max_choices:
+            turn.say(r.group_full(group))
+            break
+        ids = [
+            (f["id"] if is_draft else str(f.id)) for f in atuais
+        ]
+        if str(escolha.id) in ids:
+            # Sabor não se repete no mesmo pote. O modelo costuma REPETIR os
+            # já escolhidos junto com o novo ("troca morango por chocolate"
+            # volta com Pistache também): aí a repetição é só ruído e some.
+            # Só vira aviso quando foi o cliente que pediu duas vezes.
+            repetidos.append(escolha.name)
+            continue
+        if is_draft:
+            atuais.append(
+                {
+                    "id": str(escolha.id),
+                    "group_id": str(escolha.group_id),
+                    "name": escolha.name,
+                    "extra_price": str(escolha.extra_price),
+                }
+            )
+        else:
+            atuais.append(
+                CartComplement(
+                    id=escolha.id,
+                    group_id=escolha.group_id,
+                    name=escolha.name,
+                    extra_price=escolha.extra_price,
+                )
+            )
+        turn.changed = True
+        mexeu = True
+
+    if repetidos and not mexeu:
+        turn.say(r.flavor_already_chosen(repetidos[0]))
+
+
+# ---------------------------------------------------------------------------
+# As operações
+# ---------------------------------------------------------------------------
+
+async def _apply(
+    deps: AgentDeps, session: ConversationSession, op: Operation, turn: _Turn
+) -> None:
+    """Aplica UMA operação. Nada aqui responde ao cliente diretamente."""
+    action = op.action
+
+    # O modelo costuma pendurar a forma de entrega e o endereço na MESMA
+    # operação do item ("quero um pote G, vou retirar"). Lidos só na operação
+    # dedicada, eles se perdiam e o bot perguntava de novo lá na frente.
+    if op.fulfillment and action is not Action.SET_FULFILLMENT:
+        _set_fulfillment(session, op.fulfillment, turn)
+    if op.address is not None and action is not Action.UPDATE_ADDRESS:
+        _merge_address(session, op.address, turn)
+
+    if action is Action.ADD_ITEM:
+        _op_add_item(deps, session, op, turn)
+
+    elif action in {Action.UPDATE_ITEM, Action.REPLACE_ITEM}:
+        _op_update_item(deps, session, op, turn)
+
+    elif action is Action.REMOVE_ITEM:
+        _op_remove_item(deps, session, op, turn)
+
+    elif action is Action.UPDATE_QUANTITY:
+        _op_quantity(deps, session, op, turn)
+
+    elif action is Action.DUPLICATE_ITEM:
+        _op_duplicate(deps, session, op, turn)
+
+    elif action is Action.SET_FULFILLMENT:
+        _set_fulfillment(session, op.fulfillment, turn)
+
+    elif action is Action.UPDATE_ADDRESS:
+        _merge_address(session, op.address, turn)
+
+    elif action is Action.SHOW_MENU:
+        turn.say(_menu(deps, session))
+        turn.answered = True
+
+    elif action is Action.SHOW_CART:
+        turn.say(
+            r.cart_summary(session.cart)
+            if not session.cart.is_empty
+            else r.cart_empty()
+        )
+        turn.answered = True
+
+    elif action is Action.SHOW_TOTAL:
+        turn.say(_total_reply(deps, session))
+        turn.answered = True
+
+    elif action is Action.ANSWER_QUESTION:
+        turn.say(_answer_question(deps, session, op))
+        turn.answered = True
+
+    elif action is Action.CLOSE_ORDER:
+        session.slots[CLOSING] = True
+
+    elif action is Action.CANCEL_ORDER:
+        turn.finished = _cancel(session)
+
+    elif action is Action.REQUEST_HUMAN:
+        turn.finished = _to_human(session)
+
+    elif action is Action.ASK_CLARIFICATION:
+        turn.say(op.clarification or r.ask_clarification())
+        turn.answered = True
+
+    # CONFIRM_ORDER e NO_ACTION são tratados em `run`: um mexe em dinheiro, o
+    # outro é a ausência de operação.
+
+
+def _set_fulfillment(session: ConversationSession, escolha: str | None, turn: _Turn) -> None:
+    if escolha == "retirada":
+        set_fulfillment(session, FulfillmentType.RETIRADA)
+        turn.changed = True
+    elif escolha == "entrega":
+        set_fulfillment(session, FulfillmentType.ENTREGA)
+        turn.changed = True
+
+
+def _merge_address(session: ConversationSession, address: Any, turn: _Turn) -> None:
+    """Endereço é objeto: o cliente completa em qualquer ordem, em qualquer turno."""
+    if address is None:
+        return
+    endereco = address_of(session)
+    for campo, valor in address.model_dump().items():
+        if valor:
+            endereco[campo] = valor
+    session.slots["address"] = endereco
+    set_fulfillment(session, FulfillmentType.ENTREGA)
+    turn.changed = True
+
+
+def _op_add_item(
+    deps: AgentDeps, session: ConversationSession, op: Operation, turn: _Turn
+) -> None:
+    product, problema = _find_product(deps, op)
+    if product is None:
+        if problema:
+            turn.say(problema)
+            turn.answered = True
+        return
+
+    # Já havia um rascunho? Se estava incompleto, o cliente está trocando de
+    # ideia sobre ele ("na verdade quero o médio"); se estava completo, ele
+    # entra no carrinho e começamos outro.
+    draft = _draft(session)
+    if draft is not None:
+        if _draft_complete(deps, draft):
+            item = _commit_draft(deps, session)
+            if item is not None:
+                turn.say(r.item_added(item))
+        elif str(product.id) != draft["product_id"]:
+            antigo = draft["product_name"]
+            _replace_draft_product(deps, session, draft, product, turn)
+            turn.say(r.product_switched(antigo, product.name))
+            _add_flavors_to_draft(deps, session, op, turn)
+            return
+
+    novo = _start_draft(session, product, op.quantity or 1)
+    turn.changed = True
+    if not product.required_groups:
+        item = _commit_draft(deps, session)
+        if item is not None:
+            turn.say(r.item_added(item))
+        return
+    _add_flavors_to_draft(deps, session, op, turn, draft=novo)
+
+
+def _add_flavors_to_draft(
+    deps: AgentDeps,
+    session: ConversationSession,
+    op: Operation,
+    turn: _Turn,
+    draft: dict[str, Any] | None = None,
+) -> None:
+    draft = draft or _draft(session)
+    if draft is None or not (op.add_flavors or op.remove_flavors):
+        return
+    product, group = _first_open_group(deps, draft)
+    if group is None:
+        return
+    achados, problemas = _find_flavors(group, op.add_flavors)
+    turn.say(*problemas)
+    _apply_flavors(
+        draft,
+        group,
+        add=achados,
+        remove_names=op.remove_flavors,
+        turn=turn,
+        is_draft=True,
+    )
+
+
+def _replace_draft_product(
+    deps: AgentDeps,
+    session: ConversationSession,
+    draft: dict[str, Any],
+    product: CatalogProduct,
+    turn: _Turn,
+) -> None:
+    """Troca o produto do rascunho mantendo os sabores que ainda existem."""
+    antigos = [f["name"] for f in draft["flavors"]]
+    novo = _start_draft(session, product, int(draft.get("quantity", 1)))
+    _, group = _first_open_group(deps, novo)
+    if group is not None and antigos:
+        achados, _ = _find_flavors(group, antigos)
+        _apply_flavors(
+            novo, group, add=achados, remove_names=[], turn=turn, is_draft=True
+        )
+    turn.changed = True
+
+
+def _op_update_item(
+    deps: AgentDeps, session: ConversationSession, op: Operation, turn: _Turn
+) -> None:
+    """Mexe num item que já existe — nunca cria um novo."""
+    draft = _draft(session)
+
+    # Trocar o produto (replace) tem prioridade sobre mexer em sabor.
+    if op.action is Action.REPLACE_ITEM or (
+        op.product_name and not op.add_flavors and not op.remove_flavors
+    ):
+        product, problema = _find_product(deps, op)
+        if product is None:
+            if problema:
+                turn.say(problema)
+                turn.answered = True
+            return
+        if draft is not None:
+            antigo = draft["product_name"]
+            if str(product.id) != draft["product_id"]:
+                _replace_draft_product(deps, session, draft, product, turn)
+                turn.say(r.product_switched(antigo, product.name))
+            return
+        index = _target_index(session, op)
+        if index is None:
+            turn.say(r.ask_which_item(session.cart))
+            turn.answered = True
+            return
+        antigo = session.cart.items[index]
+        session.cart.items.pop(index)
+        novo = _start_draft(session, product, antigo.quantity)
+        _, group = _first_open_group(deps, novo)
+        if group is not None and antigo.complements:
+            achados, _ = _find_flavors(group, [c.name for c in antigo.complements])
+            _apply_flavors(
+                novo, group, add=achados, remove_names=[], turn=turn, is_draft=True
+            )
+        turn.say(r.product_switched(antigo.product_name, product.name))
+        turn.changed = True
+        return
+
+    # Mexer em sabor: no rascunho, se houver; senão no item do carrinho.
+    if draft is not None:
+        _add_flavors_to_draft(deps, session, op, turn)
+        return
+
+    index = _target_index(session, op)
+    if index is None:
+        turn.say(r.ask_which_item(session.cart))
+        turn.answered = True
+        return
+
+    item = session.cart.items[index]
+    group = _group_of(deps, item)
+    if group is None:
+        turn.say(r.item_has_no_flavors(item.product_name))
+        turn.answered = True
+        return
+
+    achados, problemas = _find_flavors(group, op.add_flavors)
+    turn.say(*problemas)
+    _apply_flavors(
+        item,
+        group,
+        add=achados,
+        remove_names=op.remove_flavors,
+        turn=turn,
+        is_draft=False,
+    )
+    if turn.changed:
+        turn.say(r.item_updated(item))
+
+
+def _op_remove_item(
+    deps: AgentDeps, session: ConversationSession, op: Operation, turn: _Turn
+) -> None:
+    # "tira o pistache" com um rascunho aberto é tirar o sabor, não o item.
+    draft = _draft(session)
+    if draft is not None and op.remove_flavors:
+        product, group = _first_open_group(deps, draft)
+        if group is not None:
+            _apply_flavors(
+                draft,
+                group,
+                add=[],
+                remove_names=op.remove_flavors,
+                turn=turn,
+                is_draft=True,
+            )
+            return
+
+    if session.cart.is_empty:
+        if draft is not None:
+            session.slots.pop(DRAFT, None)
+            turn.say(r.item_removed(draft["product_name"]))
+            turn.changed = True
+            return
+        turn.say(r.cart_empty())
+        turn.answered = True
+        return
+
+    index = _target_index(session, op)
+    if index is None:
+        turn.say(r.ask_which_item(session.cart))
+        turn.answered = True
+        return
+
+    removido = session.cart.items.pop(index)
+    turn.say(r.item_removed(removido.product_name))
+    turn.changed = True
+
+
+def _op_quantity(
+    deps: AgentDeps, session: ConversationSession, op: Operation, turn: _Turn
+) -> None:
+    if op.quantity is None:
+        return
+
+    draft = _draft(session)
+    if draft is not None and op.item_index is None:
+        draft["quantity"] = op.quantity
+        turn.changed = True
+        return
+
+    index = _target_index(session, op)
+    if index is None:
+        turn.say(r.ask_which_item(session.cart))
+        turn.answered = True
+        return
+
+    item = session.cart.items[index]
+    item.quantity = op.quantity
+    turn.say(r.quantity_updated(item))
+    turn.changed = True
+
+
+def _op_duplicate(
+    deps: AgentDeps, session: ConversationSession, op: Operation, turn: _Turn
+) -> None:
+    # "põe também 2 cascões" chega do modelo como duplicate_item com o nome de
+    # OUTRO produto. Duplicar aí repetiria o pote de R$ 50 que já estava no
+    # carrinho. Quando o nome é de outro item, isto é adicionar, não duplicar.
+    if op.product_name:
+        alvo = deps.catalog.product_by_name(op.product_name)
+        atual = (
+            session.cart.items[_target_index(session, Operation(action=op.action)) or 0]
+            if session.cart.items
+            else None
+        )
+        if alvo is not None and (atual is None or alvo.id != atual.product_id):
+            _op_add_item(deps, session, op, turn)
+            return
+
+    if session.cart.is_empty:
+        turn.say(r.cart_empty())
+        turn.answered = True
+        return
+    index = _target_index(session, op) if op.item_index or op.product_name else len(
+        session.cart.items
+    ) - 1
+    if index is None:
+        index = len(session.cart.items) - 1
+    copia = session.cart.items[index].model_copy(deep=True)
+    copia.quantity = op.quantity or 1
+    session.cart.items.append(copia)
+    turn.say(r.item_added(copia))
+    turn.changed = True
+
+
+# ---------------------------------------------------------------------------
+# Respostas que só leem
+# ---------------------------------------------------------------------------
+
+def _menu(deps: AgentDeps, session: ConversationSession) -> str:
+    session.slots[LAST_OFFER] = [p.name for p in deps.catalog.available_products]
+    return r.menu(deps.catalog)
+
+
+def _total_reply(deps: AgentDeps, session: ConversationSession) -> str:
+    if session.cart.is_empty:
+        return r.cart_empty()
+    kind = fulfillment_of(session)
+    taxa = (
+        Decimal("0")
+        if kind is FulfillmentType.RETIRADA
+        else deps.settings.delivery_fee
+    )
+    return r.total_reply(session.cart, taxa, is_pickup=kind is FulfillmentType.RETIRADA)
+
+
+def _answer_question(
+    deps: AgentDeps, session: ConversationSession, op: Operation
+) -> str:
+    return faq.answer(
+        topic=op.question_topic,
+        question=op.question_text or "",
+        raw_text=op.raw_text,
+        catalog=deps.catalog,
+        settings=deps.settings,
+        cart=session.cart,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Atendimento humano
+# ---------------------------------------------------------------------------
+
+def _to_human(session: ConversationSession) -> list[str]:
     if not can_transition(session.state, S.ATENDIMENTO_HUMANO):
-        _go(session, S.SAUDACAO)  # de CANCELADO só se sai reabrindo a conversa
+        _go(session, S.CONVERSANDO)
     _go(session, S.ATENDIMENTO_HUMANO)
     session.handoff = True
     session.touch_handoff()
-    session.slots.pop("options", None)
-    return [r.handoff(requested)]
+    return [r.handoff()]
 
 
 def human_on_the_line(session: ConversationSession) -> bool:
-    """A conversa está com o time E alguém de lá deu sinal há pouco tempo.
-
-    Enquanto for verdade, o bot não abre a boca. Quando deixa de ser — ninguém
-    da loja respondeu dentro de `handoff_return_minutes` —, o bot reassume:
-    escalar para humano só ajuda o cliente se houver um humano, e no WhatsApp
-    da gelateria, à noite, frequentemente não há.
-    """
+    """Alguém da loja deu sinal de vida há pouco tempo."""
     if not session.handoff and session.state is not S.ATENDIMENTO_HUMANO:
         return False
     return session.handoff_idle_minutes() < get_settings().handoff_return_minutes
 
 
 def _resume_from_human(session: ConversationSession) -> None:
-    """Devolve a conversa ao bot depois da espera sem resposta da loja."""
     session.handoff = False
     session.slots.pop("handoff_since", None)
     session.fail_count = 0
     if session.state is S.ATENDIMENTO_HUMANO:
-        _go(session, S.SAUDACAO)
+        _go(session, S.CONVERSANDO)
 
 
-def _clear_order(session: ConversationSession) -> None:
-    """Esquece o pedido em construção, sem mexer no estado nem no cliente."""
+def _handoff_turn(session: ConversationSession, plan: AgentPlan) -> list[str] | None:
+    """Em atendimento humano o bot não conduz o pedido — mas não emudece.
+
+    Devolve `None` quando o cliente mostrou que quer seguir com o bot: aí a
+    conversa volta e o turno é processado normalmente, sem obrigar o cliente a
+    repetir o que acabou de pedir.
+
+    Ficar mudo era o defeito mais caro do agente: quem pedia atendente (ou
+    caía lá por engano) não recebia mais nada, nem "estou chamando alguém",
+    nem resposta a "cancela". Aqui ele continua ouvindo: avisa que está
+    aguardando, aceita cancelamento e volta a atender se o cliente pedir.
+    """
+    if plan.has(Action.CANCEL_ORDER):
+        return _cancel(session)
+
+    # Qualquer operação de pedido significa "quero seguir por aqui mesmo".
+    quer_o_bot = any(
+        action
+        in {
+            Action.ADD_ITEM,
+            Action.UPDATE_ITEM,
+            Action.REPLACE_ITEM,
+            Action.REMOVE_ITEM,
+            Action.UPDATE_QUANTITY,
+            Action.DUPLICATE_ITEM,
+            Action.CLOSE_ORDER,
+            Action.CONFIRM_ORDER,
+            Action.SHOW_MENU,
+        }
+        for action in plan.actions
+    )
+    if quer_o_bot:
+        _resume_from_human(session)
+        return None  # o turno segue normalmente; quem chama põe o aviso
+
+    # Avisa que está esperando — mas uma vez a cada tanto, não a cada mensagem.
+    if session.slots.get("handoff_avisado"):
+        return []
+    session.slots["handoff_avisado"] = True
+    return [r.still_waiting_human()]
+
+
+#: Respostas mornas. A lista é curta e existe por um motivo só: impedir que
+#: uma quase-confirmação vire cobrança. Não é o cliente que precisa falar
+#: assim — é o sistema que se recusa a cobrar sem um sim claro.
+_MORNAS = (
+    "pode ser",
+    "acho que sim",
+    "acho que e isso",
+    "talvez",
+    "tanto faz",
+    "sei la",
+    "vamo ver",
+    "deve ser",
+)
+
+
+def _hedged(text: str) -> bool:
+    limpo = normalize(text).strip(" .!?")
+    return any(limpo == m or limpo.startswith(m + " ") for m in _MORNAS)
+
+
+def _cancel(session: ConversationSession) -> list[str]:
+    if session.state in CANCELLABLE_STATES or session.state is S.ATENDIMENTO_HUMANO:
+        if session.state is S.ATENDIMENTO_HUMANO:
+            session.handoff = False
+        _go(session, S.CANCELADO)
     session.slots = {}
     session.cart.items.clear()
     session.active_order_id = None
     session.fail_count = 0
-
-
-def _cancel(session: ConversationSession) -> list[str]:
-    _go(session, S.CANCELADO)
-    _clear_order(session)
     return [r.cancelled()]
 
 
-def _mentions_product(nlu: NluResult) -> bool:
-    """A mensagem fala de algum produto, pelo texto do cliente ou pelo cardápio.
+# ---------------------------------------------------------------------------
+# Situação (o que a IA recebe junto com a mensagem)
+# ---------------------------------------------------------------------------
 
-    Olhar só `product_query` deixava passar o caso em que o cliente escreve
-    picado ("quero um pote" / "G"): o texto junto não contém nenhum trecho que
-    pareça o nome do item, mas o modelo sabe dizer qual é — e é `product_name`
-    que carrega esse palpite, já validado contra o catálogo.
+def describe_situation(deps: AgentDeps, session: ConversationSession) -> str:
+    """Retrato do pedido agora, em português, para o modelo.
+
+    É isto que deixa "esse mesmo", "o segundo", "pode ser" e "1 e 3" serem
+    resolvidos sem obrigar o cliente a repetir nomes.
     """
-    return bool((nlu.product_query or "").strip()) or bool(nlu.product_name)
+    linhas: list[str] = []
 
-
-def _menu_reply(deps: AgentDeps, session: ConversationSession) -> list[str]:
-    _offer(session, [p.id for p in deps.catalog.available_products])
-    return [r.menu(deps.catalog)]
-
-
-# ---------------------------------------------------------------------------
-# Item em construção (fica em slots["pending_item"])
-# ---------------------------------------------------------------------------
-
-def _start_item(
-    session: ConversationSession, product: CatalogProduct, quantity: int
-) -> None:
-    session.slots["pending_item"] = {
-        "product_id": str(product.id),
-        "product_name": product.name,
-        "unit_base_price": str(product.base_price),
-        "quantity": max(1, quantity),
-        "complements": [],
-        "group_index": 0,
-    }
-
-
-def _pending(session: ConversationSession) -> dict[str, Any] | None:
-    pending = session.slots.get("pending_item")
-    return pending if isinstance(pending, dict) else None
-
-
-def _pending_product(
-    deps: AgentDeps, pending: dict[str, Any]
-) -> CatalogProduct | None:
-    return deps.catalog.product_by_id(UUID(pending["product_id"]))
-
-
-def _current_group(
-    deps: AgentDeps, pending: dict[str, Any]
-) -> tuple[CatalogProduct | None, CatalogGroup | None]:
-    product = _pending_product(deps, pending)
-    if product is None:
-        return None, None
-    groups = product.required_groups
-    index = int(pending.get("group_index", 0))
-    if index >= len(groups):
-        return product, None
-    return product, groups[index]
-
-
-def _chosen_in_group(pending: dict[str, Any], group: CatalogGroup) -> list[dict[str, Any]]:
-    gid = str(group.id)
-    return [c for c in pending["complements"] if c["group_id"] == gid]
-
-
-def _commit_item(session: ConversationSession) -> CartItem:
-    """Move o item em construção para o carrinho."""
-    pending = session.slots.pop("pending_item")
-    item = CartItem(
-        product_id=UUID(pending["product_id"]),
-        product_name=pending["product_name"],
-        unit_base_price=Decimal(pending["unit_base_price"]),
-        quantity=int(pending["quantity"]),
-        complements=[
-            CartComplement(
-                id=UUID(c["id"]),
-                group_id=UUID(c["group_id"]),
-                name=c["name"],
-                extra_price=Decimal(c["extra_price"]),
+    draft = _draft(session)
+    if draft is not None:
+        product, group = _first_open_group(deps, draft)
+        escolhidos = [f["name"] for f in draft["flavors"]]
+        if product is not None and group is not None:
+            faltam = max(group.min_choices - len(escolhidos), 0)
+            linhas.append(
+                f"Montando agora: {draft['quantity']}x {product.name}. "
+                + (f"Sabores já escolhidos: {', '.join(escolhidos)}. " if escolhidos
+                   else "Nenhum sabor escolhido ainda. ")
+                + f"Faltam {faltam} de {group.min_choices}."
             )
-            for c in pending["complements"]
-        ],
-    )
-    session.cart.items.append(item)
-    return item
-
-
-def _finish_item(session: ConversationSession) -> list[str]:
-    """Fecha o item em construção e leva a conversa para o carrinho."""
-    item = _commit_item(session)
-    _go(session, S.REVISANDO_CARRINHO)
-    session.slots.pop("options", None)
-    return [r.cart_added(item, session.cart)]
-
-
-def _ask_group(
-    deps: AgentDeps,
-    session: ConversationSession,
-    product: CatalogProduct,
-    group: CatalogGroup,
-    pending: dict[str, Any],
-) -> list[str]:
-    _offer(session, [c.id for c in group.available_complements])
-    chosen = [c["name"] for c in _chosen_in_group(pending, group)]
-    return [r.group_question(product, group, chosen)]
-
-
-def _advance_group(
-    deps: AgentDeps, session: ConversationSession, pending: dict[str, Any]
-) -> list[str]:
-    """Vai para o próximo grupo obrigatório ou fecha o item."""
-    pending["group_index"] = int(pending.get("group_index", 0)) + 1
-    product, group = _current_group(deps, pending)
-    if product is None:  # produto saiu do cardápio no meio da conversa
-        session.slots.pop("pending_item", None)
-        _back_to_choosing(session)
-        return [r.ask_product()]
-    if group is not None:
-        _go(session, S.PERSONALIZANDO_ITEM)
-        return _ask_group(deps, session, product, group, pending)
-
-    return _finish_item(session)
-
-
-# ---------------------------------------------------------------------------
-# Entrada do produto (usada por SAUDACAO e ESCOLHENDO_PRODUTO)
-# ---------------------------------------------------------------------------
-
-def _take_product(
-    deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
-) -> list[str]:
-    query = (nlu.product_query or text).strip()
-
-    # Resposta numérica só vale contra a lista que acabamos de oferecer.
-    chosen_id = pick_by_number(query, _offered(session))
-    product: CatalogProduct | None = None
-    if chosen_id:
-        product = deps.catalog.product_by_id(UUID(chosen_id))
-
-    # O palpite do modelo sobre QUAL item do cardápio o cliente quis. Já veio
-    # validado contra o catálogo (`runner._ground`); a intenção restringe o uso
-    # para ele não "escolher" um produto numa mensagem que só dizia "fechar".
-    if product is None and nlu.product_name and nlu.intent in {
-        Intent.ESCOLHER_PRODUTO,
-        Intent.ADICIONAR_MAIS,
-    }:
-        guess = deps.catalog.product_by_name(nlu.product_name)
-        # O palpite do modelo não vale quando o texto do cliente é ambíguo
-        # contra o catálogo: em "oi quero dois potes" ele escolhia um tamanho
-        # sozinho, calado — e o cliente que queria dois médios levava um de
-        # R$ 90. Ambíguo é para perguntar; o resolver faz isso logo abaixo.
-        if resolve_product(query, deps.catalog).status is not MatchStatus.AMBIGUOUS:
-            # Esgotado segue para o resolver, que tem a mensagem certa para isso.
-            product = guess if guess is not None and guess.is_available else None
-
-    if product is None:
-        match = resolve_product(query, deps.catalog)
-        if match.status is MatchStatus.NOT_FOUND:
-            _go(session, S.ESCOLHENDO_PRODUTO)
-            # O cliente NOMEOU alguma coisa e a gelateria não vende aquilo
-            # ("tem açaí?", "queria um milkshake"). Isso não é incompreensão:
-            # é uma pergunta com resposta. Tratar como falha levava três
-            # perguntas dessas direto para o atendimento humano. Vale para
-            # qualquer intenção porque o modelo devolve "desconhecido" com o
-            # trecho preenchido justamente nas perguntas ("tem açaí?").
-            if (nlu.product_query or "").strip():
-                return [
-                    r.product_not_found(clean_query(nlu.product_query or query)),
-                    *_menu_reply(deps, session),
-                ]
-            return _fail(session, deps, lambda: _menu_reply(deps, session))
-        if match.status is MatchStatus.AMBIGUOUS:
-            _go(session, S.ESCOLHENDO_PRODUTO)
-            _offer(session, [p.id for p in match.candidates])
-            return [r.product_ambiguous(match.candidates)]
-        if match.status is MatchStatus.UNAVAILABLE:
-            _go(session, S.ESCOLHENDO_PRODUTO)
-            name = match.candidates[0].name if match.candidates else query
-            return [r.product_unavailable(name)]
-        product = match.product
-
-    assert product is not None
-    session.fail_count = 0
-    _start_item(session, product, nlu.quantity or 1)
-    pending = session.slots["pending_item"]
-
-    _, group = _current_group(deps, pending)
-    if group is not None:
-        _go(session, S.PERSONALIZANDO_ITEM)
-        # O cliente já pode ter mandado os sabores junto ("pote com pistache").
-        chosen = _complement_inputs(nlu)
-        if chosen:
-            return _take_complements(deps, session, chosen)
-        return _ask_group(deps, session, product, group, pending)
-
-    return _finish_item(session)
-
-
-def _complement_inputs(nlu: NluResult) -> list[str]:
-    """O que tentar casar como sabor: nome do cardápio na frente do texto cru.
-
-    `complement_names` já passou pela validação do `runner` (só nome que existe
-    no cardápio sobrevive), então casa de primeira; `complement_queries` é o
-    trecho literal do cliente, que ainda depende do resolver.
-    """
-    return list(nlu.complement_names) or list(nlu.complement_queries)
-
-
-#: "tira o segundo" — a ordem escrita por extenso, como o cliente fala.
-_ORDINALS = {
-    "primeiro": 1, "primeira": 1, "segundo": 2, "segunda": 2,
-    "terceiro": 3, "terceira": 3, "quarto": 4, "quinto": 5,
-}
-
-
-def _index_in_text(text: str, total: int) -> int | None:
-    """Qual item da lista o cliente apontou: "o 2", "o segundo", "o último"."""
-    tokens = normalize(text).replace(".", " ").replace(",", " ").split()
-    for token in tokens:
-        if token.isdigit() and 1 <= int(token) <= total:
-            return int(token) - 1
-        if token in _ORDINALS and _ORDINALS[token] <= total:
-            return _ORDINALS[token] - 1
-        if token in {"ultimo", "ultima"}:
-            return total - 1
-    return None
-
-
-def _remove_item(
-    deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
-) -> list[str]:
-    """Tira um item do carrinho.
-
-    Existe porque a falta disso saía caro: "tira o segundo" caía no caminho de
-    escolher produto e o bot ADICIONAVA mais um pote. Reclamar do pedido
-    aumentava a conta — o cliente foi de R$ 50 a R$ 200 tentando corrigir.
-    """
-    items = session.cart.items
-    if not items:
-        _back_to_choosing(session)
-        return [r.cart_empty_on_close()]
-
-    index = _index_in_text(text, len(items))
-
-    if index is None and len(items) == 1:
-        index = 0
-
-    if index is None:
-        # Pelo nome do produto, se ele nomeou um só dos que estão no carrinho.
-        alvo = normalize((nlu.product_name or nlu.product_query or "").strip())
-        achados = [
-            i for i, item in enumerate(items)
-            if alvo and alvo in normalize(item.product_name)
-        ]
-        if len(achados) == 1:
-            index = achados[0]
-
-    if index is None:
-        _go(session, S.REVISANDO_CARRINHO)
-        return [r.ask_which_to_remove(session.cart)]
-
-    removido = items.pop(index)
-    session.fail_count = 0
-    if not items:
-        session.slots.pop("pending_item", None)
-        _back_to_choosing(session)
-        return [r.item_removed(removido.product_name), *_menu_reply(deps, session)]
-
-    _go(session, S.REVISANDO_CARRINHO)
-    return [r.item_removed(removido.product_name), r.ask_more_or_close(session.cart)]
-
-
-def _drop_chosen(pending: dict[str, Any], group: CatalogGroup, text: str) -> list[str]:
-    """Tira do item em construção os sabores que o cliente citou para remover."""
-    alvo = normalize(text)
-    escolhidos = _chosen_in_group(pending, group)
-    fora = [c for c in escolhidos if normalize(c["name"]) in alvo]
-    for c in fora:
-        pending["complements"].remove(c)
-    return [c["name"] for c in fora]
-
-
-def _remember_fulfillment(session: ConversationSession, nlu: NluResult) -> None:
-    """Guarda "entrega"/"retirada" dito de passagem, em qualquer estado.
-
-    O cliente que abre com "quero um pote G, vou buscar aí" já respondeu a
-    pergunta do fechamento. Sem isto, a informação se perdia (a intenção é um
-    rótulo só) e o bot perguntava de novo lá na frente.
-    """
-    if nlu.fulfillment == "retirada":
-        set_fulfillment(session, FulfillmentType.RETIRADA)
-    elif nlu.fulfillment == "entrega":
-        set_fulfillment(session, FulfillmentType.ENTREGA)
-
-
-def _take_complements(
-    deps: AgentDeps,
-    session: ConversationSession,
-    queries: Sequence[str],
-) -> list[str]:
-    """Aplica escolhas ao grupo corrente, respeitando min/max."""
-    pending = _pending(session)
-    if pending is None:
-        _back_to_choosing(session)
-        return [r.ask_product()]
-
-    product, group = _current_group(deps, pending)
-    if product is None or group is None:
-        return _advance_group(deps, session, pending)
-
-    problems: list[str] = []
-    added = 0
-    repetidos = 0
-    ambiguous = False
-    for query in queries:
-        chosen = _chosen_in_group(pending, group)
-        if len(chosen) >= group.max_choices:
-            problems.append(r.too_many_choices(group))
-            break
-
-        complement = None
-        chosen_id = pick_by_number(query, _offered(session))
-        if chosen_id:
-            candidate = deps.catalog.complement_by_id(UUID(chosen_id))
-            if candidate is not None and candidate.group_id == group.id:
-                complement = candidate
-
-        if complement is None:
-            match = resolve_complement(query, group)
-            if match.status is MatchStatus.NOT_FOUND:
-                problems.append(r.complement_not_found(query, group))
-                continue
-            if match.status is MatchStatus.AMBIGUOUS:
-                _offer(session, [c.id for c in match.candidates])
-                problems.append(r.complement_ambiguous(match.candidates))
-                ambiguous = True
-                continue
-            if match.status is MatchStatus.UNAVAILABLE:
-                name = match.candidates[0].name if match.candidates else query
-                problems.append(r.complement_unavailable(name))
-                continue
-            complement = match.complement
-
-        assert complement is not None
-
-        # O modelo costuma REPETIR em complement_names o que o cliente já
-        # escolheu em turnos anteriores: o cliente diz só "doce de leite" e
-        # vem ["Pistache", "Morango", "Doce de leite"]. Sem esta checagem, o
-        # repetido ocupa a última vaga do grupo, o sabor novo é descartado por
-        # "máximo 3" e o cliente recebe um pote com pistache duas vezes.
-        if any(c["id"] == str(complement.id) for c in chosen):
-            repetidos += 1
-            continue
-
-        pending["complements"].append(
-            {
-                "id": str(complement.id),
-                "group_id": str(complement.group_id),
-                "name": complement.name,
-                "extra_price": str(complement.extra_price),
-            }
-        )
-        added += 1
-
-    if added or repetidos:
-        session.fail_count = 0
-    elif problems:
-        # "Não temos flocos" é resposta de verdade, não incompreensão: escalar
-        # por causa disso mandava para o atendimento humano (e para o silêncio)
-        # quem só estava perguntando. Mas se o cliente está há vários turnos
-        # sem avançar, ele precisa de uma saída — oferecemos, sem calar o bot.
-        session.fail_count += 1
-        if session.fail_count >= deps.settings.max_nlu_failures:
-            session.fail_count = 0
-            problems.append(r.offer_human())
-    else:
-        # Nada aproveitado e nada a dizer. Sem contar como falha, o cliente que
-        # não consegue se fazer entender ficaria preso no grupo para sempre.
-        session.fail_count += 1
-        if session.fail_count >= deps.settings.max_nlu_failures:
-            return _to_human(session, requested=False)
-
-    if ambiguous:
-        # "Qual desses você quis dizer? 1. Limão siciliano 2. Torta de limão":
-        # a lista oferecida agora é a dos candidatos. Repetir o grupo inteiro
-        # aqui apagaria essa lista, e o "1" do cliente escolheria outro sabor.
-        _go(session, S.PERSONALIZANDO_ITEM)
-        return problems
-
-    chosen = _chosen_in_group(pending, group)
-    if len(chosen) >= group.min_choices and len(chosen) >= group.max_choices:
-        return problems + _advance_group(deps, session, pending)
-    if len(chosen) >= group.min_choices and group.min_choices > 0:
-        # Mínimo satisfeito mas ainda cabe mais: pergunta se quer completar.
-        _go(session, S.PERSONALIZANDO_ITEM)
-        return problems + [r.group_extra_choice(group, [c["name"] for c in chosen])]
-
-    _go(session, S.PERSONALIZANDO_ITEM)
-    if not added and not problems and not repetidos:
-        return [
-            r.fallback(session.fail_count, with_reprompt=True),
-            *_ask_group(deps, session, product, group, pending),
-        ]
-    # Escolha aceita mas o grupo ainda não fechou (ex.: 1 de 3 sabores):
-    # repetir a pergunta mostra "Já anotei… Faltam 2". Responder o texto de
-    # incompreensão aqui diria que o bot não entendeu algo que ele entendeu.
-    return problems + _ask_group(deps, session, product, group, pending)
-
-
-# ---------------------------------------------------------------------------
-# Handlers por estado
-# ---------------------------------------------------------------------------
-
-async def _handle_saudacao(
-    deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
-) -> list[str]:
-    _go(session, S.ESCOLHENDO_PRODUTO)
-    replies = [r.greeting()] + _menu_reply(deps, session)
-    if _mentions_product(nlu):
-        # Vale para qualquer intenção: "oi, tem açaí?" chega como
-        # desconhecido + product_query="acai", e merece um "não temos".
-        return replies[:1] + _take_product(deps, session, nlu, text)
-    return replies
-
-
-async def _handle_escolhendo_produto(
-    deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
-) -> list[str]:
-    if nlu.intent is Intent.FINALIZAR_PEDIDO:
-        if session.cart.is_empty:
-            return [r.cart_empty_on_close()]
-        _go(session, S.REVISANDO_CARRINHO)
-        return await start_checkout(deps, session)
-
-    if nlu.intent in {Intent.NEGAR, Intent.CONFIRMAR} and not session.cart.is_empty:
-        _go(session, S.REVISANDO_CARRINHO)
-        return [r.ask_more_or_close(session.cart)]
-
-    if nlu.intent is Intent.DESCONHECIDO and not _mentions_product(nlu):
-        return _fail(session, deps, lambda: _menu_reply(deps, session))
-
-    return _take_product(deps, session, nlu, text)
-
-
-async def _handle_personalizando(
-    deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
-) -> list[str]:
-    pending = _pending(session)
-    if pending is None:
-        _back_to_choosing(session)
-        return [r.ask_product()]
-
-    product, group = _current_group(deps, pending)
-    if product is None or group is None:
-        return _advance_group(deps, session, pending)
-
-    chosen = _chosen_in_group(pending, group)
-    normalized = normalize(text)
-
-    # "não / é só isso" fecha o grupo, desde que o mínimo esteja satisfeito.
-    said_done = nlu.intent in {Intent.NEGAR, Intent.FINALIZAR_PEDIDO} or normalized in _DONE_WORDS
-    if said_done and len(chosen) >= group.min_choices:
-        return _advance_group(deps, session, pending)
-    if nlu.intent is Intent.CONFIRMAR and len(chosen) >= group.min_choices:
-        return _advance_group(deps, session, pending)
-
-    # Nomeou OUTRO produto no meio dos sabores ("queria o médio, não esse de 1
-    # litro"): é troca de tamanho, não sabor. Antes virava
-    # 'Não temos "2 potes medios" em Escolha 6 sabores' e o cliente não tinha
-    # como voltar atrás.
-    outro = deps.catalog.product_by_name(nlu.product_name) if nlu.product_name else None
-    if outro is not None and outro.id != product.id and outro.is_available:
-        session.slots.pop("pending_item", None)
-        _go(session, S.REVISANDO_CARRINHO)
-        _go(session, S.ESCOLHENDO_PRODUTO)
-        return [r.product_switched(product.name, outro.name)] + _take_product(
-            deps, session, nlu, text
+            disponiveis = [
+                c.name for c in group.available_complements if c.name not in escolhidos
+            ]
+            linhas.append("Sabores que ainda cabem neste pote: " + ", ".join(disponiveis))
+        elif product is not None:
+            linhas.append(f"Montando agora: {draft['quantity']}x {product.name} (completo).")
+
+    if not session.cart.is_empty:
+        itens = []
+        for i, item in enumerate(session.cart.items, start=1):
+            sabores = f" ({', '.join(c.name for c in item.complements)})" if item.complements else ""
+            itens.append(f"{i}. {item.quantity}x {item.product_name}{sabores}")
+        linhas.append("No pedido:\n" + "\n".join(itens))
+    elif draft is None:
+        linhas.append("Pedido vazio — o cliente ainda não escolheu nada.")
+
+    kind = fulfillment_of(session)
+    if kind is not None:
+        linhas.append(f"Forma de entrega já definida: {kind.value}.")
+
+    endereco = address_of(session)
+    if endereco:
+        faltando = missing_address_fields(endereco)
+        linhas.append(
+            f"Endereço incompleto, falta: {', '.join(faltando)}."
+            if faltando
+            else "Endereço completo."
         )
 
-    # "tira o pistache" / "troca o morango por chocolate": tira o sabor citado
-    # antes de tentar anotar o novo — senão o grupo já está cheio e o cliente
-    # ouve "dá pra escolher no máximo 3".
-    if nlu.intent is Intent.REMOVER_ITEM and _drop_chosen(pending, group, text):
-        session.fail_count = 0
-        novos = _complement_inputs(nlu)
-        if novos:
-            return _take_complements(deps, session, novos)
-        return _ask_group(deps, session, product, group, pending)
+    if session.slots.get(AWAITING_CONFIRM):
+        linhas.append(
+            "ATENÇÃO: acabamos de mostrar o RESUMO FINAL com o total e estamos "
+            "esperando o cliente confirmar. Um sim claro aqui é confirm_order."
+        )
+    elif session.slots.get(CLOSING):
+        linhas.append("O cliente já disse que quer fechar o pedido.")
 
-    # Quis fechar/retirar/receber antes de terminar o item: não é sabor, e
-    # responder "não temos 'quero fechar' em Sabores" não ajuda ninguém.
-    if nlu.intent in _NOT_A_FLAVOR and not _complement_inputs(nlu):
-        return [
-            r.item_incomplete(product, group, group.min_choices - len(chosen)),
-            *_ask_group(deps, session, product, group, pending),
-        ]
+    ultima = session.slots.get(LAST_OFFER)
+    if ultima:
+        linhas.append(
+            "Última lista numerada mostrada a ele: "
+            + "; ".join(f"{i}. {nome}" for i, nome in enumerate(ultima, start=1))
+        )
 
-    queries = _complement_inputs(nlu)
-    if not queries:
-        raw = (nlu.product_query or text).strip()
-        queries = split_queries(raw) if raw else []
-    if not queries:
-        return _fail(session, deps, lambda: _ask_group(deps, session, product, group, pending))
-
-    return _take_complements(deps, session, queries)
-
-
-async def _handle_revisando(
-    deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
-) -> list[str]:
-    if nlu.intent is Intent.REMOVER_ITEM:
-        return _remove_item(deps, session, nlu, text)
-
-    # A pergunta "entrega ou retirada?" está no ar e a resposta já chegou —
-    # seja como intenção, seja de passagem ("retirada, já falei isso lá em
-    # cima"), que o `_remember_fulfillment` guardou antes deste handler.
-    if session.slots.get(AWAITING_FULFILLMENT_SLOT) and fulfillment_of(session):
-        return await start_checkout(deps, session)
-
-    # Entrega x retirada. Fica aqui, e não num estado próprio, porque a resposta
-    # é uma palavra dentro da mesma etapa de fechamento do carrinho — criar um
-    # estado para uma pergunta binária só aumentaria a tabela de transições.
-    if nlu.intent is Intent.ESCOLHER_RETIRADA:
-        set_fulfillment(session, FulfillmentType.RETIRADA)
-        return await start_checkout(deps, session)
-
-    if nlu.intent is Intent.ESCOLHER_ENTREGA:
-        set_fulfillment(session, FulfillmentType.ENTREGA)
-        return await start_checkout(deps, session)
-
-    if nlu.intent in {Intent.FINALIZAR_PEDIDO, Intent.CONFIRMAR}:
-        if session.cart.is_empty:
-            _go(session, S.ESCOLHENDO_PRODUTO)
-            return [r.cart_empty_on_close()]
-        return await start_checkout(deps, session)
-
-    if nlu.intent in {Intent.ADICIONAR_MAIS, Intent.NEGAR} and not _mentions_product(nlu):
-        _go(session, S.ESCOLHENDO_PRODUTO)
-        return _menu_reply(deps, session)
-
-    if nlu.intent is Intent.ESCOLHER_PRODUTO or _mentions_product(nlu):
-        _go(session, S.ESCOLHENDO_PRODUTO)
-        return _take_product(deps, session, nlu, text)
-
-    if nlu.intent is Intent.INFORMAR_ENDERECO and nlu.address is not None:
-        # Quem manda endereço está pedindo entrega, mesmo sem dizer a palavra.
-        set_fulfillment(session, FulfillmentType.ENTREGA)
-        _merge_address(session, nlu)
-        return await start_checkout(deps, session)
-
-    # A pergunta que está no ar aqui é uma de duas: "entrega ou retirada?"
-    # (se o fechamento já começou) ou "mais alguma coisa?".
-    if session.slots.get(AWAITING_FULFILLMENT_SLOT):
-        return _fail(session, deps, lambda: [r.ask_fulfillment()])
-    return _fail(session, deps, lambda: [r.ask_more_or_close(session.cart)])
-
-
-def _merge_address(session: ConversationSession, nlu: NluResult) -> None:
-    address = address_of(session)
-    if nlu.address is not None:
-        for key, value in nlu.address.model_dump().items():
-            if value:
-                address[key] = value
-    session.slots["address"] = address
-
-
-async def _handle_endereco(
-    deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
-) -> list[str]:
-    # Confirmação do endereço salvo do cliente.
-    if session.slots.get("address_needs_confirm"):
-        if nlu.intent is Intent.CONFIRMAR:
-            session.slots.pop("address_needs_confirm", None)
-            _go(session, S.CONFIRMANDO_PEDIDO)
-            return [final_summary(deps, session)]
-        if nlu.intent is Intent.NEGAR:
-            session.slots.pop("address_needs_confirm", None)
-            session.slots["address"] = {}
-            _go(session, S.COLETANDO_ENDERECO)
-            return [r.ask_address(["rua", "numero", "bairro"])]
-        session.slots.pop("address_needs_confirm", None)
-
-    before = address_of(session)
-    _merge_address(session, nlu)
-    address = address_of(session)
-
-    if address == before and nlu.address is None:
-        # Nada de novo veio: pode ser resposta solta ("Centro") para o campo que falta.
-        missing = missing_address_fields(address)
-        if len(missing) == 1 and text.strip():
-            address[missing[0]] = text.strip()
-            session.slots["address"] = address
-
-    missing = missing_address_fields(address_of(session))
-    if missing:
-        _go(session, S.COLETANDO_ENDERECO)
-        if nlu.address is None and not text.strip():
-            return _fail(session, deps, lambda: [r.ask_address(missing)])
-        return [r.ask_address(missing)]
-
-    session.fail_count = 0
-    if nlu.customer_name:
-        session.slots["customer_name"] = nlu.customer_name
-    _go(session, S.CONFIRMANDO_PEDIDO)
-    return [final_summary(deps, session)]
-
-
-async def _handle_confirmando(
-    deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
-) -> list[str]:
-    # FINALIZAR_PEDIDO entra aqui porque a IA às vezes classifica um "sim" à
-    # pergunta de confirmação como "quer fechar o pedido" em vez de CONFIRMAR
-    # (visto em produção) — nesta tela os dois significam a mesma coisa.
-    if nlu.intent in {Intent.CONFIRMAR, Intent.FINALIZAR_PEDIDO}:
-        return await place_order(deps, session)
-
-    if nlu.intent is Intent.REMOVER_ITEM:
-        _go(session, S.REVISANDO_CARRINHO)
-        return _remove_item(deps, session, nlu, text)
-
-    if nlu.intent in {Intent.NEGAR, Intent.ADICIONAR_MAIS} or _mentions_product(nlu):
-        _go(session, S.REVISANDO_CARRINHO)
-        if _mentions_product(nlu):
-            _go(session, S.ESCOLHENDO_PRODUTO)
-            return _take_product(deps, session, nlu, text)
-        return [r.ask_more_or_close(session.cart)]
-
-    if nlu.intent is Intent.INFORMAR_ENDERECO and nlu.address is not None:
-        _merge_address(session, nlu)
-        _go(session, S.CONFIRMANDO_PEDIDO)
-        return [final_summary(deps, session)]
-
-    _go(session, S.CONFIRMANDO_PEDIDO)
-    # Repetir o resumo inteiro a cada mensagem não entendida vira spam: dez
-    # linhas para quem perguntou "demora quanto tempo?". Só a pergunta basta.
-    return _fail(session, deps, lambda: [r.ask_confirm_short()])
-
-
-async def _handle_aguardando(
-    deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
-) -> list[str]:
-    """Estado passivo: quem tira daqui é o webhook de pagamento."""
-    _go(session, S.AGUARDANDO_PAGAMENTO)
-    return await order_status_reply(deps, session)
-
-
-async def _handle_terminal(
-    deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
-) -> list[str]:
-    """CONCLUIDO/CANCELADO: qualquer mensagem nova recomeça a conversa."""
-    _go(session, S.SAUDACAO)
-    _clear_order(session)
-    return await _handle_saudacao(deps, session, nlu, text)
-
-
-_HANDLERS: dict[S, Callable[..., Awaitable[list[str]]]] = {
-    S.SAUDACAO: _handle_saudacao,
-    S.ESCOLHENDO_PRODUTO: _handle_escolhendo_produto,
-    S.PERSONALIZANDO_ITEM: _handle_personalizando,
-    S.REVISANDO_CARRINHO: _handle_revisando,
-    S.COLETANDO_ENDERECO: _handle_endereco,
-    S.CONFIRMANDO_PEDIDO: _handle_confirmando,
-    S.AGUARDANDO_PAGAMENTO: _handle_aguardando,
-    S.CONCLUIDO: _handle_terminal,
-    S.CANCELADO: _handle_terminal,
-}
+    return "\n".join(linhas) or "Conversa começando, nada pedido ainda."
 
 
 # ---------------------------------------------------------------------------
-# Ponto de entrada
+# O turno
 # ---------------------------------------------------------------------------
 
 async def run(
     deps: AgentDeps,
     session: ConversationSession,
-    nlu: NluResult,
+    plan: AgentPlan,
     text: str,
-) -> MachineResult:
-    """Roda um turno: intenções globais primeiro, depois o handler do estado."""
+) -> list[str]:
+    """Aplica o plano da IA e devolve o que o bot vai falar."""
+    voltou_do_humano = False
     if session.handoff or session.state is S.ATENDIMENTO_HUMANO:
         if human_on_the_line(session):
-            # Conversa está com o time; o bot fica calado.
-            return MachineResult([], session.state)
-        logger.info("handoff sem resposta humana; o bot reassume a conversa")
-        _resume_from_human(session)
+            resposta = _handoff_turn(session, plan)
+            if resposta is not None:
+                return resposta
+            voltou_do_humano = True
+        else:
+            logger.info("handoff sem resposta humana; o bot reassume a conversa")
+            _resume_from_human(session)
 
-    _remember_fulfillment(session, nlu)
+    if session.state in {S.CONCLUIDO, S.CANCELADO}:
+        # Mensagem nova depois de um pedido fechado abre um ciclo limpo.
+        _go(session, S.CONVERSANDO)
+        session.slots = {k: v for k, v in session.slots.items() if k == "customer_name"}
+        session.cart.items.clear()
+        session.active_order_id = None
 
-    globals_reply = await _handle_global_intents(deps, session, nlu)
-    if globals_reply is not None:
-        return MachineResult(globals_reply, session.state)
+    if plan.customer_name and "customer_name" not in session.slots:
+        session.slots["customer_name"] = plan.customer_name
 
-    # Pergunta que não é pedido ("aceitam cartão?", "quanto fica a entrega?").
-    # Vem antes do handler do estado porque vale em qualquer etapa, e depois
-    # das intenções globais para não roubar um "quero cancelar".
-    resposta = faq.answer(text, deps.catalog, deps.settings.delivery_fee)
-    if resposta is not None:
+    primeira_vez = not session.slots.get("ja_falamos")
+    session.slots["ja_falamos"] = True
+
+    turn = _Turn()
+
+    # A confirmação é a única operação que mexe em dinheiro: ela sai da fila e
+    # só vale se houver um resumo na tela esperando resposta.
+    if plan.has(Action.CONFIRM_ORDER) and session.slots.get(AWAITING_CONFIRM):
+        if _hedged(text):
+            # "pode ser", "acho que sim": o modelo classifica isso como
+            # confirmação, mas não é um sim. Cobrança não se faz com
+            # quase-certeza — o cliente responde uma vez mais, e aí sim.
+            return [r.confirm_once_more()]
+        session.slots.pop(AWAITING_CONFIRM, None)
+        return await place_order(deps, session)
+
+    for op in plan.operations:
+        await _apply(deps, session, op, turn)
+        if turn.finished is not None:
+            return turn.finished
+
+    replies = await _next_step(deps, session, plan, turn)
+    if voltou_do_humano and replies:
+        replies = [r.back_from_human()] + replies
+    if primeira_vez and replies:
+        # Bom dia uma vez só, no começo da conversa — como gente faz.
+        replies = [r.greeting()] + replies
+    return [reply for reply in replies if reply]
+
+
+async def _next_step(
+    deps: AgentDeps, session: ConversationSession, plan: AgentPlan, turn: _Turn
+) -> list[str]:
+    """Depois de aplicar tudo: o que o bot fala agora.
+
+    Uma pergunta por turno, sempre a do ponto em que o pedido está. É aqui que
+    "pergunta não derruba o fluxo" acontece: se o turno só respondeu algo, o
+    bot devolve o cliente exatamente para onde ele estava.
+    """
+    # 1. O turno só respondeu algo (pergunta, cardápio, carrinho): devolve o
+    #    cliente para onde ele estava, com a retomada CURTA — repetir a lista
+    #    inteira de sabores a cada dúvida é o que cansava o WhatsApp.
+    if turn.answered and not turn.changed:
         session.fail_count = 0
-        return MachineResult([resposta], session.state)
+        # Se a própria resposta já terminou em pergunta, não emendar outra:
+        # duas perguntas seguidas soam como formulário.
+        if turn.notes and turn.notes[-1].rstrip().endswith("?"):
+            return turn.notes
+        retomada = _resume_prompt(deps, session)
+        return turn.notes + ([retomada] if retomada else [])
 
-    handler = _HANDLERS.get(session.state)
-    if handler is None:  # estado novo sem handler é bug, não silêncio
-        logger.error("sem handler para o estado %s", session.state)
-        return MachineResult([r.fallback(2)], session.state)
-
-    replies = await handler(deps, session, nlu, text)
-    return MachineResult([reply for reply in replies if reply], session.state)
-
-
-async def _handle_global_intents(
-    deps: AgentDeps, session: ConversationSession, nlu: NluResult
-) -> list[str] | None:
-    """Intenções que valem em qualquer estado, antes do handler específico."""
-    if nlu.intent is Intent.FALAR_COM_HUMANO:
-        return _to_human(session)
-
-    if nlu.intent is Intent.CANCELAR:
-        if session.state in CANCELLABLE_STATES:
-            return _cancel(session)
-        return [r.cancelled()]
-
-    if nlu.intent is Intent.VER_CARDAPIO:
-        # No meio da personalização ou do pagamento, mostrar o cardápio não
-        # pode desmontar o item em construção: só mostra e fica onde está.
-        if session.state in {S.SAUDACAO, S.CANCELADO, S.CONCLUIDO}:
-            _back_to_choosing(session)
-        return _menu_reply(deps, session)
-
-    if nlu.intent is Intent.CONSULTAR_STATUS:
-        if session.active_order_id is not None:
-            return await order_status_reply(deps, session)
-        if not session.cart.is_empty:
-            # "me mostra o carrinho de novo": o bot mostrava o carrinho, mas
-            # precedido de "Desculpa, não peguei essa" — desculpa por algo que
-            # ele tinha entendido.
+    # 2. Rascunho incompleto: falta escolher sabor.
+    draft = _draft(session)
+    if draft is not None:
+        product, group = _first_open_group(deps, draft)
+        if product is not None and group is not None:
             session.fail_count = 0
-            return [r.cart_summary(session.cart)]
+            session.slots[LAST_OFFER] = [
+                c.name for c in group.available_complements
+            ]
+            escolhidos = [f["name"] for f in draft["flavors"]]
+            return turn.notes + [r.ask_flavors(product, group, escolhidos)]
+        item = _commit_draft(deps, session)
+        if item is not None:
+            turn.say(r.item_added(item))
 
-    return None
+    # 3. Fechando o pedido.
+    if session.slots.get(CLOSING) and not session.cart.is_empty:
+        session.fail_count = 0
+        return turn.notes + await _checkout_step(deps, session)
+
+    # 4. Mexeu no pedido: confirma e pergunta se quer mais.
+    if turn.changed:
+        session.fail_count = 0
+        session.slots.pop(AWAITING_CONFIRM, None)
+        if session.cart.is_empty:
+            return turn.notes + [_menu(deps, session)]
+        return turn.notes + [r.ask_more_or_close(session.cart)]
+
+    # 5. Cumprimento, agradecimento, conversa fiada: abre o atendimento em vez
+    #    de dizer "não entendi" a quem só disse oi.
+    if plan.has(Action.NO_ACTION) and _draft(session) is None and session.cart.is_empty:
+        session.fail_count = 0
+        return turn.notes + [_menu(deps, session)]
+
+    # 6. Nada aconteceu mesmo: reparo progressivo, sem cardápio na cara dele.
+    return _fallback(deps, session, plan)
+
+
+async def _checkout_step(deps: AgentDeps, session: ConversationSession) -> list[str]:
+    """Entrega ou retirada → endereço → resumo. Nada disso cobra nada."""
+    kind = fulfillment_of(session)
+    if kind is None:
+        return [r.ask_fulfillment()]
+
+    if kind is FulfillmentType.ENTREGA:
+        endereco = address_of(session)
+        if not endereco and deps.saved_address is not None:
+            salvo = await deps.saved_address()
+            if salvo and not missing_address_fields(salvo):
+                session.slots["address"] = salvo
+        faltando = missing_address_fields(address_of(session))
+        if faltando:
+            return [r.ask_address(faltando)]
+
+    _go(session, S.CONFIRMANDO_PEDIDO)
+    session.slots[AWAITING_CONFIRM] = True
+    return [final_summary(deps, session)]
+
+
+def _resume_prompt(deps: AgentDeps, session: ConversationSession) -> str | None:
+    """A pergunta do ponto em que o pedido está, para retomar depois de uma dúvida."""
+    draft = _draft(session)
+    if draft is not None:
+        product, group = _first_open_group(deps, draft)
+        if product is not None and group is not None:
+            return r.resume_flavors(product, group, [f["name"] for f in draft["flavors"]])
+    if session.slots.get(AWAITING_CONFIRM):
+        return r.ask_confirm_short()
+    if session.slots.get(CLOSING) and fulfillment_of(session) is None:
+        return r.ask_fulfillment()
+    if not session.cart.is_empty:
+        return r.ask_more_or_close(session.cart)
+    return r.ask_what_they_want()
+
+
+def _fallback(
+    deps: AgentDeps, session: ConversationSession, plan: AgentPlan
+) -> list[str]:
+    """Reparo progressivo: reformula, depois oferece gente — nunca cala.
+
+    Antes, a terceira mensagem não entendida jogava o cliente no atendimento
+    humano (e no silêncio). Três perguntas banais bastavam.
+    """
+    session.fail_count += 1
+    retomada = _resume_prompt(deps, session)
+
+    if session.fail_count == 1:
+        return [r.didnt_get_it(), *( [retomada] if retomada else [] )]
+    if session.fail_count == 2:
+        return [r.didnt_get_it_again(), *( [retomada] if retomada else [] )]
+
+    session.fail_count = 0
+    return [r.offer_human(), *( [retomada] if retomada else [] )]

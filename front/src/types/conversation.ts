@@ -4,11 +4,7 @@
  */
 
 export const CONVERSATION_STATES = [
-  'saudacao',
-  'escolhendo_produto',
-  'personalizando_item',
-  'revisando_carrinho',
-  'coletando_endereco',
+  'conversando',
   'confirmando_pedido',
   'aguardando_pagamento',
   'concluido',

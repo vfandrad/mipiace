@@ -1,6 +1,6 @@
 """Fechamento do pedido — a parte do agente que tem efeito colateral.
 
-A `machine.py` decide *qual é o próximo estado*; este módulo é o que de fato
+O executor (`machine.py`) decide o que acontece; este módulo é o que de fato
 cria o pedido no banco e pede o Pix ao provedor. Ficam juntos aqui porque é a
 resposta para "onde o pedido nasce": endereço, resumo final, criação do pedido,
 cobrança e consulta de status.
@@ -105,14 +105,8 @@ def fulfillment_of(session: ConversationSession) -> FulfillmentType | None:
     return None
 
 
-#: Marca que a pergunta "entrega ou retirada?" está no ar. Serve para o reparo
-#: saber qual pergunta repetir quando não entende a resposta.
-AWAITING_FULFILLMENT_SLOT = "awaiting_fulfillment"
-
-
 def set_fulfillment(session: ConversationSession, kind: FulfillmentType) -> None:
     session.slots[FULFILLMENT_SLOT] = kind.value
-    session.slots.pop(AWAITING_FULFILLMENT_SLOT, None)
 
 
 def final_summary(deps: AgentDeps, session: ConversationSession) -> str:
@@ -127,46 +121,6 @@ def final_summary(deps: AgentDeps, session: ConversationSession) -> str:
 # ---------------------------------------------------------------------------
 # Do carrinho ao Pix
 # ---------------------------------------------------------------------------
-
-async def start_checkout(deps: AgentDeps, session: ConversationSession) -> list[str]:
-    """Do carrinho para a confirmação.
-
-    A ordem é: entrega ou retirada -> (se entrega) endereço -> resumo. Perguntar
-    a forma de entrega primeiro é o que evita pedir a rua de quem já decidiu
-    buscar na loja.
-    """
-    if session.cart.is_empty:
-        advance(session, S.REVISANDO_CARRINHO)
-        return [r.cart_empty_on_close()]
-
-    kind = fulfillment_of(session)
-    if kind is None:
-        # Fica em REVISANDO_CARRINHO (estado reentrante) esperando a resposta.
-        advance(session, S.REVISANDO_CARRINHO)
-        session.slots[AWAITING_FULFILLMENT_SLOT] = True
-        return [r.ask_fulfillment()]
-
-    if kind is FulfillmentType.RETIRADA:
-        advance(session, S.CONFIRMANDO_PEDIDO)
-        return [final_summary(deps, session)]
-
-    address = address_of(session)
-    if not address and deps.saved_address is not None:
-        saved = await deps.saved_address()
-        if saved and not missing_address_fields(saved):
-            session.slots["address"] = saved
-            session.slots["address_needs_confirm"] = True
-            advance(session, S.COLETANDO_ENDERECO)
-            return [r.confirm_saved_address(saved)]
-
-    missing = missing_address_fields(address)
-    if missing:
-        advance(session, S.COLETANDO_ENDERECO)
-        return [r.ask_address(missing)]
-
-    advance(session, S.CONFIRMANDO_PEDIDO)
-    return [final_summary(deps, session)]
-
 
 async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str]:
     """Cria o pedido, gera o Pix e leva para AGUARDANDO_PAGAMENTO.
@@ -204,13 +158,14 @@ async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str
         charge = await deps.create_pix(deps.db, order_id)
     except Exception:
         logger.exception("falha ao criar pedido/Pix para %s", session.phone)
-        advance(session, S.CONFIRMANDO_PEDIDO)
         return [r.pix_failed()]
 
     session.active_order_id = order_id
     session.cart.items.clear()
-    session.slots.pop("options", None)
     session.slots.pop("pending_order_id", None)
+    session.slots.pop("draft", None)
+    session.slots.pop("closing", None)
+    session.slots.pop("awaiting_confirm", None)
     session.fail_count = 0
     advance(session, S.AGUARDANDO_PAGAMENTO)
     return [

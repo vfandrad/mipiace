@@ -1,27 +1,35 @@
 /**
  * Estado da máquina de conversa em forma de badge.
- * Cobre os 10 estados de `ConversationState`; estado desconhecido cai num
- * visual neutro em vez de sumir da tela.
+ *
+ * São seis estados desde a redução do agente: a etapa do diálogo (escolhendo
+ * produto, personalizando item, revisando carrinho…) virou dado do pedido, e
+ * o estado guarda só o que muda o que o sistema pode fazer. Os nomes antigos
+ * continuam no mapa porque há conversas gravadas com eles.
  */
 
 import { cn } from '@/lib/utils';
 
 const STATE_LABELS: Record<string, { label: string; className: string }> = {
-  saudacao: { label: 'Saudação', className: 'bg-status-new-bg text-status-new' },
+  conversando: {
+    label: 'Montando pedido',
+    className: 'bg-status-new-bg text-status-new',
+  },
+  // Estados de versões anteriores, para o histórico não sumir da tela.
+  saudacao: { label: 'Montando pedido', className: 'bg-status-new-bg text-status-new' },
   escolhendo_produto: {
-    label: 'Escolhendo produto',
+    label: 'Montando pedido',
     className: 'bg-status-new-bg text-status-new',
   },
   personalizando_item: {
-    label: 'Personalizando item',
+    label: 'Montando pedido',
     className: 'bg-status-production-bg text-status-production',
   },
   revisando_carrinho: {
-    label: 'Revisando carrinho',
+    label: 'Montando pedido',
     className: 'bg-status-production-bg text-status-production',
   },
   coletando_endereco: {
-    label: 'Coletando endereço',
+    label: 'Montando pedido',
     className: 'bg-status-production-bg text-status-production',
   },
   confirmando_pedido: {

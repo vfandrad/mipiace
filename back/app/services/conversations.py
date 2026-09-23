@@ -110,7 +110,7 @@ async def set_handoff(
     conversation.handoff = handoff
 
     if not handoff and conversation.state == ConversationState.ATENDIMENTO_HUMANO:
-        conversation.state = ConversationState.SAUDACAO
+        conversation.state = ConversationState.CONVERSANDO
         conversation.fail_count = 0
 
     await session.flush()

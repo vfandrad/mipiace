@@ -1,9 +1,10 @@
-"""Contrato do cliente de LLM usado pelo agente, e a escolha de qual usar.
+"""Contrato do cliente de LLM, e a escolha de qual usar.
 
-O LLM tem um papel deliberadamente estreito: ele lê a mensagem do cliente e
-devolve *dados estruturados* (intenção + campos extraídos). Ele nunca escolhe
-o próximo estado, nunca calcula preço e nunca emite id de produto — quem faz
-isso é a máquina de estados com o catálogo real em mãos.
+O papel da IA é grande no que ela entende e estreito no que ela pode fazer:
+ela lê a mensagem do cliente (com a situação do pedido em mãos) e devolve um
+`AgentPlan` — as operações que o cliente quis realizar. Ela nunca escolhe o
+próximo estado, nunca calcula preço, nunca emite id e nunca cobra. Quem faz
+isso é o executor, com o catálogo real em mãos.
 
 `FAKE_MODE=true` é a chave da escolha: o sistema inteiro roda sem nenhuma
 chave externa. Com `fake_mode=false` usamos a OpenAI; se a chave não estiver
@@ -15,13 +16,13 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import Any, Protocol, Sequence
+from typing import Protocol, Sequence
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from app.domain.catalog import CatalogSnapshot
+from app.agent.plan import AgentPlan
 from app.core.config import get_settings
-from app.domain.enums import ConversationState, Intent
+from app.domain.catalog import CatalogSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -33,68 +34,26 @@ class Turn(BaseModel):
     content: str
 
 
-class ExtractedAddress(BaseModel):
-    rua: str | None = None
-    numero: str | None = None
-    bairro: str | None = None
-    complemento: str | None = None
-    referencia: str | None = None
-
-    @property
-    def is_complete(self) -> bool:
-        return bool(self.rua and self.numero and self.bairro)
-
-
-class NluResult(BaseModel):
-    """Saída estruturada da interpretação de uma mensagem.
-
-    `product_query` e `complement_queries` são TEXTO LIVRE (ex.: "pote grande",
-    "pistache"), não ids. A resolução para ids reais acontece depois, contra o
-    CatalogSnapshot — é essa separação que impede o agente de aceitar um sabor
-    alucinado.
-
-    `product_name` e `complement_names` são o outro caminho: o palpite do
-    modelo sobre QUAL item do cardápio o cliente quis dizer, escrito com o nome
-    exato do cardápio. Sem isso, "quero um pote grande" não tinha como virar
-    "G - 500ml" — o texto do cliente não parece com o nome do produto, e o
-    modelo era proibido de traduzir. Continua não havendo invenção: o `runner`
-    descarta qualquer nome que não exista no `CatalogSnapshot`.
-    """
-
-    intent: Intent = Intent.DESCONHECIDO
-    confidence: float = 0.0
-    product_query: str | None = None
-    complement_queries: list[str] = Field(default_factory=list)
-    product_name: str | None = None
-    complement_names: list[str] = Field(default_factory=list)
-    quantity: int | None = None
-    address: ExtractedAddress | None = None
-    customer_name: str | None = None
-    #: "entrega" | "retirada" — dito de passagem, independente da intenção
-    #: principal. Existe porque `intent` é um rótulo só: o cliente que abre com
-    #: "quero um pote G, vou buscar aí" está dizendo as duas coisas, e antes
-    #: disto a segunda se perdia — o bot perguntava de novo no fechamento.
-    fulfillment: str | None = None
-
-    # Metadados para auditoria/custo (gravados em conversation_messages)
-    model: str | None = None
-    usage: dict[str, Any] | None = None
-
-
 class LLMClient(Protocol):
     """Implementado por OpenAILLMClient e FakeLLMClient."""
 
     name: str
 
-    async def extract(
+    async def interpret(
         self,
         *,
-        state: ConversationState,
         catalog: CatalogSnapshot,
         history: Sequence[Turn],
         message: str,
-    ) -> NluResult:
-        """Interpreta a mensagem do cliente no contexto do estado atual."""
+        situation: str = "",
+    ) -> AgentPlan:
+        """Traduz a mensagem do cliente em operações sobre o pedido.
+
+        `situation` é o retrato do pedido agora (o que está no carrinho, que
+        sabores faltam, se há um resumo aguardando confirmação). É o que
+        permite resolver "esse mesmo", "o segundo" e "1 e 3" sem obrigar o
+        cliente a repetir nomes.
+        """
         ...
 
 

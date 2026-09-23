@@ -153,6 +153,11 @@ async def get_catalog_snapshot(session: AsyncSession) -> CatalogSnapshot:
                                 name=complement.name,
                                 extra_price=complement.extra_price,
                                 is_available=complement.is_available,
+                                category=(
+                                    complement.flavor_category.name
+                                    if complement.flavor_category
+                                    else None
+                                ),
                             )
                             for complement in group.complements
                         ],
