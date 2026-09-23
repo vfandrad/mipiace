@@ -180,7 +180,7 @@ async def test_saudacao_apresenta_cardapio() -> None:
     deps, session = build_deps(), build_session()
     result = await run(deps, session, nlu(Intent.SAUDAR), "oi")
     assert session.state is S.ESCOLHENDO_PRODUTO
-    assert any("Cardápio" in reply for reply in result.replies)
+    assert any("cardápio" in reply.lower() for reply in result.replies)
 
 
 @pytest.mark.asyncio
@@ -315,7 +315,9 @@ async def test_endereco_incompleto_pede_so_o_que_falta() -> None:
     deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
     await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Casquinha"), "casquinha")
     await run(deps, session, nlu(Intent.FINALIZAR_PEDIDO), "fechar")
-    await run(deps, session, nlu(Intent.CONFIRMAR), "entrega")
+    # Fechar o carrinho pergunta entrega ou retirada e espera a resposta.
+    assert session.state is S.REVISANDO_CARRINHO
+    await run(deps, session, nlu(Intent.ESCOLHER_ENTREGA), "entrega")
     assert session.state is S.COLETANDO_ENDERECO
 
     result = await run(
@@ -358,7 +360,7 @@ async def test_aguardando_pagamento_e_passivo() -> None:
 async def test_cardapio_a_qualquer_momento() -> None:
     deps, session = build_deps(), build_session(S.REVISANDO_CARRINHO)
     result = await run(deps, session, nlu(Intent.VER_CARDAPIO), "cardápio")
-    assert "Cardápio" in result.replies[0]
+    assert "cardápio" in result.replies[0].lower()
     assert session.state is S.REVISANDO_CARRINHO
 
 
@@ -414,3 +416,50 @@ async def test_escolha_parcial_mostra_progresso_e_nao_diz_que_nao_entendeu() -> 
     # E a escolha realmente entrou no item em construção.
     pendente = session.slots["pending_item"]
     assert [c["name"] for c in pendente["complements"]] == ["Pistache"]
+
+
+# ---------------------------------------------------------------------------
+# Entrega x retirada
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_fechar_carrinho_pergunta_a_modalidade() -> None:
+    """Sem saber se é entrega ou retirada, o agente não pede endereço."""
+    deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
+    await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Casquinha"), "casquinha")
+    result = await run(deps, session, nlu(Intent.FINALIZAR_PEDIDO), "fechar")
+
+    assert session.state is S.REVISANDO_CARRINHO
+    texto = result.replies[0].lower()
+    assert "entrega" in texto and "retirada" in texto
+
+
+@pytest.mark.asyncio
+async def test_retirada_pula_o_endereco() -> None:
+    """Quem vai buscar na loja não responde rua, número nem bairro."""
+    deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
+    await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Casquinha"), "casquinha")
+    await run(deps, session, nlu(Intent.FINALIZAR_PEDIDO), "fechar")
+    result = await run(deps, session, nlu(Intent.ESCOLHER_RETIRADA), "vou retirar")
+
+    assert session.state is S.CONFIRMANDO_PEDIDO
+    resumo = result.replies[0]
+    assert "Retirada na loja" in resumo
+    # Sem taxa e sem linha de endereço no resumo.
+    assert "Taxa de entrega" not in resumo
+    assert "Entregar em" not in resumo
+
+
+@pytest.mark.asyncio
+async def test_endereco_solto_ja_significa_entrega() -> None:
+    """Quem manda a rua está pedindo entrega, mesmo sem dizer a palavra."""
+    deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
+    await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Casquinha"), "casquinha")
+    await run(deps, session, nlu(Intent.FINALIZAR_PEDIDO), "fechar")
+    await run(
+        deps,
+        session,
+        nlu(Intent.INFORMAR_ENDERECO, address=ExtractedAddress(rua="Rua A", numero="1", bairro="Centro")),
+        "Rua A, 1, Centro",
+    )
+    assert session.state is S.CONFIRMANDO_PEDIDO

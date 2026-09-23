@@ -258,9 +258,13 @@ async def test_fluxo_feliz_ate_o_pix(flow) -> None:
     ]
     assert cart.subtotal == Decimal("32.00")
 
-    # 4. Fechar o pedido vai direto para a coleta de endereço — a loja só
-    #    trabalha com entrega, não pergunta mais a modalidade.
+    # 4. Fechar o pedido pergunta a modalidade antes de qualquer endereço.
     replies = await flow.say("pode fechar")
+    assert flow.state is S.REVISANDO_CARRINHO
+    assert "entrega" in replies[0].lower() and "retirada" in replies[0].lower()
+
+    # 4b. Escolhida a entrega, aí sim vem o endereço.
+    replies = await flow.say("entrega")
     assert flow.state is S.COLETANDO_ENDERECO
     assert "endereço" in replies[0].lower()
 
@@ -348,3 +352,29 @@ async def test_cancelar_no_meio_do_pedido(flow) -> None:
     # E uma nova mensagem recomeça a conversa.
     await flow.say("oi de novo")
     assert flow.state is S.ESCOLHENDO_PRODUTO
+
+
+@pytest.mark.asyncio
+async def test_fluxo_de_retirada_nao_cobra_taxa(flow) -> None:
+    """O caminho da retirada, de ponta a ponta: sem endereço e sem taxa.
+
+    É o teste que prova que `fulfillment_type` chega ao pedido: o total tem que
+    ser igual ao subtotal, e não subtotal + R$ 5,00.
+    """
+    await flow.say("oi")
+    await flow.say("quero um pote 500ml")
+    await flow.say("pistache, morango e chocolate belga")
+
+    replies = await flow.say("pode fechar")
+    assert "retirada" in replies[0].lower()
+
+    replies = await flow.say("vou retirar na loja")
+    assert flow.state is S.CONFIRMANDO_PEDIDO
+    resumo = replies[0]
+    assert "Retirada na loja" in resumo
+    assert "R$ 32,00" in resumo       # subtotal
+    assert "R$ 37,00" not in resumo   # não somou taxa de entrega
+
+    replies = await flow.say("sim")
+    assert flow.state is S.AGUARDANDO_PAGAMENTO
+    assert "PIX-COPIA-E-COLA-MIPIACE" in replies[0]

@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { DollarSign, Package, ShoppingCart, TrendingUp } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
+import { RefreshButton } from '@/components/common/RefreshButton';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { SalesChart } from '@/components/dashboard/SalesChart';
 import { ProductsChart } from '@/components/dashboard/ProductsChart';
@@ -54,7 +55,10 @@ const Dashboard = () => {
             <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
             <p className="text-muted-foreground">Acompanhe o desempenho da sua gelateria</p>
           </div>
-          <DateFilter value={range} onChange={setRange} />
+          <div className="flex items-center gap-2">
+            <DateFilter value={range} onChange={setRange} />
+            <RefreshButton onRefresh={() => refetchAll()} />
+          </div>
         </div>
 
         {/* KPIs */}

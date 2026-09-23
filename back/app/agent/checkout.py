@@ -91,11 +91,30 @@ def missing_address_fields(address: dict[str, Any]) -> list[str]:
     return [f for f in ("rua", "numero", "bairro") if not (address.get(f) or "").strip()]
 
 
+#: Slot onde fica a escolha do cliente: "entrega" ou "retirada".
+FULFILLMENT_SLOT = "fulfillment"
+
+
+def fulfillment_of(session: ConversationSession) -> FulfillmentType | None:
+    """O que o cliente escolheu, ou None se ainda não foi perguntado."""
+    raw = session.slots.get(FULFILLMENT_SLOT)
+    if raw in (FulfillmentType.RETIRADA, FulfillmentType.RETIRADA.value):
+        return FulfillmentType.RETIRADA
+    if raw in (FulfillmentType.ENTREGA, FulfillmentType.ENTREGA.value):
+        return FulfillmentType.ENTREGA
+    return None
+
+
+def set_fulfillment(session: ConversationSession, kind: FulfillmentType) -> None:
+    session.slots[FULFILLMENT_SLOT] = kind.value
+
+
 def final_summary(deps: AgentDeps, session: ConversationSession) -> str:
     return r.final_summary(
         session.cart,
         delivery_fee=deps.settings.delivery_fee,
         address=address_of(session),
+        is_pickup=fulfillment_of(session) is FulfillmentType.RETIRADA,
     )
 
 
@@ -104,10 +123,25 @@ def final_summary(deps: AgentDeps, session: ConversationSession) -> str:
 # ---------------------------------------------------------------------------
 
 async def start_checkout(deps: AgentDeps, session: ConversationSession) -> list[str]:
-    """Do carrinho para o endereço — a loja só trabalha com entrega."""
+    """Do carrinho para a confirmação.
+
+    A ordem é: entrega ou retirada -> (se entrega) endereço -> resumo. Perguntar
+    a forma de entrega primeiro é o que evita pedir a rua de quem já decidiu
+    buscar na loja.
+    """
     if session.cart.is_empty:
         advance(session, S.REVISANDO_CARRINHO)
         return [r.cart_empty_on_close()]
+
+    kind = fulfillment_of(session)
+    if kind is None:
+        # Fica em REVISANDO_CARRINHO (estado reentrante) esperando a resposta.
+        advance(session, S.REVISANDO_CARRINHO)
+        return [r.ask_fulfillment()]
+
+    if kind is FulfillmentType.RETIRADA:
+        advance(session, S.CONFIRMANDO_PEDIDO)
+        return [final_summary(deps, session)]
 
     address = address_of(session)
     if not address and deps.saved_address is not None:
@@ -135,6 +169,7 @@ async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str
     "sim" de novo, reaproveitamos o mesmo pedido em vez de duplicar a compra.
     """
     pending_id = session.slots.get("pending_order_id")
+    kind = fulfillment_of(session) or FulfillmentType.ENTREGA
     try:
         if pending_id:
             summary = await deps.order_summary(deps.db, UUID(pending_id))
@@ -149,8 +184,10 @@ async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str
                 cart=session.cart,
                 phone=session.phone,
                 customer_name=session.slots.get("customer_name"),
-                fulfillment_type=FulfillmentType.ENTREGA,
-                address=address_of(session),
+                fulfillment_type=kind,
+                # Retirada não tem endereço: mandar um dict vazio criaria uma
+                # linha em `addresses` sem rua nem número.
+                address=address_of(session) if kind is FulfillmentType.ENTREGA else None,
                 channel=deps.channel,
                 notes=session.slots.get("notes"),
             )

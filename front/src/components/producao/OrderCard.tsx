@@ -6,7 +6,7 @@
  */
 
 import { useState } from 'react';
-import { Check, ChefHat, Clock, Copy, MapPin, Truck, XCircle } from 'lucide-react';
+import { Check, ChefHat, Clock, Copy, MapPin, Store, Truck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { PaymentBadge } from '@/components/ui/status-badge';
 import { cn } from '@/lib/utils';
@@ -101,6 +101,17 @@ export function OrderCard({ order, onStatusChange }: OrderCardProps) {
       </div>
 
       {/* Endereço de entrega */}
+      {/* Retirada precisa estar visível no card: é a diferença entre despachar
+          o pedido e deixá-lo no balcão esperando o cliente. Sem isso, o Kanban
+          mostrava só a ausência de endereço, que é fácil confundir com dado
+          faltando. */}
+      {order.fulfillmentType === 'retirada' && (
+        <div className="flex items-center gap-1.5 text-sm font-medium text-[hsl(var(--status-production))]">
+          <Store className="h-3.5 w-3.5 shrink-0" />
+          <span>Retirada na loja</span>
+        </div>
+      )}
+
       {address && (
         <div className="flex items-start gap-1.5 text-sm text-muted-foreground mb-3">
           <MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0" />

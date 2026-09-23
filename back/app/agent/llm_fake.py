@@ -37,6 +37,7 @@ _YES = ("sim", "isso", "claro", "pode ser", "confirmo", "confirmar", "ok", "okay
         "beleza", "certo", "positivo", "aham", "com certeza", "perfeito", "bora", "s")
 _NO = ("nao", "nao quero", "negativo", "nem", "de jeito nenhum", "n")
 _PICKUP = ("retirada", "retirar", "vou buscar", "buscar ai", "pegar na loja", "na loja")
+_DELIVERY = ("entrega", "entregar", "delivery", "receber em casa", "traz ai", "trazer")
 _DELIVERY = ("entrega", "entregar", "delivery", "trazer", "em casa")
 
 _NUMBER_WORDS = {
@@ -242,6 +243,8 @@ class FakeLLMClient:
         # 4. Entrega x retirada.
         if _has(text, _PICKUP):
             return NluResult(intent=Intent.ESCOLHER_RETIRADA, confidence=0.9)
+        if _has(text, _DELIVERY):
+            return NluResult(intent=Intent.ESCOLHER_ENTREGA, confidence=0.9)
 
         # 5. Fechar o pedido.
         if _has(text, _CLOSE):

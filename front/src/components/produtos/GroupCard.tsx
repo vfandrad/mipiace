@@ -32,6 +32,10 @@ interface Props {
   isSaving: boolean;
   /** Termo de busca ativo: com filtro, a categoria nasce aberta. */
   filtro?: string;
+  /** Ids dos complementos marcados para edição em massa. */
+  selecionados: Set<string>;
+  onToggleSelecao: (id: string) => void;
+  onSelecionarGrupo: (ids: string[], marcar: boolean) => void;
   onToggleComplement: (complement: Complement) => void;
   onEditComplement: (complement: Complement) => void;
   onDeleteComplement: (complement: Complement) => void;
@@ -52,6 +56,9 @@ export const GroupCard = ({
   flavorCategories,
   isSaving,
   filtro,
+  selecionados,
+  onToggleSelecao,
+  onSelecionarGrupo,
   onToggleComplement,
   onEditComplement,
   onDeleteComplement,
@@ -60,6 +67,9 @@ export const GroupCard = ({
 }: Props) => {
   const disponiveis = group.complements.filter((c) => c.is_available).length;
   const total = group.complements.length;
+  const ids = group.complements.map((c) => c.id);
+  const marcadosAqui = ids.filter((id) => selecionados.has(id)).length;
+  const todosMarcados = total > 0 && marcadosAqui === total;
 
   return (
     <Card className="overflow-hidden">
@@ -113,6 +123,13 @@ export const GroupCard = ({
                       inteira e os controles descem para a segunda, em vez de
                       espremerem tudo numa faixa de 390px. */}
                   <div className="flex min-w-0 basis-full items-center gap-2 sm:flex-1 sm:basis-auto">
+                    <input
+                      type="checkbox"
+                      checked={selecionados.has(complement.id)}
+                      onChange={() => onToggleSelecao(complement.id)}
+                      aria-label={`Selecionar ${complement.name}`}
+                      className="h-5 w-5 shrink-0 cursor-pointer accent-[hsl(var(--primary))]"
+                    />
                     <span
                       className={cn(
                         'truncate text-sm font-medium',
@@ -167,7 +184,17 @@ export const GroupCard = ({
             </ul>
           )}
 
-          <div className="flex flex-wrap gap-2 border-t border-border bg-muted/20 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted/20 px-4 py-3">
+            {total > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="min-h-11 sm:min-h-9"
+                onClick={() => onSelecionarGrupo(ids, !todosMarcados)}
+              >
+                {todosMarcados ? 'Desmarcar todos' : 'Selecionar todos'}
+              </Button>
+            )}
             <Button variant="outline" size="sm" className="min-h-11 sm:min-h-9" onClick={onAddComplement}>
               <Plus className="mr-2 h-4 w-4" />
               Adicionar item

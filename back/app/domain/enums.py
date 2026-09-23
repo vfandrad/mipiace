@@ -69,6 +69,7 @@ class Intent(StrEnum):
     INFORMAR_ENDERECO = "informar_endereco"
     INFORMAR_NOME = "informar_nome"
     ESCOLHER_RETIRADA = "escolher_retirada"
+    ESCOLHER_ENTREGA = "escolher_entrega"
     CONFIRMAR = "confirmar"
     NEGAR = "negar"
     CANCELAR = "cancelar"

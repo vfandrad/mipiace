@@ -44,19 +44,61 @@ def greeting() -> str:
     )
 
 
+def _flavors_of(product: CatalogProduct) -> list[str]:
+    """Sabores disponíveis de um tamanho, na ordem do cardápio."""
+    nomes: list[str] = []
+    for group in product.groups:
+        for complement in group.available_complements:
+            if complement.name not in nomes:
+                nomes.append(complement.name)
+    return nomes
+
+
 def menu(catalog: CatalogSnapshot) -> str:
-    """Cardápio numerado — o número é uma forma válida de resposta."""
+    """Cardápio que o cliente recebe no WhatsApp.
+
+    Duas decisões de formato, ambas pensadas para a tela do celular:
+
+    * **Os sabores vêm junto.** Quem recebe só "M, G e COMBO" precisa
+      perguntar "quais sabores tem?" — uma ida e volta a mais em toda
+      conversa. Com a lista já no primeiro contato, o cliente responde
+      "G de pistache e limão" de uma vez.
+    * **Sabores em linha corrida, separados por ·**, e não um por linha.
+      Trinta e um sabores em bullets viram uma parede de texto que se rola
+      sem ler.
+
+    A lista aparece uma vez só quando todos os tamanhos oferecem os mesmos
+    sabores (o caso da casa). Se algum tamanho tiver sabores diferentes,
+    cada um mostra os seus: repetir é feio, mas anunciar sabor que aquele
+    tamanho não tem custa um pedido frustrado.
+    """
     products = catalog.available_products
     if not products:
         return "Estamos sem itens disponíveis no momento. 😔"
 
-    lines = ["*Cardápio de hoje*"]
+    por_produto = {p.name: _flavors_of(p) for p in products}
+    conjuntos = {frozenset(v) for v in por_produto.values() if v}
+    sabores_iguais = len(conjuntos) == 1
+    sabores_comuns = list(por_produto[products[0].name]) if sabores_iguais else []
+
+    lines = ["🍨 *Mi Piace Gelateria* — cardápio de hoje", ""]
     for index, product in enumerate(products, start=1):
-        line = f"{index}. *{product.name}* — {money(product.base_price)}"
+        lines.append(f"{index}. *{product.name}* — {money(product.base_price)}")
         if product.description:
-            line += f"\n   _{product.description}_"
-        lines.append(line)
-    lines.append("\nÉ só me dizer o nome ou o número do que você quer. 😊")
+            lines.append(f"   _{product.description}_")
+        if not sabores_iguais and por_produto[product.name]:
+            lines.append(f"   Sabores: {' · '.join(por_produto[product.name])}")
+
+    if sabores_comuns:
+        lines.append("")
+        lines.append(f"*Sabores de hoje* ({len(sabores_comuns)})")
+        lines.append(" · ".join(sabores_comuns))
+
+    lines.append("")
+    lines.append(
+        "Me diz o tamanho pelo nome ou pelo número que eu já pergunto os "
+        "sabores. 😊"
+    )
     return "\n".join(lines)
 
 
@@ -190,6 +232,18 @@ _FIELD_LABELS = {
 }
 
 
+def ask_fulfillment() -> str:
+    """Entrega ou retirada — perguntado antes do endereço.
+
+    Vem antes de propósito: pedir a rua de quem já disse que vai buscar na
+    loja é a pergunta que mais irrita num atendimento de balcão.
+    """
+    return (
+        "Você prefere *entrega* ou *retirada* na loja? 🛵🏠\n"
+        "_Responda *entrega* ou *retirada*._"
+    )
+
+
 def ask_address(missing: Iterable[str]) -> str:
     fields = list(missing)
     if not fields:
@@ -235,16 +289,26 @@ def final_summary(
     *,
     delivery_fee: Decimal,
     address: dict[str, Any] | None,
+    is_pickup: bool = False,
 ) -> str:
-    """A loja só trabalha com entrega — resumo sempre mostra taxa e endereço."""
+    """Resumo antes do Pix.
+
+    Na retirada não existe taxa nem endereço, e mostrar "Taxa de entrega:
+    R$ 0,00" com um endereço vazio só levanta dúvida em quem já disse que vai
+    buscar na loja.
+    """
     lines = ["*Confirma o pedido?* 📝", ""]
     for index, item in enumerate(cart.items, start=1):
         lines.append(_item_line(index, item))
     lines.append("")
     lines.append(f"Subtotal: {money(cart.subtotal)}")
-    lines.append(f"Taxa de entrega: {money(delivery_fee)}")
-    lines.append(f"Entregar em: {format_address(address)}")
-    total = cart.total(delivery_fee)
+    if is_pickup:
+        lines.append("Retirada na loja — sem taxa de entrega")
+        total = cart.total(Decimal("0"))
+    else:
+        lines.append(f"Taxa de entrega: {money(delivery_fee)}")
+        lines.append(f"Entregar em: {format_address(address)}")
+        total = cart.total(delivery_fee)
     lines.append(f"*Total: {money(total)}*")
     lines.append("")
     lines.append("Responda *sim* para confirmar ou *não* para ajustar.")

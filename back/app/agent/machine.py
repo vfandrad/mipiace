@@ -22,6 +22,7 @@ from app.agent.checkout import (
     missing_address_fields,
     order_status_reply,
     place_order,
+    set_fulfillment,
     start_checkout,
 )
 from app.agent.llm import NluResult
@@ -37,7 +38,7 @@ from app.agent.states import CANCELLABLE_STATES, advance as _go, can_transition
 from app.domain.cart import CartComplement, CartItem
 from app.domain.catalog import CatalogGroup, CatalogProduct, normalize
 from app.domain.enums import ConversationState as S
-from app.domain.enums import Intent
+from app.domain.enums import FulfillmentType, Intent
 
 logger = logging.getLogger(__name__)
 
@@ -410,6 +411,17 @@ async def _handle_personalizando(
 async def _handle_revisando(
     deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
 ) -> list[str]:
+    # Entrega x retirada. Fica aqui, e não num estado próprio, porque a resposta
+    # é uma palavra dentro da mesma etapa de fechamento do carrinho — criar um
+    # estado para uma pergunta binária só aumentaria a tabela de transições.
+    if nlu.intent is Intent.ESCOLHER_RETIRADA:
+        set_fulfillment(session, FulfillmentType.RETIRADA)
+        return await start_checkout(deps, session)
+
+    if nlu.intent is Intent.ESCOLHER_ENTREGA:
+        set_fulfillment(session, FulfillmentType.ENTREGA)
+        return await start_checkout(deps, session)
+
     if nlu.intent in {Intent.FINALIZAR_PEDIDO, Intent.CONFIRMAR}:
         if session.cart.is_empty:
             _go(session, S.ESCOLHENDO_PRODUTO)
@@ -427,6 +439,8 @@ async def _handle_revisando(
         return _take_product(deps, session, nlu, text)
 
     if nlu.intent is Intent.INFORMAR_ENDERECO and nlu.address is not None:
+        # Quem manda endereço está pedindo entrega, mesmo sem dizer a palavra.
+        set_fulfillment(session, FulfillmentType.ENTREGA)
         _merge_address(session, nlu)
         return await start_checkout(deps, session)
 

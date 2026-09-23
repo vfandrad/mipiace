@@ -7,9 +7,10 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Hand, RefreshCw } from 'lucide-react';
+import { Bot, Hand } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Button } from '@/components/ui/button';
+import { RefreshButton } from '@/components/common/RefreshButton';
 import { ConversationList } from '@/components/conversas/ConversationList';
 import { ConversationStateBadge } from '@/components/conversas/ConversationStateBadge';
 import { MessageThread } from '@/components/conversas/MessageThread';
@@ -55,18 +56,11 @@ const Conversas = () => {
               Acompanhe o agente de WhatsApp e assuma o atendimento quando quiser
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={() => {
-              conversationsQuery.refetch();
-              messagesQuery.refetch();
-            }}
-          >
-            <RefreshCw className="h-4 w-4" />
-            Atualizar
-          </Button>
+          <RefreshButton
+            onRefresh={() =>
+              Promise.all([conversationsQuery.refetch(), messagesQuery.refetch()])
+            }
+          />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4">

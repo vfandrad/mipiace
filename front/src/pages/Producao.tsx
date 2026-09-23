@@ -14,6 +14,8 @@ import { QueryError } from '@/components/common/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { useOrders } from '@/hooks/use-orders';
+import { RefreshButton } from '@/components/common/RefreshButton';
+import { Eye, EyeOff } from 'lucide-react';
 import { ORDER_STATUS_INFO } from '@/lib/status';
 import type { OrderStatus } from '@/types/order';
 import { cn } from '@/lib/utils';
@@ -46,9 +48,33 @@ const Producao = () => {
             <h1 className="text-2xl font-bold tracking-tight">Produção</h1>
             <p className="text-muted-foreground">Gerencie o fluxo de pedidos</p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setShowCancelled((v) => !v)}>
-            {showCancelled ? 'Ocultar cancelados' : `Mostrar cancelados (${cancelledCount})`}
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Olho no lugar do texto: "Mostrar cancelados (0)" ocupava metade
+                da faixa no celular para uma ação secundária. O contador vira um
+                selo ao lado quando existe algo escondido. O `title` faz as
+                vezes de dica — o projeto não usa componente de tooltip. */}
+            <Button
+              variant="outline"
+              size="icon"
+              className="relative h-11 w-11 sm:h-9 sm:w-9"
+              aria-pressed={showCancelled}
+              title={showCancelled ? 'Ocultar cancelados' : 'Mostrar cancelados'}
+              aria-label={
+                showCancelled
+                  ? 'Ocultar pedidos cancelados'
+                  : `Mostrar pedidos cancelados (${cancelledCount})`
+              }
+              onClick={() => setShowCancelled((v) => !v)}
+            >
+              {showCancelled ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+              {!showCancelled && cancelledCount > 0 && (
+                <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[11px] font-medium text-destructive-foreground">
+                  {cancelledCount}
+                </span>
+              )}
+            </Button>
+            <RefreshButton onRefresh={() => refetch()} />
+          </div>
         </div>
 
         {isError ? (

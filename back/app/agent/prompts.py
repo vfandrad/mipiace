@@ -25,6 +25,7 @@ _INTENT_DESCRIPTIONS = {
     Intent.INFORMAR_ENDERECO: "cliente informou endereço de entrega",
     Intent.INFORMAR_NOME: "cliente informou o próprio nome",
     Intent.ESCOLHER_RETIRADA: "cliente vai retirar na loja",
+    Intent.ESCOLHER_ENTREGA: "cliente quer receber em casa, por entrega",
     Intent.CONFIRMAR: "sim, pode ser, confirmo",
     Intent.NEGAR: "não, nada disso",
     Intent.CANCELAR: "cliente quer cancelar o pedido",

@@ -7,7 +7,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { FolderPlus, Pencil, Search, Trash2 } from 'lucide-react';
+import { CheckCircle2, FolderPlus, Pencil, Search, Trash2, XCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,6 +32,9 @@ const Produtos = () => {
   const { products, flavorCategories, isLoading, isError, error } = catalog;
 
   const [filtro, setFiltro] = useState('');
+  // Edição em massa: ids dos complementos marcados. Um Set porque a operação
+  // que mais roda é "está marcado?", uma vez por linha em cada render.
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [showNewProduct, setShowNewProduct] = useState(false);
   const [newGroupProduct, setNewGroupProduct] = useState<{ id: string; name: string } | null>(null);
   const [newComplementGroupId, setNewComplementGroupId] = useState<string | null>(null);
@@ -71,6 +74,31 @@ const Produtos = () => {
       );
   }, [products, termo]);
 
+  const alternarSelecao = (id: string) =>
+    setSelecionados((atual) => {
+      const proximo = new Set(atual);
+      if (proximo.has(id)) proximo.delete(id);
+      else proximo.add(id);
+      return proximo;
+    });
+
+  const selecionarGrupo = (ids: string[], marcar: boolean) =>
+    setSelecionados((atual) => {
+      const proximo = new Set(atual);
+      ids.forEach((id) => (marcar ? proximo.add(id) : proximo.delete(id)));
+      return proximo;
+    });
+
+  // Liga ou desliga tudo que está marcado. Vai uma requisição por item: o
+  // backend só tem PATCH por complemento, e para a dezena de sabores que o
+  // lojista mexe por dia isso é mais simples do que inventar uma rota em lote.
+  const aplicarEmMassa = (disponivel: boolean) => {
+    selecionados.forEach((id) =>
+      catalog.toggleAvailability('complement', id, disponivel),
+    );
+    setSelecionados(new Set());
+  };
+
   const handleDelete = () => {
     if (!deleteTarget) return;
     catalog.deleteItem(deleteTarget.entity, deleteTarget.id);
@@ -81,7 +109,10 @@ const Produtos = () => {
     <div className="min-h-screen-safe bg-background">
       <Header />
       <main className="container py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] space-y-6">
-        <ProductsHeader onNewProduct={() => setShowNewProduct(true)} />
+        <ProductsHeader
+          onNewProduct={() => setShowNewProduct(true)}
+          onRefresh={() => catalog.refetch()}
+        />
 
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -180,6 +211,9 @@ const Produtos = () => {
                       group={group}
                       flavorCategories={flavorCategories}
                       filtro={termo}
+                      selecionados={selecionados}
+                      onToggleSelecao={alternarSelecao}
+                      onSelecionarGrupo={selecionarGrupo}
                       isSaving={catalog.isSaving}
                       onToggleComplement={(complement) =>
                         catalog.toggleAvailability(
@@ -222,6 +256,48 @@ const Produtos = () => {
                 </CardContent>
               </Card>
             ))}
+          </div>
+        )}
+
+        {/* Barra de edição em massa. Fixa no rodapé porque a seleção acontece
+            rolando a lista: um botão no topo sairia da tela justo quando
+            passasse a ser útil. */}
+        {selecionados.size > 0 && (
+          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] shadow-lg backdrop-blur-sm">
+            <div className="container flex flex-wrap items-center gap-2 px-0">
+              <span className="text-sm font-medium">
+                {selecionados.size} selecionado{selecionados.size === 1 ? '' : 's'}
+              </span>
+              <div className="ml-auto flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  className="min-h-11 gap-2 sm:min-h-9"
+                  disabled={catalog.isSaving}
+                  onClick={() => aplicarEmMassa(true)}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Ligar
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="min-h-11 gap-2 sm:min-h-9"
+                  disabled={catalog.isSaving}
+                  onClick={() => aplicarEmMassa(false)}
+                >
+                  <XCircle className="h-4 w-4" />
+                  Desligar
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="min-h-11 sm:min-h-9"
+                  onClick={() => setSelecionados(new Set())}
+                >
+                  Limpar
+                </Button>
+              </div>
+            </div>
           </div>
         )}
 
