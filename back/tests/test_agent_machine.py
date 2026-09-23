@@ -374,19 +374,39 @@ async def test_estado_terminal_reinicia_a_conversa() -> None:
 
 
 @pytest.mark.asyncio
-async def test_falha_repetida_na_personalizacao_tambem_escala() -> None:
-    """Sem isto o cliente ficaria preso para sempre no grupo de sabores."""
+async def test_sabor_inexistente_repetido_oferece_humano_sem_calar_o_bot() -> None:
+    """Pedir sabor que não existe é pergunta, não incompreensão.
+
+    Escalar por isso era pior do que não responder: o cliente que perguntava
+    "tem flocos?" três vezes caía no atendimento humano — onde o bot fica
+    calado e, à noite, não há ninguém. Agora ele ganha a saída oferecida e
+    continua conversando.
+    """
     deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
     await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Pote 500ml"), "pote")
     assert session.state is S.PERSONALIZANDO_ITEM
 
     for _ in range(deps.settings.max_nlu_failures):
-        await run(
+        result = await run(
             deps,
             session,
             nlu(Intent.ESCOLHER_COMPLEMENTOS, complement_queries=["pizza"]),
             "pizza",
         )
+
+    assert session.state is S.PERSONALIZANDO_ITEM
+    assert session.handoff is False
+    assert any("atendente" in reply for reply in result.replies)
+
+
+@pytest.mark.asyncio
+async def test_incompreensao_total_na_personalizacao_ainda_escala() -> None:
+    """Sem isto o cliente ficaria preso para sempre no grupo de sabores."""
+    deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
+    await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Pote 500ml"), "pote")
+
+    for _ in range(deps.settings.max_nlu_failures):
+        await run(deps, session, nlu(Intent.DESCONHECIDO), "")
 
     assert session.state is S.ATENDIMENTO_HUMANO
     assert session.handoff is True
@@ -519,3 +539,93 @@ async def test_desambiguacao_de_sabor_preserva_a_lista_oferecida() -> None:
 
     assert "Qual desses" in result.replies[0]
     assert session.slots["options"] == [str(limao.id), str(torta.id)]
+
+
+@pytest.mark.asyncio
+async def test_sabor_repetido_pelo_modelo_nao_rouba_a_vaga_do_novo() -> None:
+    """Regressão do teste com cliente simulado.
+
+    O modelo devolve em complement_names o que o cliente JÁ escolheu antes:
+    ele diz só "doce de leite" e vem ["Pistache", "Morango", "Doce de leite"].
+    Sem filtrar o repetido, ele ocupava a última vaga, o sabor novo era
+    descartado por "máximo 3" e o cliente recebia pistache duas vezes.
+    """
+    deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
+    await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Pote 500ml"), "pote")
+    await run(
+        deps,
+        session,
+        nlu(Intent.ESCOLHER_COMPLEMENTOS, complement_names=["Pistache"]),
+        "pistache",
+    )
+
+    # O turno seguinte: o cliente só disse "morango", o modelo repetiu tudo.
+    await run(
+        deps,
+        session,
+        nlu(Intent.ESCOLHER_COMPLEMENTOS, complement_names=["Pistache", "Morango"]),
+        "morango",
+    )
+
+    assert len(session.cart.items) == 1
+    sabores = [c.name for c in session.cart.items[0].complements]
+    assert sabores == ["Pistache", "Morango"]
+
+
+@pytest.mark.asyncio
+async def test_remover_item_tira_do_carrinho_em_vez_de_adicionar_outro() -> None:
+    """Regressão cara: "tira o segundo" ADICIONAVA um item e inflava a conta."""
+    deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
+    await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Casquinha"), "casquinha")
+    await run(
+        deps, session, nlu(Intent.ADICIONAR_MAIS, product_query="Pote 240ml"), "pote 240ml"
+    )
+    assert len(session.cart.items) == 2
+
+    result = await run(deps, session, nlu(Intent.REMOVER_ITEM), "tira o segundo")
+
+    assert len(session.cart.items) == 1
+    assert session.cart.items[0].product_name == "Casquinha"
+    assert "Tirei" in result.replies[0]
+
+
+@pytest.mark.asyncio
+async def test_remover_o_unico_item_volta_para_o_cardapio() -> None:
+    deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
+    await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Casquinha"), "casquinha")
+
+    await run(deps, session, nlu(Intent.REMOVER_ITEM), "tira isso")
+
+    assert session.cart.is_empty
+    assert session.state is S.ESCOLHENDO_PRODUTO
+
+
+@pytest.mark.asyncio
+async def test_remover_sem_dizer_qual_pergunta_qual() -> None:
+    deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
+    await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Casquinha"), "casquinha")
+    await run(
+        deps, session, nlu(Intent.ADICIONAR_MAIS, product_query="Pote 240ml"), "pote 240ml"
+    )
+
+    result = await run(deps, session, nlu(Intent.REMOVER_ITEM), "tira um ai")
+
+    assert len(session.cart.items) == 2  # nada removido no escuro
+    assert "Qual deles" in result.replies[0]
+
+
+@pytest.mark.asyncio
+async def test_retirada_dita_de_passagem_e_lembrada_no_fechamento() -> None:
+    """"quero um pote, vou buscar aí" não pode virar pergunta repetida depois."""
+    deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
+    await run(
+        deps,
+        session,
+        nlu(Intent.ESCOLHER_PRODUTO, product_query="Casquinha", fulfillment="retirada"),
+        "quero uma casquinha, vou buscar ai",
+    )
+
+    result = await run(deps, session, nlu(Intent.FINALIZAR_PEDIDO), "pode fechar")
+
+    assert "entrega* ou *retirada" not in result.replies[0]
+    assert session.state is S.CONFIRMANDO_PEDIDO

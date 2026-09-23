@@ -14,12 +14,14 @@ from decimal import Decimal
 from typing import Any, Awaitable, Callable, Sequence
 from uuid import UUID
 
+from app.agent import faq
 from app.agent import renderer as r
 from app.agent.checkout import (
     AWAITING_FULFILLMENT_SLOT,
     AgentDeps,
     address_of,
     final_summary,
+    fulfillment_of,
     missing_address_fields,
     order_status_reply,
     place_order,
@@ -29,6 +31,7 @@ from app.agent.checkout import (
 from app.agent.llm import NluResult
 from app.agent.resolver import (
     MatchStatus,
+    clean_query,
     pick_by_number,
     resolve_complement,
     resolve_product,
@@ -92,7 +95,7 @@ def _fail(
     """
     session.fail_count += 1
     if session.fail_count >= deps.settings.max_nlu_failures:
-        return _to_human(session)
+        return _to_human(session, requested=False)
 
     replies = [r.fallback(session.fail_count, with_reprompt=reprompt is not None)]
     if reprompt is not None:
@@ -109,14 +112,14 @@ def _back_to_choosing(session: ConversationSession) -> None:
     _go(session, S.ESCOLHENDO_PRODUTO)
 
 
-def _to_human(session: ConversationSession) -> list[str]:
+def _to_human(session: ConversationSession, *, requested: bool = True) -> list[str]:
     if not can_transition(session.state, S.ATENDIMENTO_HUMANO):
         _go(session, S.SAUDACAO)  # de CANCELADO só se sai reabrindo a conversa
     _go(session, S.ATENDIMENTO_HUMANO)
     session.handoff = True
     session.touch_handoff()
     session.slots.pop("options", None)
-    return [r.handoff()]
+    return [r.handoff(requested)]
 
 
 def human_on_the_line(session: ConversationSession) -> bool:
@@ -299,13 +302,29 @@ def _take_product(
         Intent.ADICIONAR_MAIS,
     }:
         guess = deps.catalog.product_by_name(nlu.product_name)
-        # Esgotado segue para o resolver, que tem a mensagem certa para isso.
-        product = guess if guess is not None and guess.is_available else None
+        # O palpite do modelo não vale quando o texto do cliente é ambíguo
+        # contra o catálogo: em "oi quero dois potes" ele escolhia um tamanho
+        # sozinho, calado — e o cliente que queria dois médios levava um de
+        # R$ 90. Ambíguo é para perguntar; o resolver faz isso logo abaixo.
+        if resolve_product(query, deps.catalog).status is not MatchStatus.AMBIGUOUS:
+            # Esgotado segue para o resolver, que tem a mensagem certa para isso.
+            product = guess if guess is not None and guess.is_available else None
 
     if product is None:
         match = resolve_product(query, deps.catalog)
         if match.status is MatchStatus.NOT_FOUND:
             _go(session, S.ESCOLHENDO_PRODUTO)
+            # O cliente NOMEOU alguma coisa e a gelateria não vende aquilo
+            # ("tem açaí?", "queria um milkshake"). Isso não é incompreensão:
+            # é uma pergunta com resposta. Tratar como falha levava três
+            # perguntas dessas direto para o atendimento humano. Vale para
+            # qualquer intenção porque o modelo devolve "desconhecido" com o
+            # trecho preenchido justamente nas perguntas ("tem açaí?").
+            if (nlu.product_query or "").strip():
+                return [
+                    r.product_not_found(clean_query(nlu.product_query or query)),
+                    *_menu_reply(deps, session),
+                ]
             return _fail(session, deps, lambda: _menu_reply(deps, session))
         if match.status is MatchStatus.AMBIGUOUS:
             _go(session, S.ESCOLHENDO_PRODUTO)
@@ -344,6 +363,93 @@ def _complement_inputs(nlu: NluResult) -> list[str]:
     return list(nlu.complement_names) or list(nlu.complement_queries)
 
 
+#: "tira o segundo" — a ordem escrita por extenso, como o cliente fala.
+_ORDINALS = {
+    "primeiro": 1, "primeira": 1, "segundo": 2, "segunda": 2,
+    "terceiro": 3, "terceira": 3, "quarto": 4, "quinto": 5,
+}
+
+
+def _index_in_text(text: str, total: int) -> int | None:
+    """Qual item da lista o cliente apontou: "o 2", "o segundo", "o último"."""
+    tokens = normalize(text).replace(".", " ").replace(",", " ").split()
+    for token in tokens:
+        if token.isdigit() and 1 <= int(token) <= total:
+            return int(token) - 1
+        if token in _ORDINALS and _ORDINALS[token] <= total:
+            return _ORDINALS[token] - 1
+        if token in {"ultimo", "ultima"}:
+            return total - 1
+    return None
+
+
+def _remove_item(
+    deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
+) -> list[str]:
+    """Tira um item do carrinho.
+
+    Existe porque a falta disso saía caro: "tira o segundo" caía no caminho de
+    escolher produto e o bot ADICIONAVA mais um pote. Reclamar do pedido
+    aumentava a conta — o cliente foi de R$ 50 a R$ 200 tentando corrigir.
+    """
+    items = session.cart.items
+    if not items:
+        _back_to_choosing(session)
+        return [r.cart_empty_on_close()]
+
+    index = _index_in_text(text, len(items))
+
+    if index is None and len(items) == 1:
+        index = 0
+
+    if index is None:
+        # Pelo nome do produto, se ele nomeou um só dos que estão no carrinho.
+        alvo = normalize((nlu.product_name or nlu.product_query or "").strip())
+        achados = [
+            i for i, item in enumerate(items)
+            if alvo and alvo in normalize(item.product_name)
+        ]
+        if len(achados) == 1:
+            index = achados[0]
+
+    if index is None:
+        _go(session, S.REVISANDO_CARRINHO)
+        return [r.ask_which_to_remove(session.cart)]
+
+    removido = items.pop(index)
+    session.fail_count = 0
+    if not items:
+        session.slots.pop("pending_item", None)
+        _back_to_choosing(session)
+        return [r.item_removed(removido.product_name), *_menu_reply(deps, session)]
+
+    _go(session, S.REVISANDO_CARRINHO)
+    return [r.item_removed(removido.product_name), r.ask_more_or_close(session.cart)]
+
+
+def _drop_chosen(pending: dict[str, Any], group: CatalogGroup, text: str) -> list[str]:
+    """Tira do item em construção os sabores que o cliente citou para remover."""
+    alvo = normalize(text)
+    escolhidos = _chosen_in_group(pending, group)
+    fora = [c for c in escolhidos if normalize(c["name"]) in alvo]
+    for c in fora:
+        pending["complements"].remove(c)
+    return [c["name"] for c in fora]
+
+
+def _remember_fulfillment(session: ConversationSession, nlu: NluResult) -> None:
+    """Guarda "entrega"/"retirada" dito de passagem, em qualquer estado.
+
+    O cliente que abre com "quero um pote G, vou buscar aí" já respondeu a
+    pergunta do fechamento. Sem isto, a informação se perdia (a intenção é um
+    rótulo só) e o bot perguntava de novo lá na frente.
+    """
+    if nlu.fulfillment == "retirada":
+        set_fulfillment(session, FulfillmentType.RETIRADA)
+    elif nlu.fulfillment == "entrega":
+        set_fulfillment(session, FulfillmentType.ENTREGA)
+
+
 def _take_complements(
     deps: AgentDeps,
     session: ConversationSession,
@@ -361,6 +467,7 @@ def _take_complements(
 
     problems: list[str] = []
     added = 0
+    repetidos = 0
     ambiguous = False
     for query in queries:
         chosen = _chosen_in_group(pending, group)
@@ -392,6 +499,16 @@ def _take_complements(
             complement = match.complement
 
         assert complement is not None
+
+        # O modelo costuma REPETIR em complement_names o que o cliente já
+        # escolheu em turnos anteriores: o cliente diz só "doce de leite" e
+        # vem ["Pistache", "Morango", "Doce de leite"]. Sem esta checagem, o
+        # repetido ocupa a última vaga do grupo, o sabor novo é descartado por
+        # "máximo 3" e o cliente recebe um pote com pistache duas vezes.
+        if any(c["id"] == str(complement.id) for c in chosen):
+            repetidos += 1
+            continue
+
         pending["complements"].append(
             {
                 "id": str(complement.id),
@@ -402,14 +519,23 @@ def _take_complements(
         )
         added += 1
 
-    if added:
+    if added or repetidos:
         session.fail_count = 0
+    elif problems:
+        # "Não temos flocos" é resposta de verdade, não incompreensão: escalar
+        # por causa disso mandava para o atendimento humano (e para o silêncio)
+        # quem só estava perguntando. Mas se o cliente está há vários turnos
+        # sem avançar, ele precisa de uma saída — oferecemos, sem calar o bot.
+        session.fail_count += 1
+        if session.fail_count >= deps.settings.max_nlu_failures:
+            session.fail_count = 0
+            problems.append(r.offer_human())
     else:
-        # Nada aproveitado neste turno. Sem contar como falha, o cliente que
+        # Nada aproveitado e nada a dizer. Sem contar como falha, o cliente que
         # não consegue se fazer entender ficaria preso no grupo para sempre.
         session.fail_count += 1
         if session.fail_count >= deps.settings.max_nlu_failures:
-            return problems + _to_human(session)
+            return _to_human(session, requested=False)
 
     if ambiguous:
         # "Qual desses você quis dizer? 1. Limão siciliano 2. Torta de limão":
@@ -427,7 +553,7 @@ def _take_complements(
         return problems + [r.group_extra_choice(group, [c["name"] for c in chosen])]
 
     _go(session, S.PERSONALIZANDO_ITEM)
-    if not added and not problems:
+    if not added and not problems and not repetidos:
         return [
             r.fallback(session.fail_count, with_reprompt=True),
             *_ask_group(deps, session, product, group, pending),
@@ -447,7 +573,9 @@ async def _handle_saudacao(
 ) -> list[str]:
     _go(session, S.ESCOLHENDO_PRODUTO)
     replies = [r.greeting()] + _menu_reply(deps, session)
-    if nlu.intent is Intent.ESCOLHER_PRODUTO and _mentions_product(nlu):
+    if _mentions_product(nlu):
+        # Vale para qualquer intenção: "oi, tem açaí?" chega como
+        # desconhecido + product_query="acai", e merece um "não temos".
         return replies[:1] + _take_product(deps, session, nlu, text)
     return replies
 
@@ -493,6 +621,29 @@ async def _handle_personalizando(
     if nlu.intent is Intent.CONFIRMAR and len(chosen) >= group.min_choices:
         return _advance_group(deps, session, pending)
 
+    # Nomeou OUTRO produto no meio dos sabores ("queria o médio, não esse de 1
+    # litro"): é troca de tamanho, não sabor. Antes virava
+    # 'Não temos "2 potes medios" em Escolha 6 sabores' e o cliente não tinha
+    # como voltar atrás.
+    outro = deps.catalog.product_by_name(nlu.product_name) if nlu.product_name else None
+    if outro is not None and outro.id != product.id and outro.is_available:
+        session.slots.pop("pending_item", None)
+        _go(session, S.REVISANDO_CARRINHO)
+        _go(session, S.ESCOLHENDO_PRODUTO)
+        return [r.product_switched(product.name, outro.name)] + _take_product(
+            deps, session, nlu, text
+        )
+
+    # "tira o pistache" / "troca o morango por chocolate": tira o sabor citado
+    # antes de tentar anotar o novo — senão o grupo já está cheio e o cliente
+    # ouve "dá pra escolher no máximo 3".
+    if nlu.intent is Intent.REMOVER_ITEM and _drop_chosen(pending, group, text):
+        session.fail_count = 0
+        novos = _complement_inputs(nlu)
+        if novos:
+            return _take_complements(deps, session, novos)
+        return _ask_group(deps, session, product, group, pending)
+
     # Quis fechar/retirar/receber antes de terminar o item: não é sabor, e
     # responder "não temos 'quero fechar' em Sabores" não ajuda ninguém.
     if nlu.intent in _NOT_A_FLAVOR and not _complement_inputs(nlu):
@@ -514,6 +665,15 @@ async def _handle_personalizando(
 async def _handle_revisando(
     deps: AgentDeps, session: ConversationSession, nlu: NluResult, text: str
 ) -> list[str]:
+    if nlu.intent is Intent.REMOVER_ITEM:
+        return _remove_item(deps, session, nlu, text)
+
+    # A pergunta "entrega ou retirada?" está no ar e a resposta já chegou —
+    # seja como intenção, seja de passagem ("retirada, já falei isso lá em
+    # cima"), que o `_remember_fulfillment` guardou antes deste handler.
+    if session.slots.get(AWAITING_FULFILLMENT_SLOT) and fulfillment_of(session):
+        return await start_checkout(deps, session)
+
     # Entrega x retirada. Fica aqui, e não num estado próprio, porque a resposta
     # é uma palavra dentro da mesma etapa de fechamento do carrinho — criar um
     # estado para uma pergunta binária só aumentaria a tabela de transições.
@@ -611,6 +771,10 @@ async def _handle_confirmando(
     if nlu.intent in {Intent.CONFIRMAR, Intent.FINALIZAR_PEDIDO}:
         return await place_order(deps, session)
 
+    if nlu.intent is Intent.REMOVER_ITEM:
+        _go(session, S.REVISANDO_CARRINHO)
+        return _remove_item(deps, session, nlu, text)
+
     if nlu.intent in {Intent.NEGAR, Intent.ADICIONAR_MAIS} or _mentions_product(nlu):
         _go(session, S.REVISANDO_CARRINHO)
         if _mentions_product(nlu):
@@ -624,7 +788,9 @@ async def _handle_confirmando(
         return [final_summary(deps, session)]
 
     _go(session, S.CONFIRMANDO_PEDIDO)
-    return _fail(session, deps, lambda: [final_summary(deps, session)])
+    # Repetir o resumo inteiro a cada mensagem não entendida vira spam: dez
+    # linhas para quem perguntou "demora quanto tempo?". Só a pergunta basta.
+    return _fail(session, deps, lambda: [r.ask_confirm_short()])
 
 
 async def _handle_aguardando(
@@ -675,9 +841,19 @@ async def run(
         logger.info("handoff sem resposta humana; o bot reassume a conversa")
         _resume_from_human(session)
 
+    _remember_fulfillment(session, nlu)
+
     globals_reply = await _handle_global_intents(deps, session, nlu)
     if globals_reply is not None:
         return MachineResult(globals_reply, session.state)
+
+    # Pergunta que não é pedido ("aceitam cartão?", "quanto fica a entrega?").
+    # Vem antes do handler do estado porque vale em qualquer etapa, e depois
+    # das intenções globais para não roubar um "quero cancelar".
+    resposta = faq.answer(text, deps.catalog, deps.settings.delivery_fee)
+    if resposta is not None:
+        session.fail_count = 0
+        return MachineResult([resposta], session.state)
 
     handler = _HANDLERS.get(session.state)
     if handler is None:  # estado novo sem handler é bug, não silêncio
@@ -707,7 +883,14 @@ async def _handle_global_intents(
             _back_to_choosing(session)
         return _menu_reply(deps, session)
 
-    if nlu.intent is Intent.CONSULTAR_STATUS and session.active_order_id is not None:
-        return await order_status_reply(deps, session)
+    if nlu.intent is Intent.CONSULTAR_STATUS:
+        if session.active_order_id is not None:
+            return await order_status_reply(deps, session)
+        if not session.cart.is_empty:
+            # "me mostra o carrinho de novo": o bot mostrava o carrinho, mas
+            # precedido de "Desculpa, não peguei essa" — desculpa por algo que
+            # ele tinha entendido.
+            session.fail_count = 0
+            return [r.cart_summary(session.cart)]
 
     return None

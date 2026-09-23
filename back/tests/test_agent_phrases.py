@@ -157,3 +157,35 @@ def test_palavra_inequivoca_dispensa_o_modelo(frase, esperado) -> None:
 )
 def test_na_duvida_a_regra_se_cala(frase) -> None:
     assert rule_intent(frase) is None
+
+
+@pytest.mark.parametrize("frase", ["quero dois potes", "quero 2 potes", "um pote"])
+def test_quantidade_sem_tamanho_pergunta_em_vez_de_chutar(cardapio, frase) -> None:
+    """Regressão do teste com cliente simulado.
+
+    "oi quero dois potes" casava com a descrição do GG ("Dois potes G") e o
+    cliente que queria dois potes médios recebia, sem ser perguntado, um pote
+    de R$ 90. Quantidade sem tamanho tem que virar pergunta.
+    """
+    match = resolve_product(frase, cardapio)
+    assert match.status is MatchStatus.AMBIGUOUS
+    assert len(match.candidates) >= 3
+
+
+@pytest.mark.parametrize(
+    "pergunta",
+    [
+        "quanto fica a entrega?",   # levou um cliente simulado ao atendimento humano
+        "vcs aceitam cartao?",
+        "tem entrega hoje?",
+        "qual o horario de voces?",
+    ],
+)
+def test_pergunta_nao_vira_comando(pergunta) -> None:
+    """"quanto fica a entrega?" não é escolher entrega.
+
+    Como a regra respondia `escolher_entrega`, o estado não esperava aquilo,
+    virava falha — e três perguntas assim jogavam o cliente no atendimento
+    humano, onde o bot fica calado.
+    """
+    assert rule_intent(pergunta) is None

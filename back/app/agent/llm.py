@@ -70,6 +70,11 @@ class NluResult(BaseModel):
     quantity: int | None = None
     address: ExtractedAddress | None = None
     customer_name: str | None = None
+    #: "entrega" | "retirada" — dito de passagem, independente da intenção
+    #: principal. Existe porque `intent` é um rótulo só: o cliente que abre com
+    #: "quero um pote G, vou buscar aí" está dizendo as duas coisas, e antes
+    #: disto a segunda se perdia — o bot perguntava de novo no fechamento.
+    fulfillment: str | None = None
 
     # Metadados para auditoria/custo (gravados em conversation_messages)
     model: str | None = None

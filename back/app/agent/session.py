@@ -311,6 +311,11 @@ async def log_message(
     `ON CONFLICT (provider_message_id) DO NOTHING` porque o eco de uma mensagem
     enviada pelo bot chega de volta pelo webhook do WhatsApp com o mesmo id —
     sem isso, toda resposta do bot apareceria duplicada no histórico.
+
+    `created_at` é `clock_timestamp()`, e não o `now()` do DEFAULT: `now()` é o
+    horário de *início da transação*, igual para as três ou quatro mensagens de
+    um mesmo turno. Com o id sendo um uuid aleatório, o painel ordenava o turno
+    ao acaso — a saudação aparecendo depois do cardápio.
     """
     await db.execute(
         text(
@@ -318,11 +323,11 @@ async def log_message(
             INSERT INTO conversation_messages (
                 conversation_id, direction, content, state_before, state_after,
                 detected_intent, confidence, llm_model, llm_usage,
-                provider_message_id
+                provider_message_id, created_at
             ) VALUES (
                 :conversation_id, :direction, :content, :state_before, :state_after,
                 :detected_intent, :confidence, :llm_model,
-                CAST(:llm_usage AS jsonb), :provider_message_id
+                CAST(:llm_usage AS jsonb), :provider_message_id, clock_timestamp()
             )
             ON CONFLICT (provider_message_id) WHERE provider_message_id IS NOT NULL
             DO NOTHING

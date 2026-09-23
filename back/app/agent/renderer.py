@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Any, Iterable, Sequence
 
 from app.domain.cart import Cart, CartItem
-from app.domain.catalog import CatalogGroup, CatalogProduct, CatalogSnapshot
+from app.domain.catalog import CatalogGroup, CatalogProduct, CatalogSnapshot, normalize
 
 # ---------------------------------------------------------------------------
 # Formatação de valores
@@ -130,7 +130,13 @@ def group_question(
     options = group.available_complements
     remaining = max(group.min_choices - len(chosen), 0)
 
-    if group.min_choices == group.max_choices and group.min_choices > 0:
+    # O lojista costuma batizar o grupo com a instrução inteira ("Escolha 3
+    # sabores"). Sem esta checagem sai "escolha 3 de *Escolha 3 sabores*".
+    ja_e_instrucao = normalize(group.name).startswith("escolha")
+
+    if ja_e_instrucao:
+        header = f"*{product.name}* — {group.name}:"
+    elif group.min_choices == group.max_choices and group.min_choices > 0:
         header = f"*{product.name}* — escolha {group.min_choices} de *{group.name}*:"
     elif group.max_choices > 1:
         header = f"*{product.name}* — escolha até {group.max_choices} de *{group.name}*:"
@@ -146,6 +152,30 @@ def group_question(
     if remaining > 0 and chosen:
         lines.append(f"Falta{'m' if remaining > 1 else ''} {remaining}. 😉")
     return "\n".join(lines)
+
+
+def offer_human() -> str:
+    """Oferece o atendente sem calar o bot.
+
+    Diferente de `handoff()`: aqui ninguém foi chamado ainda. É para o cliente
+    que está há vários turnos sem conseguir avançar — ele ganha a saída, mas
+    continua conversando com o bot se quiser.
+    """
+    return "Se ficar mais fácil, digite *atendente* que eu chamo alguém do time. 🙂"
+
+
+def product_not_found(query: str) -> str:
+    """O cliente pediu algo que a casa não vende.
+
+    Diferente de "não entendi": aqui a gelateria entendeu perfeitamente e a
+    resposta é "não temos". Antes isso caía no fallback, e três perguntas
+    dessas ("tem açaí?", "queria um milkshake") jogavam a conversa para o
+    atendimento humano.
+    """
+    return (
+        f'Não trabalhamos com "{query}" 🙈\n'
+        "Dá uma olhada no que tem hoje:"
+    )
 
 
 def complement_not_found(query: str, group: CatalogGroup) -> str:
@@ -173,6 +203,23 @@ def group_extra_choice(group: CatalogGroup, chosen: Sequence[str]) -> str:
         f"Quer mais alguma coisa em *{group.name}*? "
         "Responda *não* para seguir."
     )
+
+
+def product_switched(antigo: str, novo: str) -> str:
+    return f"Sem problema — troquei o *{antigo}* pelo *{novo}*. 👍"
+
+
+def item_removed(name: str) -> str:
+    return f"Tirei o *{name}* do pedido. 👍"
+
+
+def ask_which_to_remove(cart: Cart) -> str:
+    """Mais de um item no carrinho e o cliente não disse qual tirar."""
+    lines = ["Qual deles eu tiro?"]
+    for index, item in enumerate(cart.items, start=1):
+        lines.append(f"{index}. {item.quantity}x {item.product_name}")
+    lines.append("\n_Responda com o número._")
+    return "\n".join(lines)
 
 
 def item_incomplete(product: CatalogProduct, group: CatalogGroup, remaining: int) -> str:
@@ -329,6 +376,16 @@ def final_summary(
     return "\n".join(lines)
 
 
+def ask_confirm_short() -> str:
+    """Relembra a pergunta da confirmação sem repetir o resumo inteiro.
+
+    Reimprimir dez linhas a cada mensagem não entendida vira spam no WhatsApp
+    — e o cliente que perguntou "demora quanto tempo?" não precisa do resumo,
+    precisa saber o que fazer agora.
+    """
+    return "Quando quiser, responda *sim* que eu gero o Pix — ou *não* para ajustar algo."
+
+
 def pix_message(
     *,
     order_code: str,
@@ -391,10 +448,22 @@ def cancelled() -> str:
     return "Tudo bem, cancelei o pedido. 🙂 Quando quiser é só chamar!"
 
 
-def handoff() -> str:
+def handoff(requested: bool = True) -> str:
+    """Aviso de que a conversa passou para uma pessoa.
+
+    `requested=False` é quando o bot desistiu sozinho: dizer "Claro!" a quem
+    não pediu nada soa como resposta a outra pergunta — no teste com cliente
+    simulado o "Claro!" veio colado num erro de sabor e pareceu que o bot
+    estava confirmando que tinha o sabor.
+    """
+    if requested:
+        return (
+            "Claro! Já chamei uma pessoa do time da Mi Piace pra te atender por aqui. 👋\n"
+            "Só um instante."
+        )
     return (
-        "Claro! Já chamei uma pessoa do time da Mi Piace pra te atender por aqui. 👋\n"
-        "Só um instante."
+        "Acho melhor uma pessoa do time te atender daqui pra frente. 👋\n"
+        "Já chamei — só um instante."
     )
 
 

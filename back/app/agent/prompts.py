@@ -21,6 +21,11 @@ _INTENT_DESCRIPTIONS = {
     Intent.ESCOLHER_PRODUTO: "cliente indicou um item do cardápio",
     Intent.ESCOLHER_COMPLEMENTOS: "cliente indicou sabores/adicionais",
     Intent.ADICIONAR_MAIS: "cliente quer acrescentar outro item",
+    Intent.REMOVER_ITEM: (
+        "cliente quer TIRAR algo que já está no pedido, ou reclama que ficou "
+        "errado/duplicado: 'tira o segundo', 'remove o item 1', 'quero só um "
+        "pote', 'esse não era pra estar aí'. NUNCA use escolher_produto aqui"
+    ),
     Intent.FINALIZAR_PEDIDO: "cliente quer fechar o pedido",
     Intent.INFORMAR_ENDERECO: "cliente informou endereço de entrega",
     Intent.INFORMAR_NOME: "cliente informou o próprio nome",
@@ -114,6 +119,17 @@ def tool_schema() -> dict[str, Any]:
                     "additionalProperties": False,
                 },
                 "customer_name": {"type": ["string", "null"]},
+                "fulfillment": {
+                    "type": ["string", "null"],
+                    "enum": ["entrega", "retirada", None],
+                    "description": (
+                        "Preencha SEMPRE que a mensagem disser como o cliente "
+                        "quer receber, mesmo de passagem e mesmo que a "
+                        "intenção principal seja outra: \"quero um pote G, vou "
+                        "buscar aí\" -> intent=escolher_produto e "
+                        "fulfillment=\"retirada\"."
+                    ),
+                },
             },
             # product_name entra como obrigatório (aceitando null) de propósito:
             # sem isso o gpt-4o-mini simplesmente ignorava o campo e "quero um

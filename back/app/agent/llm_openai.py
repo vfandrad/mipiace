@@ -132,6 +132,7 @@ class OpenAILLMClient:
                 quantity=self._quantity(payload.get("quantity")),
                 address=self._address(payload.get("address")),
                 customer_name=payload.get("customer_name") or None,
+                fulfillment=self._fulfillment(payload.get("fulfillment")),
             )
         except Exception:
             logger.exception("input da tool fora do contrato: %r", payload)
@@ -170,6 +171,12 @@ class OpenAILLMClient:
         except ValueError:
             logger.warning("intenção fora do enum: %r", raw)
             return Intent.DESCONHECIDO
+
+    @staticmethod
+    def _fulfillment(raw: Any) -> str | None:
+        """Só "entrega" ou "retirada" passam; o resto é ruído do modelo."""
+        value = str(raw).strip().lower() if raw else ""
+        return value if value in {"entrega", "retirada"} else None
 
     @staticmethod
     def _quantity(raw: Any) -> int | None:

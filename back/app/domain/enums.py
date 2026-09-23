@@ -65,6 +65,7 @@ class Intent(StrEnum):
     ESCOLHER_PRODUTO = "escolher_produto"
     ESCOLHER_COMPLEMENTOS = "escolher_complementos"
     ADICIONAR_MAIS = "adicionar_mais"
+    REMOVER_ITEM = "remover_item"
     FINALIZAR_PEDIDO = "finalizar_pedido"
     INFORMAR_ENDERECO = "informar_endereco"
     INFORMAR_NOME = "informar_nome"

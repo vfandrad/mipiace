@@ -53,6 +53,10 @@ _KEYWORDS: dict[str, Intent] = {
     # Fechar
     "fechar": Intent.FINALIZAR_PEDIDO,
     "finalizar": Intent.FINALIZAR_PEDIDO,
+    # Mais um item ("quero mais um", "mais um pote")
+    "mais": Intent.ADICIONAR_MAIS,
+    # Rever o que já foi pedido ("me mostra o carrinho")
+    "carrinho": Intent.CONSULTAR_STATUS,
     # Sim / não
     "sim": Intent.CONFIRMAR,
     "isso": Intent.CONFIRMAR,
@@ -62,10 +66,29 @@ _KEYWORDS: dict[str, Intent] = {
 }
 
 
+#: Abre pergunta. "quanto fica a entrega?" NÃO é escolher entrega — e antes
+#: desta checagem era: a regra respondia "escolher_entrega", o estado não
+#: esperava isso, virava falha, e três dessas mandavam o cliente para o
+#: atendimento humano por ter feito uma pergunta banal.
+_INTERROGATIVAS = frozenset(
+    {
+        "quanto", "qual", "quais", "como", "onde", "quando", "quem", "porque",
+        "pq", "tem", "teria", "aceita", "aceitam", "voces", "vcs", "da",
+    }
+)
+
+
+def _e_pergunta(text: str, tokens: list[str]) -> bool:
+    return "?" in text or bool(tokens) and tokens[0] in _INTERROGATIVAS
+
+
 def rule_intent(text: str) -> Intent | None:
     """Intenção inequívoca da mensagem, ou None para o LLM decidir."""
     tokens = normalize(text).replace("!", " ").replace("?", " ").replace(",", " ").split()
     if not tokens or len(tokens) > MAX_TOKENS:
+        return None
+
+    if _e_pergunta(text, tokens):
         return None
 
     found = {_KEYWORDS[token] for token in tokens if token in _KEYWORDS}

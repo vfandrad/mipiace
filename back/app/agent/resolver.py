@@ -40,8 +40,22 @@ _STOPWORDS = frozenset(
         "uma", "uns", "umas", "o", "a", "os", "as", "por", "favor", "pfv",
         "me", "ve", "ver", "manda", "pode", "ser", "e", "com", "sabor",
         "sabores", "ai", "pra", "para", "vou", "levar", "no",
+        # Quantidade escrita por extenso. Sem tirar, "dois potes" casava com a
+        # descrição do GG ("Dois potes G") e o cliente que queria dois potes
+        # médios recebia, calado, um pote de R$ 90.
+        "dois", "duas", "tres", "quatro", "cinco", "meia", "meio",
+        # "tem acai?" -> a consulta é "acai"; o resto é a pergunta.
+        "tem", "temos", "voces", "vcs", "queria", "tinha",
     }
 )
+
+
+def clean_query(text: str) -> str:
+    """O trecho do cliente sem o ruído do pedido — para mostrar de volta a ele.
+
+    `Não trabalhamos com "tem acai"` soa quebrado; `... com "acai"` não.
+    """
+    return _clean(text)
 
 
 class MatchStatus(str, Enum):
@@ -96,6 +110,15 @@ def _score(query: str, name: str) -> float:
     return SequenceMatcher(None, query, name).ratio()
 
 
+def _singular(text: str) -> str:
+    """Tira o plural simples das palavras ("potes" -> "pote").
+
+    Só é usada como busca ADICIONAL, nunca no lugar do texto original: um
+    sabor chamado "Frutas vermelhas" precisa continuar casando no exato.
+    """
+    return " ".join(t[:-1] if len(t) >= 4 and t.endswith("s") else t for t in text.split())
+
+
 def _terms(text: str) -> list[str]:
     """Quebra um nome em pedaços casáveis: "G - 500ml" -> ["g", "500ml"]."""
     return [t for t in re.split(r"[^a-z0-9]+", text) if t]
@@ -138,7 +161,14 @@ def _match_names(query: str, items: Sequence[T]) -> list[T]:
         return substring
 
     # 4) o texto do cliente aparece na descrição ("pote grande", "pote g").
-    in_description = [item for item, _, desc in pairs if desc and cleaned in desc]
+    #    O singular entra junto de propósito: "dois potes" casava só com a
+    #    descrição do GG ("Dois potes G") e o cliente que queria dois potes
+    #    médios levava um de R$ 90 sem ser perguntado. Com "pote" na busca, os
+    #    três tamanhos entram como candidatos e a máquina pergunta qual é.
+    buscas = {cleaned, _singular(cleaned)}
+    in_description = [
+        item for item, _, desc in pairs if desc and any(b in desc for b in buscas)
+    ]
     if in_description:
         return in_description
 
@@ -148,12 +178,14 @@ def _match_names(query: str, items: Sequence[T]) -> list[T]:
     if not scored:
         # última tentativa: casar palavra a palavra
         # ("morango" dentro de "Sorvete de Morango").
+        # Singular dos dois lados: "2 potes" tem que alcançar os três tamanhos
+        # (e virar pergunta), não só o GG, cuja descrição fala em "potes".
         token_hits = [
             item
             for item, name, desc in pairs
             if any(
-                tok in _terms(name) or tok in _terms(desc)
-                for tok in cleaned.split()
+                tok in _terms(_singular(name)) or tok in _terms(_singular(desc))
+                for tok in _singular(cleaned).split()
                 if len(tok) >= 4
             )
         ]
