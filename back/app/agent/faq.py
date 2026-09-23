@@ -5,15 +5,19 @@ aceitam cartão?", "quanto fica a entrega?", "tem sorvete sem açúcar?", "que
 horas vocês abrem?" — e as quatro ouviram "não entendi". Uma delas foi parar no
 atendimento humano por causa disso.
 
-O princípio aqui é estreito de propósito: **só responde o que o sistema sabe
-de verdade**. Forma de pagamento e taxa de entrega são fato do sistema (Pix,
-`DELIVERY_FEE`); preço e disponibilidade saem do catálogo do dia. O que o
-sistema não conhece — horário, área de entrega, endereço da loja — só é
-respondido se o lojista tiver configurado; senão o bot admite que não sabe e
-oferece uma pessoa. Inventar horário de loja é pior do que não responder.
+Duas regras governam este módulo:
 
-Quem classifica a pergunta é a IA (`question_topic`); quem responde é este
-módulo, com dado real. A IA nunca é a autoridade sobre preço ou taxa.
+1. **Só responde o que o sistema sabe de verdade.** Forma de pagamento e taxa
+   de entrega são fato do sistema (Pix, `DELIVERY_FEE`); preço e
+   disponibilidade saem do catálogo do dia. Horário, endereço da loja e área
+   de entrega só são respondidos se o lojista tiver configurado (`STORE_*`);
+   senão o bot admite que não sabe. Inventar horário de loja é pior do que
+   não responder.
+2. **O assunto que a IA classificou é palpite; o texto do cliente é prova.**
+   O modelo classificou "qual a forma de pagamento?" como `horario` e
+   "aceitam cartão?" como `outro`, e o cliente ouviu "não sei responder" sobre
+   a única forma de pagamento que o sistema tem. Quando a pergunta diz
+   claramente do que se trata, é o texto que manda.
 """
 
 from __future__ import annotations
@@ -24,6 +28,29 @@ from typing import Any
 from app.agent import renderer as r
 from app.domain.cart import Cart
 from app.domain.catalog import CatalogSnapshot, normalize
+
+#: Palavras que identificam o assunto sem margem para dúvida. É o contrário de
+#: depender de palavra-chave para ENTENDER o cliente: aqui a IA já entendeu que
+#: é uma pergunta, e isto só conserta a etiqueta errada que ela colou nela.
+_PISTAS = {
+    "pagamento": (
+        "pagamento", "pagar", "pix", "cartao", "credito", "debito",
+        "dinheiro", "especie", "maquininha", "vale refeicao", "vr",
+    ),
+    "taxa_entrega": ("taxa", "frete", "entrega custa", "cobra pra entregar"),
+    "prazo": ("demora", "quanto tempo", "prazo", "chega que horas", "leva quanto"),
+    "horario": ("horario", "que horas", "abre", "fecha", "aberto", "funciona ate"),
+    "endereco_loja": ("onde fica", "endereco da loja", "endereco de voces", "fica onde"),
+    "area_entrega": ("entregam em", "entrega em", "atendem o", "chega no bairro"),
+}
+
+
+def _assunto(topic: str | None, texto: str) -> str | None:
+    """O assunto da pergunta: o texto tem a palavra final sobre o palpite da IA."""
+    for assunto, pistas in _PISTAS.items():
+        if any(pista in texto for pista in pistas):
+            return assunto
+    return topic
 
 
 def answer(
@@ -36,41 +63,81 @@ def answer(
     cart: Cart | None = None,
 ) -> str:
     """Resposta para a pergunta do cliente. Nunca devolve vazio."""
-    texto = normalize(question or "")
+    texto = normalize(f"{question or ''} {raw_text or ''}")
+    assunto = _assunto(topic, texto)
 
-    if topic == "pagamento":
-        return (
-            "O pagamento é no *Pix* 💳\n"
-            "Quando fechar o pedido eu já mando o código para copiar e colar."
-        )
+    if assunto == "pagamento":
+        return _pagamento(texto)
 
-    if topic == "taxa_entrega":
+    if assunto == "taxa_entrega":
         taxa: Decimal = settings.delivery_fee
         return (
             f"A taxa de entrega é *{r.money(taxa)}*, fixa para toda a região que "
             "atendemos.\nSe preferir retirar na loja, não tem taxa. 🛵🏠"
         )
 
-    if topic == "preco":
+    if assunto == "preco":
         return _precos(catalog, texto)
 
-    if topic in {"restricao", "disponibilidade"}:
+    if assunto in {"restricao", "disponibilidade"}:
         return _tem_isso(catalog, raw_text or question)
 
-    if topic == "prazo":
+    if assunto == "prazo":
+        prazo = _config(settings, "store_delivery_estimate")
+        if prazo:
+            return (
+                f"A entrega costuma levar *{prazo}* depois que o Pix cai. 🛵\n"
+                "Nos dias de movimento pode variar um pouco."
+            )
         return (
             "Assim que o Pix cai a gente já começa a montar. 🍨\n"
             "O tempo exato depende do movimento — se quiser, eu chamo alguém do "
             "time pra te dar uma previsão certinha."
         )
 
-    if topic in {"horario", "area_entrega", "endereco_loja"}:
-        return _nao_sei(topic)
+    if assunto == "horario":
+        return _configurado_ou_nao(_config(settings, "store_hours"), "horario",
+                                   "A gente atende *{}*. 😊")
+
+    if assunto == "endereco_loja":
+        return _configurado_ou_nao(_config(settings, "store_address"), "endereco_loja",
+                                   "A loja fica em *{}*. 📍")
+
+    if assunto == "area_entrega":
+        return _configurado_ou_nao(_config(settings, "store_delivery_area"), "area_entrega",
+                                   "A gente entrega em *{}*. 🛵")
 
     return (
         "Essa eu não sei responder com certeza. 🙈 "
         "Quer que eu chame alguém do time pra te ajudar?"
     )
+
+
+def _config(settings: Any, campo: str) -> str:
+    return (getattr(settings, campo, None) or "").strip()
+
+
+def _configurado_ou_nao(valor: str, topic: str, molde: str) -> str:
+    return molde.format(valor) if valor else _nao_sei(topic)
+
+
+def _pagamento(texto: str) -> str:
+    """Pix é o único meio que o sistema tem — e dizer isso é melhor que 'não sei'."""
+    outro_meio = any(
+        p in texto
+        for p in ("cartao", "credito", "debito", "dinheiro", "especie", "maquininha", "vr")
+    )
+    base = (
+        "Por aqui o pagamento é no *Pix* 💳\n"
+        "Quando fechar o pedido eu já mando o código para copiar e colar."
+    )
+    if outro_meio:
+        return (
+            "Pelo WhatsApp eu só consigo fechar no *Pix* 💳\n"
+            "Mando o código na hora de fechar. Para outra forma de pagamento, "
+            "posso chamar alguém do time. 😊"
+        )
+    return base
 
 
 def _nao_sei(topic: str) -> str:
@@ -106,10 +173,12 @@ def _precos(catalog: CatalogSnapshot, texto: str) -> str:
 
 
 def _tem_isso(catalog: CatalogSnapshot, procurado: str) -> str:
-    """"tem sem açúcar?", "tem açaí?" — a resposta está no cardápio do dia.
+    """"tem sem açúcar?", "tem açaí?", "tem sem lactose?" — a resposta é o cardápio.
 
     Os sabores mudam todo dia; procurar no catálogo é o único jeito de a
-    resposta continuar verdadeira amanhã.
+    resposta continuar verdadeira amanhã. A busca por CATEGORIA existe porque
+    "tem sabor sem lactose?" não casa com nome nenhum — "Sem lactose" é o nome
+    da categoria, e é ela que responde a pergunta.
     """
     alvo = normalize(procurado or "").strip()
     if not alvo:
@@ -122,6 +191,17 @@ def _tem_isso(catalog: CatalogSnapshot, procurado: str) -> str:
         for c in g.available_complements
     }
 
+    # 1. Categoria ("sem lactose", "com lactose", "vegano"...).
+    categorias: dict[str, list[str]] = {}
+    for nome, c in sabores.items():
+        if c.category:
+            categorias.setdefault(c.category, []).append(nome)
+    for categoria, nomes in categorias.items():
+        chave = normalize(categoria)
+        if chave in alvo or alvo in chave:
+            return f"Temos sim! *{categoria}*: " + ", ".join(nomes) + ". 😊"
+
+    # 2. Sabor pelo nome.
     achados = [nome for nome in sabores if alvo in normalize(nome)]
     if not achados:
         # Talvez seja um produto, não um sabor.

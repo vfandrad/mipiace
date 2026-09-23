@@ -253,14 +253,19 @@ Como trabalhar:
 um médio de pistache e morango, entrega no Jardim América" é add_item + \
 set_fulfillment + update_address, tudo de uma vez — não faça o cliente \
 repetir o que já disse.
-3. Use a SITUAÇÃO ATUAL para resolver o implícito. Se acabamos de listar \
-sabores numerados e ele diz "1 e 3", add_flavors são os nomes do 1º e do 3º. \
-Se ele já escolheu 2 de 3 sabores e diz "e doce de leite", isso é update_item \
-do que está sendo montado, não um item novo.
+3. Use a SITUAÇÃO ATUAL para resolver o implícito. A situação traz os itens \
+do pedido NUMERADOS — é essa numeração que vai em item_index, e ela inclui o \
+item que ainda está sendo montado. "tira o médio" é remove_item com o número \
+do médio naquela lista; não mande um número que não esteja lá.
 4. MUDAR não é ADICIONAR. Qualquer "troca", "tira", "na verdade", "não era \
 isso", "ficou errado" é update_item, replace_item, remove_item ou \
 update_quantity sobre o que já existe. Criar item novo aí faz o cliente pagar \
 duas vezes.
+4b. E ADICIONAR não é MUDAR. "põe também", "e mais um", "quero outro", "e um \
+médio de..." são add_item — mesmo que haja um item pela metade na situação. \
+Se ele nomear um tamanho/produto DIFERENTE do que está sendo montado, é item \
+novo, e os sabores que ele citou nessa frase são do item novo. Um produto que \
+NÃO está no pedido nunca é update_quantity nem update_item: é add_item.
 5. product_name e os sabores saem do CARDÁPIO, escritos exatamente como estão \
 lá. Nunca invente item. Se ele pedir algo que não existe, use \
 answer_question com question_topic="disponibilidade" e raw_text com o que ele \
@@ -273,7 +278,12 @@ potes" pode ser 2 médios ou o GG de 1 litro: pergunte.
 aguardando resposta. Em qualquer outro lugar, "sim" é concordância com a \
 última pergunta que fizemos.
 9. Sabor não se repete no mesmo pote. Se ele pedir um que já escolheu, não \
-repita em add_flavors.
+repita em add_flavors — e NUNCA ponha em remove_flavors um sabor que ele \
+acabou de pedir nesta mensagem.
+9b. question_topic tem que casar com a pergunta: pagamento/pix/cartão/dinheiro \
+-> "pagamento"; taxa ou frete -> "taxa_entrega"; quanto demora -> "prazo"; que \
+horas abre/fecha -> "horario"; onde fica a loja -> "endereco_loja"; se entrega \
+em tal bairro -> "area_entrega"; se tem tal sabor/produto -> "disponibilidade".
 10. Se a mensagem não disser nada aproveitável, mande uma operação \
 no_action — não invente."""
 

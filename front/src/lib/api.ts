@@ -11,6 +11,7 @@ import type {
   Complement,
   ComplementGroup,
   ComplementInput,
+  FlavorCategoryInput,
   FlavorCategory,
   GroupInput,
   Product,
@@ -196,10 +197,34 @@ export function deleteProduct(id: string): Promise<void> {
   return request<void>(`/api/products/${id}`, { method: 'DELETE' });
 }
 
-/** Categorias de sabor ("Sem lactose" / "Com lactose"). Lista fixa e curta. */
+/**
+ * Categorias de sabor ("Sem lactose", "Frutados"...).
+ *
+ * São dado do lojista, não constante do sistema: cada loja agrupa o cardápio
+ * do seu jeito, e é por essas categorias que o agente responde "tem sabor sem
+ * lactose?" e monta o cardápio que manda no WhatsApp.
+ */
 export async function fetchFlavorCategories(): Promise<FlavorCategory[]> {
   const data = await request<FlavorCategory[]>('/api/flavor-categories');
   return unwrapList<FlavorCategory>(data, 'flavor_categories');
+}
+
+export function createFlavorCategory(data: FlavorCategoryInput): Promise<FlavorCategory> {
+  return request<FlavorCategory>('/api/flavor-categories', { method: 'POST', body: data });
+}
+
+export function updateFlavorCategory(
+  id: string,
+  data: Partial<FlavorCategoryInput>,
+): Promise<FlavorCategory> {
+  return request<FlavorCategory>(`/api/flavor-categories/${id}`, {
+    method: 'PATCH',
+    body: data,
+  });
+}
+
+export function deleteFlavorCategory(id: string): Promise<void> {
+  return request<void>(`/api/flavor-categories/${id}`, { method: 'DELETE' });
 }
 
 export function createGroup(productId: string, data: GroupInput): Promise<ComplementGroup> {

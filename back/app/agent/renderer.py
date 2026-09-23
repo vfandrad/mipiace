@@ -97,9 +97,13 @@ def menu(catalog: CatalogSnapshot) -> str:
     conjuntos = {frozenset(f.name for f in v) for v in por_produto.values() if v}
     sabores_iguais = len(conjuntos) == 1
 
+    # Sem numeração: o cliente pede pelo nome ("o grande", "um médio"), e uma
+    # lista numerada convida a responder "2" — que é justamente a muleta que
+    # este agente não deveria precisar. A ordem continua existindo para quem
+    # responder assim mesmo; ela só não é mais a interface.
     linhas = [f"🍨 *{LOJA}* — cardápio de hoje", ""]
-    for index, product in enumerate(products, start=1):
-        linhas.append(f"{index}. *{product.name}* — {money(product.base_price)}")
+    for product in products:
+        linhas.append(f"• *{product.name}* — {money(product.base_price)}")
         if product.description:
             linhas.append(f"   _{product.description}_")
         if not sabores_iguais and por_produto[product.name]:
@@ -161,21 +165,30 @@ def ask_clarification() -> str:
 # ---------------------------------------------------------------------------
 
 def ask_flavors(
-    product: CatalogProduct, group: CatalogGroup, chosen: Sequence[str] = ()
+    product: CatalogProduct,
+    group: CatalogGroup,
+    chosen: Sequence[str] = (),
+    *,
+    posicao: int | None = None,
 ) -> str:
-    """A pergunta dos sabores: o que falta, e as opções numa mensagem."""
+    """A pergunta dos sabores: o que falta, e as opções numa mensagem.
+
+    `posicao` só é usada quando o pedido tem mais de um item: aí o cliente
+    precisa saber de qual deles estamos falando.
+    """
+    de_qual = f" do item {posicao}" if posicao else ""
     faltam = max(group.min_choices - len(chosen), 0)
     disponiveis = [c for c in group.available_complements if c.name not in chosen]
 
     if chosen:
         cabeca = (
-            f"Anotei: *{', '.join(chosen)}*. "
+            f"Anotei{de_qual}: *{', '.join(chosen)}*. "
             + (f"Falta {faltam} sabor. 😉" if faltam == 1 else f"Faltam {faltam}. 😉")
         )
     else:
         quantos = group.min_choices
         cabeca = (
-            f"Fechado, *{product.name}*! "
+            f"Fechado, *{product.name}*{de_qual}! "
             + (
                 "Me diz o sabor. 😋"
                 if quantos == 1
@@ -200,6 +213,13 @@ def resume_flavors(
     return (
         f"Voltando: no seu *{product.name}* já tenho *{', '.join(chosen)}*. "
         + ("Falta 1 sabor." if faltam == 1 else f"Faltam {faltam} sabores.")
+    )
+
+
+def missing_before_closing(product: CatalogProduct) -> str:
+    """Ele pediu para fechar e falta escolher sabor — diga isso, não repita a pergunta."""
+    return (
+        f"Fecho já — só falta escolher os sabores do seu *{product.name}*. 😊"
     )
 
 
@@ -231,8 +251,10 @@ def item_has_no_flavors(name: str) -> str:
 # Carrinho
 # ---------------------------------------------------------------------------
 
-def _item_line(index: int, item: CartItem) -> str:
+def _item_line(index: int, item: CartItem, *, montando: bool = False) -> str:
     line = f"{index}. {item.quantity}x *{item.product_name}* — {money(item.line_total)}"
+    if montando:
+        line += "  _(montando)_"
     if item.complements:
         line += "\n   " + ", ".join(c.name for c in item.complements)
     if item.details:
@@ -240,12 +262,19 @@ def _item_line(index: int, item: CartItem) -> str:
     return line
 
 
-def cart_summary(cart: Cart) -> str:
+def cart_summary(cart: Cart, *, pending: int | None = None) -> str:
+    """O pedido como o cliente vê — inclusive o item que ainda falta fechar.
+
+    `pending` é o índice (base 0) do item em montagem. Ele aparece na lista
+    com a mesma numeração que a IA recebe: um item, um número, para todo
+    mundo. Antes o item em montagem ficava fora do carrinho, e o cliente
+    dizia "tira o médio" olhando para uma lista que o sistema não tinha.
+    """
     if cart.is_empty:
         return cart_empty()
     linhas = ["*Seu pedido*"]
     for index, item in enumerate(cart.items, start=1):
-        linhas.append(_item_line(index, item))
+        linhas.append(_item_line(index, item, montando=pending == index - 1))
     linhas.append(f"\nSubtotal: *{money(cart.subtotal)}*")
     return "\n".join(linhas)
 
@@ -276,14 +305,22 @@ def product_switched(antigo: str, novo: str) -> str:
     return f"Sem problema — troquei o *{antigo}* pelo *{novo}*. 👍"
 
 
-def ask_more_or_close(cart: Cart) -> str:
-    return f"{cart_summary(cart)}\n\nQuer mais alguma coisa ou já posso fechar?"
+def ask_more_short() -> str:
+    """A pergunta sozinha, para quando o carrinho já está na tela."""
+    return "Quer mais alguma coisa ou já posso fechar? 😊"
 
 
-def total_reply(cart: Cart, delivery_fee: Decimal, *, is_pickup: bool) -> str:
+def ask_more_or_close(cart: Cart, *, pending: int | None = None) -> str:
+    resumo = cart_summary(cart, pending=pending)
+    return f"{resumo}\n\nQuer mais alguma coisa ou já posso fechar?"
+
+
+def total_reply(
+    cart: Cart, delivery_fee: Decimal, *, is_pickup: bool, pending: int | None = None
+) -> str:
     """Quanto deu — com a taxa calculada pelo backend, nunca pela IA."""
     total = cart.total(Decimal("0") if is_pickup else delivery_fee)
-    linhas = [cart_summary(cart), ""]
+    linhas = [cart_summary(cart, pending=pending), ""]
     if is_pickup:
         linhas.append("Retirada na loja — sem taxa.")
     elif delivery_fee > 0:
@@ -301,6 +338,22 @@ _FIELD_LABELS = {
     "numero": "o número",
     "bairro": "o bairro",
 }
+
+
+def fulfillment_set(kind: Any) -> str:
+    """O bot diz que anotou a forma de entrega.
+
+    Anotar calado fazia o cliente repetir: ele dizia "quero entrega", recebia
+    o resumo do carrinho de volta e achava que a mensagem tinha se perdido.
+    """
+    if getattr(kind, "value", kind) == "retirada":
+        return "Beleza, *retirada na loja* — sem taxa de entrega. 🏠"
+    return "Anotado: *entrega*. 🛵"
+
+
+def address_saved(address: dict[str, Any], *, novo_para_entrega: bool = False) -> str:
+    inicio = "Perfeito, vou entregar em" if novo_para_entrega else "Endereço anotado"
+    return "\n".join([f"{inicio}:", format_address(address)])
 
 
 def ask_fulfillment() -> str:

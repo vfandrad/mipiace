@@ -158,3 +158,70 @@ def test_health_nao_exige_chave(client):
     resposta = client.get("/health")
     assert resposta.status_code == 200
     assert resposta.json()["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Categorias de sabor
+# ---------------------------------------------------------------------------
+# O painel precisa conseguir criar e editar as categorias: elas aparecem no
+# cadastro do sabor e agrupam o cardápio que o agente manda, mas até aqui só
+# existiam no seed — quem cadastrasse um produto novo não tinha onde criá-las.
+
+def _categoria(name: str = "Sem lactose") -> SimpleNamespace:
+    return SimpleNamespace(id=uuid4(), name=name, sort_order=1)
+
+
+def test_cria_categoria_de_sabor(client, api_key, monkeypatch, fake_session):
+    recebido = {}
+
+    async def _create(session, data):
+        recebido.update(data)
+        return _categoria(data["name"])
+
+    monkeypatch.setattr(catalog_service, "create_flavor_category", _create)
+
+    resposta = client.post(
+        "/api/flavor-categories",
+        headers={"X-API-Key": api_key},
+        json={"name": "  Frutados  ", "sort_order": 2},
+    )
+    assert resposta.status_code == 201
+    assert recebido["name"] == "Frutados"     # normalizado pelo schema
+    assert fake_session.committed == 1
+
+
+def test_edita_categoria_de_sabor(client, api_key, monkeypatch, fake_session):
+    categoria = _categoria()
+
+    async def _get(session, category_id):
+        return categoria
+
+    async def _update(session, item, data):
+        for campo, valor in data.items():
+            setattr(item, campo, valor)
+        return item
+
+    monkeypatch.setattr(catalog_service, "get_flavor_category", _get)
+    monkeypatch.setattr(catalog_service, "update_item", _update)
+
+    resposta = client.patch(
+        f"/api/flavor-categories/{categoria.id}",
+        headers={"X-API-Key": api_key},
+        json={"name": "Zero lactose"},
+    )
+    assert resposta.status_code == 200
+    assert resposta.json()["name"] == "Zero lactose"
+
+
+def test_categoria_inexistente_da_404(client, api_key, monkeypatch):
+    async def _get(session, category_id):
+        return None
+
+    monkeypatch.setattr(catalog_service, "get_flavor_category", _get)
+
+    resposta = client.patch(
+        f"/api/flavor-categories/{uuid4()}",
+        headers={"X-API-Key": api_key},
+        json={"name": "Nada"},
+    )
+    assert resposta.status_code == 404

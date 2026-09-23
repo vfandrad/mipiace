@@ -68,6 +68,11 @@ export interface GroupInput {
   is_required: boolean;
 }
 
+export interface FlavorCategoryInput {
+  name: string;
+  sort_order?: number;
+}
+
 export interface ComplementInput {
   name: string;
   extra_price: number;
@@ -76,4 +81,4 @@ export interface ComplementInput {
 }
 
 /** Tipo de entidade do catálogo — usado nas rotas genéricas de PATCH/DELETE. */
-export type CatalogEntity = 'product' | 'group' | 'complement';
+export type CatalogEntity = 'product' | 'group' | 'complement' | 'flavorCategory';

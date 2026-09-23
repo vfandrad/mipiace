@@ -44,6 +44,8 @@ _RETIRADA = ("retirada", "retirar", "buscar", "passo ai", "vou ai")
 _ENTREGA = ("entrega", "entregar", "delivery", "manda aqui", "em casa")
 _REMOVER = ("tira", "tirar", "remove", "remover", "apaga", "apagar", "sem o")
 _PERGUNTA = ("?", "quanto custa", "voces tem", "vcs tem", "tem ", "que horas", "aceita")
+#: Marcas de correção — o cliente está consertando o que já pediu.
+_CORRIGE = ("na verdade", "muda", "mudar", "troca", "trocar", "queria", "era pra ser")
 
 
 def _tem(texto: str, termos: Sequence[str]) -> bool:
@@ -233,7 +235,8 @@ class FakeLLMClient:
         message: str, texto: str, catalog: CatalogSnapshot, situation: str
     ) -> Operation | None:
         """Produto e/ou sabores citados na mensagem."""
-        montando = "montando agora" in normalize(situation)
+        montando = "em montagem" in normalize(situation)
+        corrigindo = _tem(texto, _CORRIGE)
 
         # Sabores primeiro: durante a montagem é o que o cliente costuma dizer.
         sabores: list[str] = []
@@ -252,8 +255,13 @@ class FakeLLMClient:
 
         produto = resolve_product(message, catalog)
         if produto.ok:
+            # "na verdade eu queria o de 240ml" no meio da montagem é TROCAR o
+            # tamanho do item que está aberto, não começar outro pote.
+            action = (
+                Action.REPLACE_ITEM if (montando and corrigindo) else Action.ADD_ITEM
+            )
             return Operation(
-                action=Action.ADD_ITEM,
+                action=action,
                 product_name=produto.product.name,
                 add_flavors=sabores,
                 quantity=FakeLLMClient._quantity(texto),

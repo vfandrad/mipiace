@@ -174,7 +174,7 @@ mais `ATENDIMENTO_HUMANO` e `CANCELADO`.
 
 Eram dez: havia um estado para cada etapa do diálogo (saudação, escolhendo
 produto, personalizando item, revisando carrinho, coletando endereço). A etapa
-já estava nos `slots` — tem rascunho? o carrinho está vazio? falta endereço? —
+já estava no pedido — falta escolher sabor? falta endereço? —
 e ter as duas coisas fazia o agente brigar consigo mesmo: o cliente falava de
 sabor num estado que só aceitava produto e ouvia "não entendi".
 
@@ -186,12 +186,22 @@ concordado. Resposta morna ("pode ser") não passa: o executor pergunta de novo.
 Conversas gravadas com os nomes antigos continuam abrindo (`parse_state` em
 `domain/enums.py`).
 
-### O rascunho do item
+### O item em montagem
 
-O item em construção vive em `slots["draft"]` e é **mutável**: "pote médio" →
-"pistache" → "não, troca por chocolate" → "na verdade quero o grande" mexem
-todos no mesmo objeto. Ele só vira item do carrinho quando está completo, e é
-por isso que nada entra no pedido pela metade.
+Um pedido é **uma lista só**. O item que ainda está sendo montado (faltam
+sabores) fica no carrinho como qualquer outro, com o mesmo número que o
+cliente vê, e é mutável: "pote médio" → "pistache" → "não, troca por
+chocolate" → "na verdade quero o grande" mexem todos no mesmo item.
+
+Isso já foi diferente, e o motivo da mudança vale registro. O item em
+construção morava fora do carrinho, num rascunho. O cliente enxergava dois
+itens; a IA recebia um numerado e outro não. Quando ele disse "tira o médio",
+a operação chegou como `item_index=1` — o número do pote grande — e o executor
+apagou o pedido inteiro. Um item, um número, para todo mundo.
+
+Nenhum pedido fecha com item em montagem: o checkout pergunta o sabor que
+falta antes de qualquer resumo, e a confirmação não gera Pix enquanto houver
+item pela metade.
 
 ---
 

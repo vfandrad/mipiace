@@ -13,11 +13,13 @@ interface Props {
   open: boolean;
   name: string;
   cascadeWarning?: boolean;
+  /** Nuance do caso específico — ex.: excluir categoria não apaga sabor. */
+  usageNote?: string;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;
 }
 
-export const DeleteConfirmDialog = ({ open, name, cascadeWarning, onOpenChange, onConfirm }: Props) => (
+export const DeleteConfirmDialog = ({ open, name, cascadeWarning, usageNote, onOpenChange, onConfirm }: Props) => (
   <AlertDialog open={open} onOpenChange={onOpenChange}>
     <AlertDialogContent>
       <AlertDialogHeader>
@@ -28,6 +30,11 @@ export const DeleteConfirmDialog = ({ open, name, cascadeWarning, onOpenChange, 
             : <>O item <strong>"{name}"</strong> será removido permanentemente. Esta ação não pode ser desfeita.</>
           }
         </AlertDialogDescription>
+        {usageNote && (
+          <AlertDialogDescription className="text-muted-foreground">
+            {usageNote}
+          </AlertDialogDescription>
+        )}
       </AlertDialogHeader>
       <AlertDialogFooter>
         <AlertDialogCancel>Cancelar</AlertDialogCancel>

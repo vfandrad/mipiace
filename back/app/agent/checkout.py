@@ -163,6 +163,8 @@ async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str
     session.active_order_id = order_id
     session.cart.items.clear()
     session.slots.pop("pending_order_id", None)
+    # "draft" é de conversas abertas na versão anterior do executor; some junto
+    # para a próxima conversa desse cliente começar limpa.
     session.slots.pop("draft", None)
     session.slots.pop("closing", None)
     session.slots.pop("awaiting_confirm", None)

@@ -18,13 +18,14 @@ import { Input } from '@/components/ui/input';
 import { EmptyState, QueryError } from '@/components/common/QueryState';
 import { useProducts } from '@/hooks/use-products';
 import { formatCurrency } from '@/lib/format';
-import type { CatalogEntity, Complement, Product } from '@/types/catalog';
+import type { CatalogEntity } from '@/types/catalog';
 import { ProductsHeader } from '@/components/produtos/ProductsHeader';
 import { GroupCard } from '@/components/produtos/GroupCard';
 import { CreateProductDialog } from '@/components/produtos/CreateProductDialog';
 import { CreateGroupDialog } from '@/components/produtos/CreateGroupDialog';
 import { CreateComplementDialog } from '@/components/produtos/CreateComplementDialog';
-import { EditItemSheet } from '@/components/produtos/EditItemSheet';
+import { EditItemSheet, type EditTarget } from '@/components/produtos/EditItemSheet';
+import { FlavorCategoriesDialog } from '@/components/produtos/FlavorCategoriesDialog';
 import { DeleteConfirmDialog } from '@/components/produtos/DeleteConfirmDialog';
 
 const Produtos = () => {
@@ -38,15 +39,14 @@ const Produtos = () => {
   const [showNewProduct, setShowNewProduct] = useState(false);
   const [newGroupProduct, setNewGroupProduct] = useState<{ id: string; name: string } | null>(null);
   const [newComplementGroupId, setNewComplementGroupId] = useState<string | null>(null);
-  const [editTarget, setEditTarget] = useState<{
-    type: 'product' | 'complement';
-    item: Product | Complement;
-  } | null>(null);
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
+  const [showCategories, setShowCategories] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{
     entity: CatalogEntity;
     id: string;
     name: string;
     cascadeWarning?: boolean;
+    usageNote?: string;
   } | null>(null);
 
   // Buscar sabor pelo nome. São 31 por tamanho, repetidos nos três tamanhos:
@@ -73,6 +73,20 @@ const Produtos = () => {
           product.groups.length > 0 || product.name.toLowerCase().includes(termo),
       );
   }, [products, termo]);
+
+  // Quantos sabores usam cada categoria — o diálogo avisa antes de excluir.
+  const usoDasCategorias = useMemo(() => {
+    const contagem: Record<string, number> = {};
+    for (const product of products) {
+      for (const group of product.groups) {
+        for (const complement of group.complements) {
+          const id = complement.flavor_category_id;
+          if (id) contagem[id] = (contagem[id] ?? 0) + 1;
+        }
+      }
+    }
+    return contagem;
+  }, [products]);
 
   const alternarSelecao = (id: string) =>
     setSelecionados((atual) => {
@@ -111,6 +125,7 @@ const Produtos = () => {
       <main className="container py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] space-y-6">
         <ProductsHeader
           onNewProduct={() => setShowNewProduct(true)}
+          onManageCategories={() => setShowCategories(true)}
           onRefresh={() => catalog.refetch()}
         />
 
@@ -232,6 +247,7 @@ const Produtos = () => {
                           name: complement.name,
                         })
                       }
+                      onEditGroup={() => setEditTarget({ type: 'group', item: group })}
                       onDeleteGroup={() =>
                         setDeleteTarget({
                           entity: 'group',
@@ -321,6 +337,26 @@ const Produtos = () => {
           flavorCategories={flavorCategories}
           onCreate={catalog.createComplement}
         />
+        <FlavorCategoriesDialog
+          open={showCategories}
+          onOpenChange={setShowCategories}
+          categories={flavorCategories}
+          usageByCategory={usoDasCategorias}
+          onCreate={catalog.createFlavorCategory}
+          onRename={(id, data) => catalog.editItem('flavorCategory', id, data)}
+          onDelete={(id, name, usage) =>
+            setDeleteTarget({
+              entity: 'flavorCategory',
+              id,
+              name,
+              // Excluir categoria não apaga sabor: o vínculo vira nulo.
+              usageNote:
+                usage > 0
+                  ? `${usage} ${usage === 1 ? 'sabor perde' : 'sabores perdem'} o agrupamento, mas continuam no cardápio.`
+                  : undefined,
+            })
+          }
+        />
         <EditItemSheet
           editTarget={editTarget}
           flavorCategories={flavorCategories}
@@ -331,6 +367,7 @@ const Produtos = () => {
           open={!!deleteTarget}
           name={deleteTarget?.name ?? ''}
           cascadeWarning={deleteTarget?.cascadeWarning}
+          usageNote={deleteTarget?.usageNote}
           onOpenChange={(open) => !open && setDeleteTarget(null)}
           onConfirm={handleDelete}
         />

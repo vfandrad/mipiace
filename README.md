@@ -109,7 +109,7 @@ curl -X POST localhost:8000/api/simulator/payments/SEU_ORDER_ID/approve \
 ## Testes
 
 ```bash
-cd back  && pytest          # 168 testes
+cd back  && pytest          # 188 testes
 cd front && npm run test    # 40 testes
 cd front && npm run lint    # eslint
 ```
@@ -187,9 +187,13 @@ A IA nunca inventa produto, preço, taxa ou disponibilidade, e nunca cobra.
      • CANCELADO — o cliente desiste ou o Pix expira.
 ```
 
-A etapa do diálogo não é estado: está nos dados do pedido (tem rascunho? falta
-endereço?). Isso é o que deixa o cliente perguntar o horário no meio da
-escolha de sabores sem perder nada.
+A etapa do diálogo não é estado: está nos dados do pedido (falta escolher
+sabor? falta endereço?). Isso é o que deixa o cliente perguntar o horário no
+meio da escolha de sabores sem perder nada.
+
+O item que ainda está sendo montado fica no pedido como qualquer outro, com o
+mesmo número que o cliente vê na tela — é o que faz "tira o médio" acertar o
+médio quando existem dois itens em jogo.
 
 A única transição que existe para proteger alguém é a do meio: **não se cobra
 quem não viu o resumo com o total e concordou**.

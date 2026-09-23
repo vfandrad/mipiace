@@ -39,6 +39,7 @@ interface Props {
   onToggleComplement: (complement: Complement) => void;
   onEditComplement: (complement: Complement) => void;
   onDeleteComplement: (complement: Complement) => void;
+  onEditGroup: () => void;
   onDeleteGroup: () => void;
   onAddComplement: () => void;
 }
@@ -62,6 +63,7 @@ export const GroupCard = ({
   onToggleComplement,
   onEditComplement,
   onDeleteComplement,
+  onEditGroup,
   onDeleteGroup,
   onAddComplement,
 }: Props) => {
@@ -198,6 +200,13 @@ export const GroupCard = ({
             <Button variant="outline" size="sm" className="min-h-11 sm:min-h-9" onClick={onAddComplement}>
               <Plus className="mr-2 h-4 w-4" />
               Adicionar item
+            </Button>
+            {/* Editar a categoria mexe nas regras de escolha (obrigatória?
+                quantos sabores?). Sem isto, mudar "escolha 2" para "escolha 3"
+                exigia excluir a categoria e recadastrar os sabores todos. */}
+            <Button variant="ghost" size="sm" className="min-h-11 sm:min-h-9" onClick={onEditGroup}>
+              <Pencil className="mr-2 h-4 w-4" />
+              Editar categoria
             </Button>
             <Button
               variant="ghost"

@@ -183,13 +183,16 @@ async def test_item_sem_sabor_obrigatorio_entra_direto() -> None:
 
 
 @pytest.mark.asyncio
-async def test_item_com_sabores_vira_rascunho_ate_completar() -> None:
+async def test_item_com_sabores_fica_em_montagem_ate_completar() -> None:
     deps, session = build_deps(), build_session()
 
     replies = await run(
         deps, session, plano(op(Action.ADD_ITEM, product_name="Pote 500ml")), "um pote"
     )
-    assert session.cart.is_empty  # nada entra no carrinho pela metade
+    # O item entra no pedido em montagem: é o mesmo item, com o mesmo número,
+    # que o cliente vê e que a IA recebe na situação.
+    assert len(session.cart.items) == 1
+    assert session.cart.items[0].complements == []
     assert "sabores" in replies[-1].lower()
 
     await run(
@@ -246,7 +249,7 @@ async def test_pedir_o_mesmo_sabor_de_novo_e_explicado() -> None:
         "mais pistache",
     )
 
-    assert [f["name"] for f in session.slots["draft"]["flavors"]] == ["Pistache"]
+    assert [c.name for c in session.cart.items[0].complements] == ["Pistache"]
     assert any("já está" in reply for reply in replies)
 
 
@@ -259,7 +262,7 @@ async def test_sabor_esgotado_nao_entra() -> None:
         plano(op(Action.ADD_ITEM, product_name="Pote 500ml", add_flavors=["Maracujá"])),
         "pote de maracujá",
     )
-    assert session.cart.is_empty
+    assert session.cart.items[0].complements == []  # o sabor esgotado não entrou
     assert any("acabou" in reply.lower() for reply in replies)
 
 
@@ -359,7 +362,6 @@ async def test_trocar_o_tamanho_no_meio_dos_sabores() -> None:
         "na verdade queria o medio",
     )
 
-    assert session.cart.is_empty is False or session.slots.get("draft") is not None
     # O sabor que ainda existe no tamanho novo é mantido.
     item = session.cart.items[0] if session.cart.items else None
     assert item is not None
@@ -430,7 +432,7 @@ async def test_uma_mensagem_pode_trazer_tudo() -> None:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_pergunta_no_meio_dos_sabores_nao_perde_o_rascunho() -> None:
+async def test_pergunta_no_meio_dos_sabores_nao_perde_o_item() -> None:
     deps, session = build_deps(), build_session()
     await run(
         deps,
@@ -454,7 +456,7 @@ async def test_pergunta_no_meio_dos_sabores_nao_perde_o_rascunho() -> None:
 
     assert any("Pix" in reply for reply in replies)
     assert any("Voltando" in reply for reply in replies)  # retoma de onde estava
-    assert session.slots.get("draft") is not None
+    assert session.cart.items[0].complements != []  # o item em montagem continua lá
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,9 @@ from app.schemas.product import (
     ComplementCreate,
     ComplementRead,
     ComplementUpdate,
+    FlavorCategoryCreate,
     FlavorCategoryRead,
+    FlavorCategoryUpdate,
     GroupCreate,
     GroupRead,
     GroupUpdate,
@@ -34,6 +36,48 @@ router = APIRouter(prefix="/api", tags=["catálogo"])
 async def list_flavor_categories(session: SessionDep) -> list[FlavorCategoryRead]:
     categories = await catalog.list_flavor_categories(session)
     return [FlavorCategoryRead.model_validate(c) for c in categories]
+
+
+@router.post(
+    "/flavor-categories",
+    response_model=FlavorCategoryRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_flavor_category(
+    payload: FlavorCategoryCreate, session: SessionDep
+) -> FlavorCategoryRead:
+    category = await catalog.create_flavor_category(session, payload.model_dump())
+    await session.commit()
+    return FlavorCategoryRead.model_validate(category)
+
+
+@router.patch("/flavor-categories/{category_id}", response_model=FlavorCategoryRead)
+async def update_flavor_category(
+    category_id: UUID, payload: FlavorCategoryUpdate, session: SessionDep
+) -> FlavorCategoryRead:
+    category = await catalog.get_flavor_category(session, category_id)
+    if category is None:
+        raise not_found("Categoria não encontrada.")
+    await catalog.update_item(session, category, payload.model_dump(exclude_unset=True))
+    await session.commit()
+    return FlavorCategoryRead.model_validate(category)
+
+
+@router.delete(
+    "/flavor-categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_flavor_category(category_id: UUID, session: SessionDep) -> Response:
+    """Apagar a categoria não apaga sabor nenhum.
+
+    O vínculo em `complements.flavor_category_id` é ON DELETE SET NULL: os
+    sabores continuam no cardápio, só deixam de estar agrupados.
+    """
+    category = await catalog.get_flavor_category(session, category_id)
+    if category is None:
+        raise not_found("Categoria não encontrada.")
+    await catalog.delete_item(session, category)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------

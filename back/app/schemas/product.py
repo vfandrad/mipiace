@@ -177,11 +177,40 @@ class FlavorCategoryRead(ORMModel):
     sort_order: int
 
 
+class FlavorCategoryCreate(BaseModel):
+    """Categoria de sabor ("Sem lactose", "Clássicos", "Frutados"...).
+
+    É o lojista que decide quais existem: numa sorveteria são restrições, numa
+    hamburgueria seriam outras coisas. Por isso a lista é dado, não constante
+    de código.
+    """
+
+    name: str = Field(min_length=1, max_length=120)
+    sort_order: int = Field(default=0, ge=0)
+
+    @field_validator("name")
+    @classmethod
+    def _normalize_name(cls, value: str) -> str:
+        return _clean_name(value)
+
+
+class FlavorCategoryUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    sort_order: int | None = Field(default=None, ge=0)
+
+    @field_validator("name")
+    @classmethod
+    def _normalize_name(cls, value: str | None) -> str | None:
+        return _clean_name(value) if value is not None else None
+
+
 __all__ = [
     "ComplementCreate",
     "ComplementRead",
     "ComplementUpdate",
+    "FlavorCategoryCreate",
     "FlavorCategoryRead",
+    "FlavorCategoryUpdate",
     "GroupCreate",
     "GroupRead",
     "GroupUpdate",

@@ -241,10 +241,13 @@ async def test_fluxo_feliz_ate_o_pix(flow) -> None:
     assert any("Pote 500ml" in reply for reply in replies)
 
     # 2. Produto com grupo obrigatório: entra na personalização.
+    #    O item já entra no pedido, ainda incompleto — é o mesmo item que o
+    #    cliente vê numerado, e é isso que deixa "tira o médio" acertar o alvo.
     replies = await flow.say("quero um pote 500ml")
     assert flow.state is S.CONVERSANDO
     assert "sabores" in replies[0].lower()
-    assert flow.conversation.cart.is_empty
+    assert len(flow.conversation.cart.items) == 1
+    assert flow.conversation.cart.items[0].complements == []
 
     # 3. Os três sabores de uma vez fecham o grupo obrigatório.
     replies = await flow.say("pistache, morango e chocolate belga")
@@ -261,17 +264,20 @@ async def test_fluxo_feliz_ate_o_pix(flow) -> None:
     # 4. Fechar o pedido pergunta a modalidade antes de qualquer endereço.
     replies = await flow.say("pode fechar")
     assert flow.state is S.CONVERSANDO
-    assert "entregue" in replies[0].lower() and "retirar" in replies[0].lower()
+    tudo = " ".join(replies).lower()
+    assert "entregue" in tudo and "retirar" in tudo
 
-    # 4b. Escolhida a entrega, aí sim vem o endereço.
+    # 4b. Escolhida a entrega, aí sim vem o endereço — e o bot diz que anotou.
     replies = await flow.say("entrega")
     assert flow.state is S.CONVERSANDO
-    assert "endereço" in replies[0].lower()
+    tudo = " ".join(replies).lower()
+    assert "entrega" in tudo
+    assert "endereço" in tudo
 
     # 5. Endereço completo leva ao resumo final com taxa e total.
     replies = await flow.say("Rua das Flores, 123, bairro Centro")
     assert flow.state is S.CONFIRMANDO_PEDIDO
-    resumo = replies[0]
+    resumo = replies[-1]
     assert "R$ 32,00" in resumo          # subtotal
     assert "R$ 5,00" in resumo           # taxa de entrega
     assert "R$ 37,00" in resumo          # total
@@ -373,11 +379,11 @@ async def test_fluxo_de_retirada_nao_cobra_taxa(flow) -> None:
     await flow.say("pistache, morango e chocolate belga")
 
     replies = await flow.say("pode fechar")
-    assert "retirar" in replies[0].lower()
+    assert "retirar" in " ".join(replies).lower()
 
     replies = await flow.say("vou retirar na loja")
     assert flow.state is S.CONFIRMANDO_PEDIDO
-    resumo = replies[0]
+    resumo = replies[-1]
     assert "Retirada na loja" in resumo
     assert "R$ 32,00" in resumo       # subtotal
     assert "R$ 37,00" not in resumo   # não somou taxa de entrega

@@ -30,7 +30,7 @@ from app.domain.catalog import (
 
 #: Tudo que o CRUD do cardápio edita. Criar/editar/apagar é igual para os três,
 #: então as funções genéricas abaixo servem a todos.
-CatalogRow = Product | ComplementGroup | Complement
+CatalogRow = Product | ComplementGroup | Complement | FlavorCategory
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +108,18 @@ async def create_complement(
     session: AsyncSession, *, group_id: UUID, data: dict[str, Any]
 ) -> Complement:
     return await _add(session, Complement(group_id=group_id, **data))
+
+
+async def get_flavor_category(
+    session: AsyncSession, category_id: UUID
+) -> FlavorCategory | None:
+    return await session.get(FlavorCategory, category_id)
+
+
+async def create_flavor_category(
+    session: AsyncSession, data: dict[str, Any]
+) -> FlavorCategory:
+    return await _add(session, FlavorCategory(**data))
 
 
 async def list_flavor_categories(session: AsyncSession) -> list[FlavorCategory]:

@@ -10,14 +10,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   createComplement,
+  createFlavorCategory,
   createGroup,
   createProduct,
   deleteComplement,
+  deleteFlavorCategory,
   deleteGroup,
   deleteProduct,
   fetchFlavorCategories,
   fetchProducts,
   updateComplement,
+  updateFlavorCategory,
   updateGroup,
   updateProduct,
 } from '@/lib/api';
@@ -25,6 +28,7 @@ import type {
   CatalogEntity,
   Complement,
   ComplementInput,
+  FlavorCategoryInput,
   GroupInput,
   Product,
   ProductInput,
@@ -60,12 +64,11 @@ export function useProducts() {
     queryFn: fetchProducts,
   });
 
-  // Lista curta e praticamente imutável ("Sem lactose" / "Com lactose"): não
-  // precisa ser refeita junto com o catálogo a cada mutação.
+  // Lista curta, mas não imutável: o lojista cria e renomeia categoria pelo
+  // painel, então ela é recarregada junto com o resto quando muda.
   const categoriesQuery = useQuery({
     queryKey: FLAVOR_CATEGORIES_QUERY_KEY,
     queryFn: fetchFlavorCategories,
-    staleTime: Infinity,
   });
 
   const products = query.data ?? [];
@@ -122,11 +125,15 @@ export function useProducts() {
     }) => {
       if (entity === 'product') return updateProduct(id, data as Partial<ProductInput>);
       if (entity === 'group') return updateGroup(id, data as Partial<GroupInput>);
+      if (entity === 'flavorCategory') {
+        return updateFlavorCategory(id, data as Partial<FlavorCategoryInput>);
+      }
       return updateComplement(id, data as Partial<ComplementInput>);
     },
     onSuccess: () => {
       toast.success('Item atualizado');
       invalidate();
+      queryClient.invalidateQueries({ queryKey: FLAVOR_CATEGORIES_QUERY_KEY });
     },
     onError: (error) => toast.error('Erro ao atualizar o item', { description: describe(error) }),
   });
@@ -167,10 +174,14 @@ export function useProducts() {
     mutationFn: ({ entity, id }: { entity: CatalogEntity; id: string }) => {
       if (entity === 'product') return deleteProduct(id);
       if (entity === 'group') return deleteGroup(id);
+      if (entity === 'flavorCategory') return deleteFlavorCategory(id);
       return deleteComplement(id);
     },
     onMutate: ({ entity, id }) =>
       patchCache((old) => {
+        // Apagar categoria não mexe na árvore de produtos: o vínculo do sabor
+        // vira nulo no banco (ON DELETE SET NULL) e o sabor continua lá.
+        if (entity === 'flavorCategory') return old;
         if (entity === 'product') return old.filter((p) => p.id !== id);
         if (entity === 'group') {
           return old.map((p) => ({ ...p, groups: p.groups.filter((g) => g.id !== id) }));
@@ -188,7 +199,21 @@ export function useProducts() {
       toast.error('Erro ao excluir', { description: describe(error) });
     },
     onSuccess: () => toast.success('Item excluído'),
-    onSettled: invalidate,
+    onSettled: () => {
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: FLAVOR_CATEGORIES_QUERY_KEY });
+    },
+  });
+
+  // --- Categorias de sabor --------------------------------------------------
+  const createCategoryMutation = useMutation({
+    mutationFn: createFlavorCategory,
+    onSuccess: () => {
+      toast.success('Categoria de sabor criada');
+      queryClient.invalidateQueries({ queryKey: FLAVOR_CATEGORIES_QUERY_KEY });
+    },
+    onError: (error) =>
+      toast.error('Erro ao criar a categoria de sabor', { description: describe(error) }),
   });
 
   return {
@@ -212,6 +237,9 @@ export function useProducts() {
 
     createComplement: (groupId: string, data: ComplementInput) =>
       createComplementMutation.mutateAsync({ groupId, data }),
+
+    createFlavorCategory: (data: FlavorCategoryInput) =>
+      createCategoryMutation.mutateAsync(data),
 
     deleteItem: (entity: CatalogEntity, id: string) => deleteMutation.mutate({ entity, id }),
 

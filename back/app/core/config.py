@@ -96,6 +96,20 @@ class Settings(BaseSettings):
     #: falando sozinho — escalar para humano só ajuda se houver humano.
     handoff_return_minutes: int = 15
 
+    # --- Dados da loja -------------------------------------------------------
+    # Nada aqui é obrigatório, e é de propósito: vazio, o agente admite que não
+    # sabe em vez de inventar ("a gente abre às 10h" numa loja fechada é pior
+    # do que "não tenho certeza"). Preenchido, ele responde na hora — são as
+    # quatro perguntas que mais aparecem e que o catálogo não responde.
+    #: "Seg a sáb, das 14h às 22h"
+    store_hours: str | None = None
+    #: "Rua das Flores, 123 — Centro"
+    store_address: str | None = None
+    #: "Centro, Jardim América e Vila Nova"
+    store_delivery_area: str | None = None
+    #: "40 a 60 minutos"
+    store_delivery_estimate: str | None = None
+
     @field_validator("allowed_phones", mode="before")
     @classmethod
     def _split_phones(cls, value: object) -> object:

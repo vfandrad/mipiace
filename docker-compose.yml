@@ -143,6 +143,13 @@ services:
       WA_MAX_MESSAGES_PER_MINUTE: ${WA_MAX_MESSAGES_PER_MINUTE:-12}
       WA_DEBOUNCE_SECONDS: ${WA_DEBOUNCE_SECONDS:-3}
       HANDOFF_RETURN_MINUTES: ${HANDOFF_RETURN_MINUTES:-15}
+      # Dados da loja. Vazios, o agente admite que não sabe em vez de
+      # inventar; preenchidos, ele responde horário, endereço, área e prazo
+      # de entrega na hora (são as perguntas que o catálogo não responde).
+      STORE_HOURS: ${STORE_HOURS:-}
+      STORE_ADDRESS: ${STORE_ADDRESS:-}
+      STORE_DELIVERY_AREA: ${STORE_DELIVERY_AREA:-}
+      STORE_DELIVERY_ESTIMATE: ${STORE_DELIVERY_ESTIMATE:-}
     ports:
       - "8000:8000"
     restart: unless-stopped
