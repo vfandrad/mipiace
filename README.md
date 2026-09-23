@@ -109,7 +109,7 @@ curl -X POST localhost:8000/api/simulator/payments/SEU_ORDER_ID/approve \
 ## Testes
 
 ```bash
-cd back  && pytest          # 118 testes
+cd back  && pytest          # 174 testes
 cd front && npm run test    # 40 testes
 cd front && npm run lint    # eslint
 ```

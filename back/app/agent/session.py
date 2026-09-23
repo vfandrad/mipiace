@@ -53,6 +53,31 @@ class ConversationSession:
         self.active_order_id = None
         self.fail_count = 0
 
+    def touch_handoff(self) -> None:
+        """Marca agora como o último sinal de vida do atendimento humano.
+
+        Chamado quando o bot escala e de novo a cada resposta que a loja digita
+        pelo celular: enquanto houver gente falando, o bot continua calado.
+        """
+        self.slots["handoff_since"] = datetime.now(timezone.utc).isoformat()
+
+    def handoff_idle_minutes(self) -> float:
+        """Minutos desde o último sinal do atendimento humano.
+
+        Sem marca (conversa que entrou em handoff antes desta versão) devolve
+        infinito: melhor o bot reassumir do que deixar o cliente sem ninguém.
+        """
+        raw = self.slots.get("handoff_since")
+        if not isinstance(raw, str):
+            return float("inf")
+        try:
+            since = datetime.fromisoformat(raw)
+        except ValueError:
+            return float("inf")
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - since).total_seconds() / 60.0
+
 
 # ---------------------------------------------------------------------------
 # Serialização do JSONB
@@ -316,6 +341,31 @@ async def log_message(
             "provider_message_id": provider_message_id,
         },
     )
+
+
+async def already_seen(db: Any, provider_message_id: str | None) -> bool:
+    """A mensagem já foi atendida numa entrega anterior deste mesmo evento?
+
+    O WhatsApp (e a Evolution no meio) entrega *pelo menos* uma vez: a mesma
+    mensagem chega de novo quando o webhook demora ou devolve erro. Sem esta
+    checagem o agente roda duas vezes — a segunda já com o estado adiantado
+    pela primeira, respondendo "não entendi" a uma pergunta que ninguém fez e
+    consumindo o contador de falhas até cair em atendimento humano.
+
+    A entrada duplicada não aparece no painel (o `ON CONFLICT` de `log_message`
+    a descarta), mas a resposta sai — foi o que confundiu o teste com cliente
+    real. Quem decide é a mesma coluna única: se já existe, já foi atendida.
+    """
+    if not provider_message_id:
+        return False
+    result = await db.execute(
+        text(
+            "SELECT 1 FROM conversation_messages "
+            "WHERE provider_message_id = :id LIMIT 1"
+        ),
+        {"id": provider_message_id},
+    )
+    return result.first() is not None
 
 
 async def recent_turns(db: Any, conversation_id: UUID, limit: int = 8) -> list[Turn]:

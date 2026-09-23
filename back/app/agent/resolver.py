@@ -13,6 +13,7 @@ máquina traduz em "qual dos dois você quer?".
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from enum import Enum
@@ -95,37 +96,66 @@ def _score(query: str, name: str) -> float:
     return SequenceMatcher(None, query, name).ratio()
 
 
+def _terms(text: str) -> list[str]:
+    """Quebra um nome em pedaços casáveis: "G - 500ml" -> ["g", "500ml"]."""
+    return [t for t in re.split(r"[^a-z0-9]+", text) if t]
+
+
 def _match_names(query: str, items: Sequence[T]) -> list[T]:
-    """Devolve os candidatos plausíveis, do mais para o menos provável."""
+    """Devolve os candidatos plausíveis, do mais para o menos provável.
+
+    Olha o nome E a descrição do item. Num cardápio de gelateria o nome é o
+    tamanho ("G - 500ml") e o jeito como o cliente fala está na descrição
+    ("Pote grande: escolha 3 sabores") — comparar só com o nome era o que fazia
+    "quero um pote grande" não casar com nada.
+    """
     cleaned = _clean(query)
     if not cleaned:
         return []
 
-    pairs = [(item, normalize(item.name)) for item in items]
+    # Complemento não tem descrição; produto tem (às vezes vazia).
+    pairs = [
+        (item, normalize(item.name), normalize(getattr(item, "description", None) or ""))
+        for item in items
+    ]
 
     # 1) match exato — o caminho feliz de quem digitou o nome do cardápio.
-    exact = [item for item, name in pairs if name == cleaned]
+    exact = [item for item, name, _ in pairs if name == cleaned]
     if exact:
         return exact
 
-    # 2) substring nos dois sentidos ("pote" -> "Pote 500ml";
+    # 2) o cliente respondeu só o tamanho: "g", "gg", "500ml".
+    by_term = [item for item, name, _ in pairs if cleaned in _terms(name)]
+    if by_term:
+        return by_term
+
+    # 3) substring nos dois sentidos ("pote" -> "Pote 500ml";
     #    "quero pote 500ml gelado" -> "Pote 500ml").
-    substring = [item for item, name in pairs if name in cleaned or cleaned in name]
+    substring = [item for item, name, _ in pairs if name in cleaned or cleaned in name]
     if substring:
         # nomes mais próximos em tamanho batem melhor com a query
         substring.sort(key=lambda item: abs(len(normalize(item.name)) - len(cleaned)))
         return substring
 
-    # 3) similaridade — cobre erro de digitação e acento perdido.
-    scored = [(item, _score(cleaned, name)) for item, name in pairs]
+    # 4) o texto do cliente aparece na descrição ("pote grande", "pote g").
+    in_description = [item for item, _, desc in pairs if desc and cleaned in desc]
+    if in_description:
+        return in_description
+
+    # 5) similaridade — cobre erro de digitação e acento perdido.
+    scored = [(item, _score(cleaned, name)) for item, name, _ in pairs]
     scored = [(item, s) for item, s in scored if s >= SIMILARITY_CUTOFF]
     if not scored:
         # última tentativa: casar palavra a palavra
         # ("morango" dentro de "Sorvete de Morango").
         token_hits = [
             item
-            for item, name in pairs
-            if any(tok in name.split() for tok in cleaned.split() if len(tok) >= 4)
+            for item, name, desc in pairs
+            if any(
+                tok in _terms(name) or tok in _terms(desc)
+                for tok in cleaned.split()
+                if len(tok) >= 4
+            )
         ]
         return token_hits
 

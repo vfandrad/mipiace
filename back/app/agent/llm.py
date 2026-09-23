@@ -52,12 +52,21 @@ class NluResult(BaseModel):
     "pistache"), não ids. A resolução para ids reais acontece depois, contra o
     CatalogSnapshot — é essa separação que impede o agente de aceitar um sabor
     alucinado.
+
+    `product_name` e `complement_names` são o outro caminho: o palpite do
+    modelo sobre QUAL item do cardápio o cliente quis dizer, escrito com o nome
+    exato do cardápio. Sem isso, "quero um pote grande" não tinha como virar
+    "G - 500ml" — o texto do cliente não parece com o nome do produto, e o
+    modelo era proibido de traduzir. Continua não havendo invenção: o `runner`
+    descarta qualquer nome que não exista no `CatalogSnapshot`.
     """
 
     intent: Intent = Intent.DESCONHECIDO
     confidence: float = 0.0
     product_query: str | None = None
     complement_queries: list[str] = Field(default_factory=list)
+    product_name: str | None = None
+    complement_names: list[str] = Field(default_factory=list)
     quantity: int | None = None
     address: ExtractedAddress | None = None
     customer_name: str | None = None

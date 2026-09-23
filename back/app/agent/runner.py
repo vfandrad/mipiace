@@ -17,9 +17,12 @@ from app.agent.whatsapp import get_channel_adapter
 from app.agent.llm import NluResult
 from app.agent.llm import get_llm_client
 from app.agent.checkout import AgentDeps, build_deps
+from app.agent.keywords import rule_intent
+from app.agent.machine import human_on_the_line
 from app.agent.machine import run as run_machine
 from app.agent.session import (
     ConversationSession,
+    already_seen,
     find_by_active_order,
     load_or_create,
     log_message,
@@ -69,14 +72,23 @@ async def handle_inbound(
     é carregado dentro. Devolve lista vazia quando a conversa está em handoff:
     com um atendente humano na linha, o bot precisa ficar calado.
     """
+    if await already_seen(session, message.provider_message_id):
+        logger.info(
+            "mensagem %s reentregue pelo canal; já foi atendida",
+            message.provider_message_id,
+        )
+        return []
+
     conversation = await load_or_create(session, message.phone, channel_name)
     state_before = conversation.state
 
     if message.profile_name and "customer_name" not in conversation.slots:
         conversation.slots["customer_name"] = message.profile_name
 
-    if conversation.handoff:
-        # Registra para o lojista ver no painel, mas não responde nada.
+    if human_on_the_line(conversation):
+        # Registra para o lojista ver no painel, mas não responde nada. Sair
+        # daqui é decisão da máquina (`_resume_from_human`); o corte aqui é só
+        # para não gastar chamada de LLM enquanto há gente atendendo.
         await log_message(
             session,
             conversation_id=conversation.id,
@@ -133,6 +145,13 @@ async def handle_outbound_echo(
         provider_message_id=message.provider_message_id,
     )
 
+    if conversation.handoff:
+        # Alguém da loja está respondendo pelo celular: o relógio que devolve a
+        # conversa ao bot recomeça a cada fala humana. (Em handoff o bot não
+        # envia nada, então todo `fromMe` daqui é gente de verdade.)
+        conversation.touch_handoff()
+        await save_session(session, conversation)
+
 
 async def _interpret(
     db: Any, conversation: ConversationSession, catalog: CatalogSnapshot, text: str
@@ -154,11 +173,30 @@ async def _interpret(
     except Exception:
         # O cliente real já trata os próprios erros; isto é o cinto de segurança.
         logger.exception("cliente de LLM levantou exceção inesperada")
-        return NluResult(intent=Intent.DESCONHECIDO)
-    return _ground(nlu, text)
+        nlu = NluResult(intent=Intent.DESCONHECIDO)
+    return _ground(_apply_rules(nlu, text), text, catalog)
 
 
-def _ground(nlu: NluResult, text: str) -> NluResult:
+def _apply_rules(nlu: NluResult, text: str) -> NluResult:
+    """Palavra inequívoca do cliente vale mais que o rótulo do modelo.
+
+    Ver `app/agent/keywords.py` para o porquê: é a primeira etapa da NLU, e a
+    única que continua funcionando quando o LLM não responde.
+    """
+    forced = rule_intent(text)
+    if forced is None or forced is nlu.intent:
+        return nlu
+
+    logger.info(
+        "intenção por regra: %r -> %s (o modelo disse %s)",
+        text[:60],
+        forced.value,
+        nlu.intent.value,
+    )
+    return nlu.model_copy(update={"intent": forced, "confidence": 1.0})
+
+
+def _ground(nlu: NluResult, text: str, catalog: CatalogSnapshot) -> NluResult:
     """Descarta trechos que o modelo alegou ter extraído mas não disse.
 
     O prompt exige que product_query/complement_queries sejam cópias literais
@@ -184,8 +222,29 @@ def _ground(nlu: NluResult, text: str) -> NluResult:
             [q for q in nlu.complement_queries if q not in complement_queries],
         )
 
+    # Os *nomes* seguem a regra oposta (são do cardápio, não da mensagem), mas
+    # passam pela mesma desconfiança: só sobrevive o que existe de verdade.
+    product_name = nlu.product_name
+    if product_name and catalog.product_by_name(product_name) is None:
+        logger.warning("product_name fora do cardápio, descartando: %r", product_name)
+        product_name = None
+
+    complement_names = [
+        name for name in nlu.complement_names if catalog.complement_by_name(name)
+    ]
+    if len(complement_names) != len(nlu.complement_names):
+        logger.warning(
+            "complement_names fora do cardápio, descartando: %r",
+            [n for n in nlu.complement_names if n not in complement_names],
+        )
+
     return nlu.model_copy(
-        update={"product_query": product_query, "complement_queries": complement_queries}
+        update={
+            "product_query": product_query,
+            "complement_queries": complement_queries,
+            "product_name": product_name,
+            "complement_names": complement_names,
+        }
     )
 
 

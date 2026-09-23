@@ -22,6 +22,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
+from app.agent import inbox
 from app.agent.whatsapp import EvolutionAdapter, phone_allowed
 from app.agent.runner import handle_inbound, handle_outbound_echo
 from app.api.deps import SessionDep
@@ -86,6 +87,13 @@ async def evolution_webhook(
         return {"status": "ignored"}
 
     sessionmaker = get_sessionmaker()
+
+    async def process(message: Any) -> None:
+        """Um turno, com sessão de banco própria (a da request já morreu)."""
+        async with sessionmaker() as db:
+            await handle_inbound(db, message, channel_name="whatsapp")
+            await db.commit()
+
     for message in messages:
         # Trava de contatos: com ALLOWED_PHONES preenchida, mensagem de
         # qualquer outro número é descartada aqui, antes de virar conversa no
@@ -96,14 +104,16 @@ async def evolution_webhook(
             )
             continue
         try:
-            async with sessionmaker() as db:
-                if message.from_me:
-                    # Eco do bot ou resposta manual do lojista: só histórico,
-                    # nunca aciona IA/máquina de estados.
+            if message.from_me:
+                # Eco do bot ou resposta manual do lojista: só histórico, nunca
+                # aciona IA/máquina de estados — e sem esperar por agrupamento.
+                async with sessionmaker() as db:
                     await handle_outbound_echo(db, message, channel_name="whatsapp")
-                else:
-                    await handle_inbound(db, message, channel_name="whatsapp")
-                await db.commit()
+                    await db.commit()
+            else:
+                # Mensagem de cliente espera os balões seguintes (inbox.py) e
+                # roda fora desta request: webhook que demora é reentregue.
+                await inbox.submit(message, process)
         except Exception:
             # Uma mensagem com problema não pode impedir as outras nem virar 500.
             logger.exception("falha ao processar mensagem de %s", message.phone)

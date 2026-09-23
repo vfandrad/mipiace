@@ -81,7 +81,7 @@ mipiace/
 │   ├── db/schema.sql         AS TABELAS — fonte de verdade do banco
 │   ├── db/seed.sql           cardápio real (3 tamanhos + 31 sabores)
 │   ├── requirements.txt
-│   ├── tests/                118 testes, nenhum precisa de Postgres no ar
+│   ├── tests/                174 testes, nenhum precisa de Postgres no ar
 │   └── app/
 │       ├── main.py           cria o app e monta as rotas
 │       ├── agent/            a conversa do WhatsApp
@@ -112,10 +112,12 @@ mipiace/
 |---|---|---|
 | 1 | `api/routes/webhooks.py` → `evolution_webhook()` | Chega o POST da Evolution API. Valida o token da query string. |
 | 2 | `agent/whatsapp.py` → `EvolutionAdapter.parse_webhook()` | Extrai a mensagem do payload do Baileys. Ignora grupo, status e transmissão. |
-| 3 | `agent/runner.py` → `handle_inbound()` | Daqui em diante é o agente. Orquestra os passos 4 a 9. |
+| 2b | `agent/inbox.py` → `submit()` | Espera ~3s por mais balões do mesmo cliente e junta tudo num turno só. O webhook responde 200 na hora; o resto roda fora da request. |
+| 3 | `agent/runner.py` → `handle_inbound()` | Daqui em diante é o agente. Orquestra os passos 4 a 9. Mensagem reentregue pelo canal (mesmo `provider_message_id`) para aqui. |
 | 4 | `agent/session.py` → `load_or_create()` | Carrega o estado da conversa do Postgres (ou cria, se for a 1ª mensagem). Sessão vencida recomeça do zero. |
-| 5 | `agent/llm.py` + `agent/prompts.py` | Chama a IA. Ela devolve **só** `NluResult`: a intenção e trechos literais da mensagem. Nunca decide o próximo passo. |
-| 6 | `agent/runner.py` → `_ground()` | Descarta trecho que a IA alegou ter extraído mas que não está na mensagem. |
+| 5 | `agent/llm.py` + `agent/prompts.py` | Chama a IA. Ela devolve **só** `NluResult`: a intenção, trechos literais da mensagem e a qual item do cardápio eles correspondem. Nunca decide o próximo passo. |
+| 5b | `agent/keywords.py` → `rule_intent()` | Palavra inequívoca ("retirada", "cardápio", "atendente") vale mais que o rótulo do modelo — e continua funcionando quando o LLM cai. |
+| 6 | `agent/runner.py` → `_ground()` | Descarta trecho que a IA alegou ter extraído mas que não está na mensagem, e nome de item que não está no cardápio. |
 | 7 | `agent/machine.py` → `run()` | **O cérebro.** Decide o próximo estado e o que responder. |
 | 8 | `agent/resolver.py` | Casa o texto livre ("pote de pistache") com o catálogo real. Se não casar, repergunta. |
 | 9 | `agent/renderer.py` | Transforma a decisão em texto de WhatsApp. |
@@ -136,9 +138,14 @@ O ponto central do desenho, e o motivo de o agente ser confiável:
 | A IA faz | A IA **nunca** faz |
 |---|---|
 | classificar a intenção ("quer escolher produto") | escolher o próximo estado |
-| copiar trechos literais da mensagem ("pote 500ml") | dizer qual produto é |
-| extrair endereço, quantidade, nome | calcular preço |
-| | emitir id de nada |
+| copiar trechos literais da mensagem ("pote grande") | dar a palavra final sobre o que entra no carrinho |
+| dizer a qual item do cardápio o trecho se refere ("G - 500ml") | calcular preço |
+| extrair endereço, quantidade, nome | emitir id de nada |
+
+O palpite da IA sobre o item (`product_name`) é **nome**, nunca id, e só vale
+depois de existir de verdade no `CatalogSnapshot`. Foi ele que destravou "quero
+um pote grande": o texto do cliente não se parece com o nome do produto no
+cardápio (que é o tamanho), e a IA era proibida de traduzir um no outro.
 
 Tudo da coluna da direita é da máquina de estados, com o catálogo real em mãos
 e preço em `Decimal`. É isso que impede o bot de aceitar um sabor que não
@@ -146,11 +153,12 @@ existe ou de inventar um valor.
 
 ### Duas camadas de grounding
 
-1. `runner._ground()` — descarta o que a IA "extraiu" mas não está na mensagem.
-   (Caso real: "fechar, vou retirar na loja" virava `product_query="casquinha"`,
-   puxado do histórico.)
-2. `resolver.resolve_product()` — casa o texto contra o catálogo. Não casou,
-   não existe: a máquina repergunta.
+1. `runner._ground()` — descarta o que a IA "extraiu" mas não está na mensagem
+   (caso real: "fechar, vou retirar na loja" virava `product_query="casquinha"`,
+   puxado do histórico) **e** o nome de item que não existe no cardápio.
+2. `resolver.resolve_product()` — casa o texto contra o catálogo, olhando nome
+   e descrição ("pote grande" → `G - 500ml`). Não casou, não existe: a máquina
+   repergunta. Dois candidatos igualmente bons viram "qual dos dois?".
 
 ### Os 10 estados
 
@@ -174,6 +182,12 @@ Acontece de três formas:
 Com `handoff=true`, o `runner` registra a mensagem no histórico mas **não
 responde nada**. O painel continua espelhando a conversa inteira, inclusive o
 que o lojista digitar do próprio celular (é o que `handle_outbound_echo` faz).
+
+**O silêncio tem prazo.** Escalar para humano só ajuda o cliente se houver um
+humano, e às onze da noite frequentemente não há. Cada fala da loja pelo
+celular renova o relógio (`touch_handoff`); passados `HANDOFF_RETURN_MINUTES`
+(padrão 15) sem nenhuma, a próxima mensagem do cliente devolve a conversa ao
+bot — `machine.human_on_the_line()` decide, `_resume_from_human()` executa.
 
 **Devolver a conversa para o bot** (`handoff=false` no painel) tira a conversa
 do estado `ATENDIMENTO_HUMANO` e zera o contador de falhas — ver
@@ -295,6 +309,8 @@ Todas em `back/app/core/config.py`. Com `FAKE_MODE=true` nenhuma chave externa
 | `PIX_EXPIRATION_MINUTES` | `30` | validade do QR |
 | `SESSION_TTL_MINUTES` | `60` | depois disso a conversa recomeça |
 | `MAX_NLU_FAILURES` | `3` | falhas seguidas antes de chamar humano |
+| `WA_DEBOUNCE_SECONDS` | `3` | espera por mais balões antes de responder; `0` desliga |
+| `HANDOFF_RETURN_MINUTES` | `15` | silêncio máximo em atendimento humano antes de o bot reassumir |
 
 **Frontend** (`front/.env.local`) — embutidas no bundle em tempo de build,
 visíveis no navegador:
@@ -312,18 +328,20 @@ visíveis no navegador:
 
 | Arquivo | Linhas | O que faz |
 |---|---|---|
-| `runner.py` | 289 | Orquestra um turno: sessão → IA → máquina → banco → canal. É o único ponto que o mundo externo chama. |
-| `machine.py` | 593 | **A máquina de estados.** Um handler por estado. Decide transição e resposta. |
-| `checkout.py` | 193 | O fechamento: `AgentDeps`, criar o pedido, gerar o Pix, consultar status. É a parte com efeito colateral. |
+| `runner.py` | 348 | Orquestra um turno: sessão → IA → máquina → banco → canal. É o único ponto que o mundo externo chama. |
+| `machine.py` | 713 | **A máquina de estados.** Um handler por estado. Decide transição e resposta. |
+| `checkout.py` | 237 | O fechamento: `AgentDeps`, criar o pedido, gerar o Pix, consultar status. É a parte com efeito colateral. |
 | `states.py` | 128 | A tabela de transições e `advance()`, a única porta de mudança de estado. |
-| `resolver.py` | 198 | Casa texto livre com o catálogo real (exato → substring → similaridade). |
-| `renderer.py` | 330 | **Todo texto que o bot fala.** Funções puras. Mude o tom aqui, sem tocar em regra. |
-| `session.py` | 380 | O estado da conversa no Postgres, e o log de mensagens. Usa SQL textual de propósito. |
-| `whatsapp.py` | 260 | Os canais: `EvolutionAdapter` (WhatsApp real) e `ConsoleAdapter` (fake/testes). |
-| `llm.py` | 105 | O contrato (`NluResult`) e a escolha do cliente de IA. |
-| `prompts.py` | 182 | As instruções e o schema da tool. É aqui que se ajusta o que a IA extrai. |
-| `llm_openai.py` | 199 | Cliente OpenAI com function calling. |
-| `llm_fake.py` | 372 | IA falsa determinística baseada em regras. É o padrão em `FAKE_MODE`. |
+| `resolver.py` | 228 | Casa texto livre com o catálogo real, por nome E descrição (exato → termo → substring → descrição → similaridade). |
+| `renderer.py` | 418 | **Todo texto que o bot fala.** Funções puras. Mude o tom aqui, sem tocar em regra. |
+| `session.py` | 430 | O estado da conversa no Postgres, e o log de mensagens. Usa SQL textual de propósito. |
+| `whatsapp.py` | 336 | Os canais: `EvolutionAdapter` (WhatsApp real) e `ConsoleAdapter` (fake/testes). |
+| `llm.py` | 114 | O contrato (`NluResult`) e a escolha do cliente de IA. |
+| `prompts.py` | 224 | As instruções e o schema da tool. É aqui que se ajusta o que a IA extrai. |
+| `llm_openai.py` | 203 | Cliente OpenAI com function calling. |
+| `llm_fake.py` | 386 | IA falsa determinística baseada em regras. É o padrão em `FAKE_MODE`. |
+| `inbox.py` | 109 | Junta os balões seguidos do mesmo cliente num turno só (debounce de borda final). |
+| `keywords.py` | 74 | Regras de intenção para as palavras inequívocas — a 1ª etapa da NLU, e a que sobrevive ao LLM fora do ar. |
 
 ### `back/app/services/` — regra de negócio + banco
 

@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     #: Teto da instância inteira, por minuto (a comunidade situa o risco a
     #: partir de ~20/min; ficamos abaixo de propósito).
     wa_max_messages_per_minute: int = 12
+    #: Janela para juntar mensagens seguidas do mesmo cliente antes de pensar.
+    #: Quem pede pelo WhatsApp escreve picado ("quero um pote" / "G" / "de
+    #: pistache"); responder balão a balão gera três respostas e confunde a
+    #: máquina de estados. 0 desliga o agrupamento (ver app/agent/inbox.py).
+    wa_debounce_seconds: float = 3.0
 
     # --- Mercado Pago --------------------------------------------------------
     mp_access_token: str | None = None
@@ -86,6 +91,10 @@ class Settings(BaseSettings):
     pix_expiration_minutes: int = 30
     session_ttl_minutes: int = 60
     max_nlu_failures: int = 3  # depois disso, cai para atendimento humano
+    #: Quanto tempo o bot fica mudo esperando alguém da loja assumir a conversa.
+    #: Passado isso sem resposta humana, ele reassume em vez de deixar o cliente
+    #: falando sozinho — escalar para humano só ajuda se houver humano.
+    handoff_return_minutes: int = 15
 
     @field_validator("allowed_phones", mode="before")
     @classmethod

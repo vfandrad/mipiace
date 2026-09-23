@@ -125,6 +125,10 @@ class OpenAILLMClient:
                 complement_queries=[
                     str(q) for q in (payload.get("complement_queries") or []) if q
                 ],
+                product_name=payload.get("product_name") or None,
+                complement_names=[
+                    str(n) for n in (payload.get("complement_names") or []) if n
+                ],
                 quantity=self._quantity(payload.get("quantity")),
                 address=self._address(payload.get("address")),
                 customer_name=payload.get("customer_name") or None,

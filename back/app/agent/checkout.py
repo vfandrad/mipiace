@@ -105,8 +105,14 @@ def fulfillment_of(session: ConversationSession) -> FulfillmentType | None:
     return None
 
 
+#: Marca que a pergunta "entrega ou retirada?" está no ar. Serve para o reparo
+#: saber qual pergunta repetir quando não entende a resposta.
+AWAITING_FULFILLMENT_SLOT = "awaiting_fulfillment"
+
+
 def set_fulfillment(session: ConversationSession, kind: FulfillmentType) -> None:
     session.slots[FULFILLMENT_SLOT] = kind.value
+    session.slots.pop(AWAITING_FULFILLMENT_SLOT, None)
 
 
 def final_summary(deps: AgentDeps, session: ConversationSession) -> str:
@@ -137,6 +143,7 @@ async def start_checkout(deps: AgentDeps, session: ConversationSession) -> list[
     if kind is None:
         # Fica em REVISANDO_CARRINHO (estado reentrante) esperando a resposta.
         advance(session, S.REVISANDO_CARRINHO)
+        session.slots[AWAITING_FULFILLMENT_SLOT] = True
         return [r.ask_fulfillment()]
 
     if kind is FulfillmentType.RETIRADA:

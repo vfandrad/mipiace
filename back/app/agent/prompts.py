@@ -76,6 +76,27 @@ def tool_schema() -> dict[str, Any]:
                         "um por escolha."
                     ),
                 },
+                "product_name": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "OBRIGATÓRIO sempre que a mensagem indicar um item do "
+                        "cardápio: o NOME EXATO do item, copiado tal como está "
+                        "escrito na lista do cardápio (ex.: \"G - 500ml\"). "
+                        "Use tamanho, volume e descrição para casar: "
+                        "\"pote G\", \"pote grande\", \"o de 500ml\" e \"o maior\" "
+                        "são todos itens do cardápio. Só deixe nulo se a "
+                        "mensagem não falar de item nenhum ou se houver empate "
+                        "real entre dois itens."
+                    ),
+                },
+                "complement_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Nomes EXATOS de sabores/adicionais do cardápio que o "
+                        "cliente escolheu, na ordem em que apareceram."
+                    ),
+                },
                 "quantity": {
                     "type": ["integer", "null"],
                     "minimum": 1,
@@ -94,7 +115,11 @@ def tool_schema() -> dict[str, Any]:
                 },
                 "customer_name": {"type": ["string", "null"]},
             },
-            "required": ["intent", "confidence"],
+            # product_name entra como obrigatório (aceitando null) de propósito:
+            # sem isso o gpt-4o-mini simplesmente ignorava o campo e "quero um
+            # pote G" voltava só com o trecho literal, que não casa com nome
+            # nenhum do cardápio.
+            "required": ["intent", "confidence", "product_name"],
             "additionalProperties": False,
         },
     }
@@ -104,7 +129,11 @@ def compact_catalog(catalog: CatalogSnapshot) -> str:
     """Cardápio em texto enxuto — é o universo fechado do modelo."""
     lines: list[str] = []
     for product in catalog.available_products:
-        lines.append(f"- {product.name}")
+        # A descrição ("Pote grande: escolha 3 sabores") é o que liga o jeito
+        # como o cliente fala ao nome do item ("G - 500ml"). Sem ela no prompt,
+        # o modelo não tem como preencher product_name.
+        descricao = f" — {product.description}" if product.description else ""
+        lines.append(f"- {product.name}{descricao}")
         for group in product.groups:
             names = ", ".join(c.name for c in group.available_complements)
             if not names:
@@ -124,7 +153,9 @@ _STATE_HINTS = {
         "Prefira 'escolher_complementos' e preencha complement_queries."
     ),
     ConversationState.REVISANDO_CARRINHO: (
-        "O carrinho está montado. Espere 'quero mais', 'fechar' ou cancelamento."
+        "O carrinho está montado. Espere 'quero mais', 'fechar', cancelamento "
+        "— ou, se já perguntamos como o cliente quer receber, a resposta "
+        "'entrega'/'retirada' ('vou buscar', 'retiro aí' = escolher_retirada)."
     ),
     ConversationState.COLETANDO_ENDERECO: (
         "Estamos pedindo o endereço. Preencha o objeto address com o que vier, "
@@ -144,19 +175,27 @@ _STATE_HINTS = {
 BASE_INSTRUCTIONS = """Você é o interpretador de mensagens de uma gelateria \
 brasileira (Mi Piace) que atende pelo WhatsApp.
 
-Sua ÚNICA função é classificar a mensagem do cliente e extrair trechos \
-literais dela. Você NÃO conversa, NÃO responde ao cliente, NÃO calcula preço, \
-NÃO inventa pedido e NÃO decide o próximo passo do atendimento.
+Sua função é três coisas, e só elas: classificar a intenção da mensagem, copiar \
+dela os trechos que nomeiam o que o cliente quer, e dizer a QUAL item do \
+cardápio esses trechos correspondem. Você NÃO conversa, NÃO responde ao \
+cliente, NÃO calcula preço, NÃO inventa pedido e NÃO decide o próximo passo.
 
 Regras absolutas:
 1. Sempre chame a ferramenta registrar_interpretacao.
 2. product_query e complement_queries devem ser TRECHOS DA MENSAGEM DO CLIENTE. \
 Se o cliente citar algo que não existe no cardápio abaixo, copie o trecho mesmo \
-assim — quem decide se existe é o sistema, não você. NUNCA substitua por um item \
-parecido do cardápio e NUNCA invente item que o cliente não citou.
-3. Se a mensagem não citar produto nenhum, deixe product_query nulo.
-4. Se não entender, use intent="desconhecido" com confidence baixa.
-5. O cliente escreve em português informal, com erros de digitação e sem acento."""
+assim — quem decide se existe é o sistema, não você. NUNCA invente trecho que o \
+cliente não escreveu.
+3. product_name e complement_names são o contrário: aí vai o NOME EXATO como \
+está escrito no cardápio, quando der para saber a qual item o cliente se \
+referiu. "quero um pote grande" -> product_query="pote grande" e \
+product_name="G - 500ml" (se for esse o nome no cardápio). Use a descrição e o \
+tamanho para casar. Na dúvida entre dois itens, deixe nulo: o sistema pergunta.
+4. Se a mensagem não fala de produto nenhum — por exemplo "fechar", "vou \
+retirar na loja", "quanto ficou" — deixe product_query E product_name nulos. \
+Não repesque item de mensagem anterior.
+5. Se não entender, use intent="desconhecido" com confidence baixa.
+6. O cliente escreve em português informal, com erros de digitação e sem acento."""
 
 
 def build_system_blocks(
@@ -168,7 +207,9 @@ def build_system_blocks(
         {
             "type": "text",
             "text": (
-                "CARDÁPIO ATUAL (universo fechado, apenas para contexto):\n"
+                "CARDÁPIO ATUAL — universo fechado. É DESTA lista que saem "
+                "product_name e complement_names, copiados exatamente como "
+                "estão escritos aqui:\n"
                 + compact_catalog(catalog)
             ),
             "cache_control": {"type": "ephemeral"},

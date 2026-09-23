@@ -68,6 +68,26 @@ class CatalogSnapshot(BaseModel):
     def product_by_id(self, product_id: UUID) -> CatalogProduct | None:
         return next((p for p in self.products if p.id == product_id), None)
 
+    def product_by_name(self, name: str) -> CatalogProduct | None:
+        """Produto cujo nome é exatamente `name` (ignorando acento e caixa).
+
+        É por aqui que passa o nome de cardápio devolvido pelo LLM: ou ele
+        existe de verdade, ou é descartado. Nome parecido não serve — para
+        texto livre do cliente existe o `resolver`.
+        """
+        wanted = normalize(name)
+        return next((p for p in self.products if normalize(p.name) == wanted), None)
+
+    def complement_by_name(self, name: str) -> CatalogComplement | None:
+        """Mesmo contrato de `product_by_name`, para sabores/adicionais."""
+        wanted = normalize(name)
+        for product in self.products:
+            for group in product.groups:
+                for complement in group.complements:
+                    if normalize(complement.name) == wanted:
+                        return complement
+        return None
+
     def complement_by_id(self, complement_id: UUID) -> CatalogComplement | None:
         for product in self.products:
             for group in product.groups:

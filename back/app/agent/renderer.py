@@ -175,6 +175,20 @@ def group_extra_choice(group: CatalogGroup, chosen: Sequence[str]) -> str:
     )
 
 
+def item_incomplete(product: CatalogProduct, group: CatalogGroup, remaining: int) -> str:
+    """Cliente quis fechar/entregar antes de terminar o item em construção.
+
+    Sem isto, "quero fechar" no meio dos sabores era tratado como sabor e o bot
+    respondia 'Não temos "quero fechar" em Escolha 3 sabores' — verdadeiro e
+    inútil. O que o cliente precisa saber é quanto falta.
+    """
+    plural = "m" if remaining > 1 else ""
+    return (
+        f"Falta{plural} {remaining} em *{group.name}* para eu fechar "
+        f"o *{product.name}*. 😉"
+    )
+
+
 def too_many_choices(group: CatalogGroup) -> str:
     return f"Em *{group.name}* dá pra escolher no máximo {group.max_choices}. 😉"
 
@@ -384,8 +398,18 @@ def handoff() -> str:
     )
 
 
-def fallback(attempt: int = 1) -> str:
+def fallback(attempt: int = 1, *, with_reprompt: bool = False) -> str:
+    """Texto de incompreensão.
+
+    Quando vem acompanhado da pergunta do estado (`with_reprompt`), ele não
+    pede para o cliente "escrever de outro jeito" no vazio: a mensagem seguinte
+    repete a pergunta com as opções na tela. Repetir "não entendi" sem mostrar
+    saída nenhuma é o que empurrou o cliente do teste real para o atendimento
+    humano em três mensagens.
+    """
     if attempt <= 1:
+        if with_reprompt:
+            return "Desculpa, não peguei essa. 😅 Deixa eu repetir:"
         return "Desculpa, não entendi. 😅 Pode escrever de outro jeito?"
     return (
         "Ainda não consegui entender. 🙈 "

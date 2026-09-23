@@ -287,6 +287,7 @@ async def test_fail_count_escala_para_humano() -> None:
 async def test_handoff_silencia_o_bot() -> None:
     deps, session = build_deps(), build_session(S.ATENDIMENTO_HUMANO)
     session.handoff = True
+    session.touch_handoff()  # alguém da loja acabou de assumir
     result = await run(deps, session, nlu(Intent.SAUDAR), "oi")
     assert result.replies == []
 
@@ -463,3 +464,58 @@ async def test_endereco_solto_ja_significa_entrega() -> None:
         "Rua A, 1, Centro",
     )
     assert session.state is S.CONFIRMANDO_PEDIDO
+
+
+@pytest.mark.asyncio
+async def test_fechar_no_meio_dos_sabores_diz_o_que_falta() -> None:
+    """"Não temos 'quero fechar' em Sabores" é verdade e não ajuda ninguém."""
+    deps, session = build_deps(), build_session(S.ESCOLHENDO_PRODUTO)
+    await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Pote 500ml"), "pote")
+
+    result = await run(deps, session, nlu(Intent.FINALIZAR_PEDIDO), "quero fechar")
+
+    assert session.state is S.PERSONALIZANDO_ITEM
+    assert "falta" in result.replies[0].lower()
+    assert "não temos" not in result.replies[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_desambiguacao_de_sabor_preserva_a_lista_oferecida() -> None:
+    """Se a lista voltar a ser o grupo inteiro, o "1" do cliente vira outro sabor."""
+    grupo_id = uuid4()
+    produto_id = uuid4()
+    limao = CatalogComplement(id=uuid4(), group_id=grupo_id, name="Limão siciliano")
+    torta = CatalogComplement(id=uuid4(), group_id=grupo_id, name="Torta de limão")
+    catalogo = CatalogSnapshot(
+        products=[
+            CatalogProduct(
+                id=produto_id,
+                name="Pote 500ml",
+                base_price=Decimal("32.00"),
+                groups=[
+                    CatalogGroup(
+                        id=grupo_id,
+                        product_id=produto_id,
+                        name="Sabores",
+                        min_choices=2,
+                        max_choices=2,
+                        is_required=True,
+                        complements=[
+                            CatalogComplement(id=uuid4(), group_id=grupo_id, name="Morango"),
+                            limao,
+                            torta,
+                        ],
+                    )
+                ],
+            )
+        ]
+    )
+    deps, session = build_deps(catalogo), build_session(S.ESCOLHENDO_PRODUTO)
+    await run(deps, session, nlu(Intent.ESCOLHER_PRODUTO, product_query="Pote 500ml"), "pote")
+
+    result = await run(
+        deps, session, nlu(Intent.ESCOLHER_COMPLEMENTOS, complement_queries=["limao"]), "limao"
+    )
+
+    assert "Qual desses" in result.replies[0]
+    assert session.slots["options"] == [str(limao.id), str(torta.id)]
