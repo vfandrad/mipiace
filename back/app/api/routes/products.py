@@ -12,23 +12,26 @@ from uuid import UUID
 from fastapi import APIRouter, Response, status
 
 from app.api.deps import SessionDep, bad_request, not_found
-from app.services import catalog
 from app.schemas.product import (
-    ComplementCreate,
-    ComplementRead,
-    ComplementUpdate,
     ComplementCategoryCreate,
     ComplementCategoryRead,
     ComplementCategoryUpdate,
+    ComplementCreate,
+    ComplementRead,
+    ComplementUpdate,
     GroupCreate,
     GroupRead,
     GroupUpdate,
     ProductCreate,
+    ProductGroupCreate,
+    ProductGroupRead,
+    ProductGroupUpdate,
     ProductList,
     ProductRead,
     ProductUpdate,
     ReorderRequest,
 )
+from app.services import catalog
 
 router = APIRouter(prefix="/api", tags=["catálogo"])
 
@@ -149,24 +152,21 @@ async def delete_product(product_id: UUID, session: SessionDep) -> Response:
 
 
 # ---------------------------------------------------------------------------
-# Grupos de complementos
+# Grupos de complementos — a biblioteca
 # ---------------------------------------------------------------------------
+# Um grupo ("Sabores") é uma lista com nome, e vários produtos a usam. Quantas
+# escolhas cada produto pede fica no vínculo, logo abaixo.
 
 
-@router.post(
-    "/products/{product_id}/groups",
-    response_model=GroupRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_group(
-    product_id: UUID, payload: GroupCreate, session: SessionDep
-) -> GroupRead:
-    product = await catalog.get_product(session, product_id)
-    if product is None:
-        raise not_found("Produto não encontrado.")
-    group = await catalog.create_group(
-        session, product_id=product_id, data=payload.model_dump()
-    )
+@router.get("/groups", response_model=list[GroupRead])
+async def list_groups(session: SessionDep) -> list[GroupRead]:
+    groups = await catalog.list_groups(session)
+    return [GroupRead.model_validate(g) for g in groups]
+
+
+@router.post("/groups", response_model=GroupRead, status_code=status.HTTP_201_CREATED)
+async def create_group(payload: GroupCreate, session: SessionDep) -> GroupRead:
+    group = await catalog.create_group(session, payload.model_dump())
     await session.commit()
     return GroupRead.model_validate(group)
 
@@ -178,19 +178,89 @@ async def update_group(
     group = await catalog.get_group(session, group_id)
     if group is None:
         raise not_found("Grupo não encontrado.")
-    await catalog.update_item(
-        session, group, payload.model_dump(exclude_unset=True)
-    )
+    await catalog.update_item(session, group, payload.model_dump(exclude_unset=True))
     await session.commit()
     return GroupRead.model_validate(group)
 
 
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(group_id: UUID, session: SessionDep) -> Response:
+    """Apaga a lista inteira — e com ela os itens e todos os vínculos.
+
+    Para tirar o grupo de UM produto sem apagar a lista, use
+    `DELETE /api/product-groups/{id}`.
+    """
     group = await catalog.get_group(session, group_id)
     if group is None:
         raise not_found("Grupo não encontrado.")
     await catalog.delete_item(session, group)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Vínculo produto <-> grupo (o "importar grupo" do painel)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/products/{product_id}/groups",
+    response_model=ProductGroupRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_group_to_product(
+    product_id: UUID, payload: ProductGroupCreate, session: SessionDep
+) -> ProductGroupRead:
+    """Faz o produto usar um grupo: um que já existe, ou um criado na hora."""
+    product = await catalog.get_product(session, product_id)
+    if product is None:
+        raise not_found("Produto não encontrado.")
+
+    dados = payload.model_dump()
+    group_id = dados.pop("group_id")
+    nome = dados.pop("name")
+
+    if group_id is None:
+        group = await catalog.create_group(session, {"name": nome, "sort_order": 0})
+        group_id = group.id
+    elif await catalog.get_group(session, group_id) is None:
+        raise not_found("Grupo não encontrado.")
+
+    link = await catalog.link_group(
+        session, product_id=product_id, group_id=group_id, data=dados
+    )
+    await session.commit()
+    return ProductGroupRead.model_validate(link)
+
+
+@router.patch("/product-groups/{link_id}", response_model=ProductGroupRead)
+async def update_product_group(
+    link_id: UUID, payload: ProductGroupUpdate, session: SessionDep
+) -> ProductGroupRead:
+    """Muda quantas escolhas ESTE produto pede, e/ou o nome da lista."""
+    link = await catalog.get_product_group(session, link_id)
+    if link is None:
+        raise not_found("Grupo não encontrado neste produto.")
+
+    dados = payload.model_dump(exclude_unset=True)
+    nome = dados.pop("name", None)
+    if nome is not None:
+        # O nome é da lista, não do vínculo — e renomear vale para todo produto
+        # que usa a lista, porque é a mesma lista.
+        await catalog.update_item(session, link.group, {"name": nome})
+    if dados:
+        await catalog.update_item(session, link, dados)
+    await session.commit()
+    return ProductGroupRead.model_validate(link)
+
+
+@router.delete("/product-groups/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_group_from_product(link_id: UUID, session: SessionDep) -> Response:
+    """Tira o grupo deste produto. A lista continua existindo para os outros."""
+    link = await catalog.get_product_group(session, link_id)
+    if link is None:
+        raise not_found("Grupo não encontrado neste produto.")
+    await catalog.delete_item(session, link)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

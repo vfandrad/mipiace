@@ -33,8 +33,17 @@ class CatalogComplement(BaseModel):
 
 
 class CatalogGroup(BaseModel):
+    """Um grupo de escolhas JÁ RESOLVIDO para um produto.
+
+    `id` é o id do grupo compartilhado (`complement_groups`), e é ele que casa
+    com o `group_id` dos complementos no carrinho. `min_choices`/`max_choices`
+    vêm do vínculo daquele produto, porque a mesma lista de sabores pode pedir
+    2 escolhas num pote e 6 no combo. O snapshot é desnormalizado de propósito:
+    o agente lê "este produto tem estes grupos com estas regras" e não precisa
+    saber que existe uma tabela de vínculo.
+    """
+
     id: UUID
-    product_id: UUID
     name: str
     min_choices: int = 0
     max_choices: int = 1
@@ -80,21 +89,3 @@ class CatalogSnapshot(BaseModel):
         """
         wanted = normalize(name)
         return next((p for p in self.products if normalize(p.name) == wanted), None)
-
-    def complement_by_name(self, name: str) -> CatalogComplement | None:
-        """Mesmo contrato de `product_by_name`, para sabores/adicionais."""
-        wanted = normalize(name)
-        for product in self.products:
-            for group in product.groups:
-                for complement in group.complements:
-                    if normalize(complement.name) == wanted:
-                        return complement
-        return None
-
-    def complement_by_id(self, complement_id: UUID) -> CatalogComplement | None:
-        for product in self.products:
-            for group in product.groups:
-                for complement in group.complements:
-                    if complement.id == complement_id:
-                        return complement
-        return None

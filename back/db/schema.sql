@@ -80,22 +80,52 @@ CREATE TABLE complement_categories (
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
--- Grupo de escolhas dentro de um produto: "Escolha 2 sabores", "Cobertura"
+-- Grupo de escolhas: "Sabores", "Coberturas", "Ponto da carne".
+--
+-- O grupo NÃO pertence a um produto — ele é uma lista com nome, e vários
+-- produtos a usam. É o modelo do Anota Aí e do iFood ("um grupo de complementos
+-- pode ser compartilhado por vários itens"), e o motivo é operacional: numa
+-- gelateria os 31 sabores são os mesmos no pote M, no G e no combo.
+--
+-- Antes o grupo tinha `product_id`, então cada tamanho precisava da sua cópia
+-- dos 31 sabores: 93 linhas em `complements` para 31 sabores de verdade.
+-- Marcar "pistache acabou" — que é A tarefa diária do painel — custava 3
+-- cliques, e os três podiam divergir: quem pedia o pote M via pistache, quem
+-- pedia o G não via. Uma linha por sabor resolve os dois problemas.
 CREATE TABLE complement_groups (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    product_id  uuid NOT NULL REFERENCES products (id) ON DELETE CASCADE,
     name        text NOT NULL,
+    sort_order  integer NOT NULL DEFAULT 0,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- O vínculo produto <-> grupo, e é NELE que mora a regra de escolha.
+--
+-- Quantos sabores o cliente escolhe muda por produto, não por grupo: o pote M
+-- escolhe 2 da mesma lista de que o G escolhe 3 e o combo escolhe 6. Por isso
+-- min/max/obrigatório ficam aqui, e não em complement_groups.
+CREATE TABLE product_groups (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id  uuid NOT NULL REFERENCES products (id) ON DELETE CASCADE,
+    group_id    uuid NOT NULL REFERENCES complement_groups (id) ON DELETE CASCADE,
     min_choices integer NOT NULL DEFAULT 0 CHECK (min_choices >= 0),
     max_choices integer NOT NULL DEFAULT 1 CHECK (max_choices >= 1),
     is_required boolean NOT NULL DEFAULT false,
     sort_order  integer NOT NULL DEFAULT 0,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT chk_choices_range CHECK (max_choices >= min_choices)
+    CONSTRAINT chk_choices_range CHECK (max_choices >= min_choices),
+    -- O mesmo grupo duas vezes no mesmo produto não quer dizer nada, e faria o
+    -- agente perguntar os sabores duas vezes.
+    CONSTRAINT uq_product_group UNIQUE (product_id, group_id)
 );
-CREATE INDEX idx_groups_product ON complement_groups (product_id);
+CREATE INDEX idx_product_groups_product ON product_groups (product_id);
+CREATE INDEX idx_product_groups_group   ON product_groups (group_id);
 
--- Item escolhível dentro de um grupo: "Pistache", "Chocolate Belga"
+-- Item escolhível dentro de um grupo: "Pistache", "Chocolate Belga".
+-- Uma linha por sabor, e `is_available` é uma só: pausar o pistache uma vez o
+-- tira de todos os produtos que usam o grupo.
 CREATE TABLE complements (
     id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     group_id           uuid NOT NULL REFERENCES complement_groups (id) ON DELETE CASCADE,
@@ -240,7 +270,7 @@ CREATE TABLE conversations (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     phone           text NOT NULL,
     channel         text NOT NULL DEFAULT 'whatsapp',
-    state           text NOT NULL DEFAULT 'saudacao',
+    state           text NOT NULL DEFAULT 'conversando',
     slots           jsonb NOT NULL DEFAULT '{}'::jsonb,   -- dados coletados
     cart            jsonb NOT NULL DEFAULT '[]'::jsonb,   -- carrinho em construção
     customer_id     uuid REFERENCES customers (id) ON DELETE SET NULL,
@@ -282,6 +312,7 @@ CREATE UNIQUE INDEX uq_messages_provider_id ON conversation_messages (provider_m
 CREATE TRIGGER trg_complement_categories_updated BEFORE UPDATE ON complement_categories FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_products_updated      BEFORE UPDATE ON products          FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_groups_updated        BEFORE UPDATE ON complement_groups FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_product_groups_updated BEFORE UPDATE ON product_groups    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_complements_updated   BEFORE UPDATE ON complements       FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_customers_updated     BEFORE UPDATE ON customers         FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_orders_updated        BEFORE UPDATE ON orders            FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -289,8 +320,12 @@ CREATE TRIGGER trg_payments_updated      BEFORE UPDATE ON payments          FOR 
 CREATE TRIGGER trg_conversations_updated BEFORE UPDATE ON conversations     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================================
--- Views de métricas — substituem o mock-data.ts do dashboard
+-- View de métricas
 -- ============================================================================
+-- Só existe uma. Havia cinco, e quatro nunca foram consultadas: `services/
+-- metrics.py` reimplementa produto/hora em SQL porque precisa do recorte de
+-- período ("hoje", "semana", "mes"), que a view não sabe fazer. View que
+-- ninguém lê é schema para manter de graça.
 
 -- Vendas por dia (apenas pedidos pagos e não cancelados)
 CREATE VIEW vw_daily_sales AS
@@ -298,47 +333,6 @@ SELECT date_trunc('day', o.created_at)::date AS dia,
        count(*)                              AS pedidos,
        coalesce(sum(o.total), 0)             AS total
 FROM orders o
-WHERE o.payment_status = 'pago' AND o.status <> 'cancelado'
-GROUP BY 1;
-
--- Produtos mais vendidos
-CREATE VIEW vw_product_sales AS
-SELECT oi.product_name_snapshot AS produto,
-       sum(oi.quantity)         AS unidades,
-       sum(oi.line_total)       AS receita
-FROM order_items oi
-JOIN orders o ON o.id = oi.order_id
-WHERE o.payment_status = 'pago' AND o.status <> 'cancelado'
-GROUP BY 1;
-
--- Distribuição de pedidos por hora do dia
-CREATE VIEW vw_hourly_sales AS
-SELECT extract(hour FROM o.created_at)::int AS hora,
-       count(*)                             AS pedidos,
-       coalesce(sum(o.total), 0)            AS receita
-FROM orders o
-WHERE o.payment_status = 'pago' AND o.status <> 'cancelado'
-GROUP BY 1;
-
--- Sabores/complementos mais pedidos
-CREATE VIEW vw_complement_sales AS
-SELECT oic.complement_name_snapshot AS complemento,
-       count(*)                     AS escolhas
-FROM order_item_complements oic
-JOIN order_items oi ON oi.id = oic.order_item_id
-JOIN orders o       ON o.id = oi.order_id
-WHERE o.payment_status = 'pago' AND o.status <> 'cancelado'
-GROUP BY 1;
-
--- Escolhas por categoria de sabor (sem lactose x com lactose)
-CREATE VIEW vw_category_sales AS
-SELECT fc.name    AS categoria,
-       count(*)   AS escolhas
-FROM order_item_complements oic
-JOIN order_items oi        ON oi.id = oic.order_item_id
-JOIN orders o               ON o.id = oi.order_id
-JOIN complements c          ON c.id = oic.complement_id
-JOIN complement_categories fc   ON fc.id = c.category_id
 WHERE o.payment_status = 'pago' AND o.status <> 'cancelado'
 GROUP BY 1;
 

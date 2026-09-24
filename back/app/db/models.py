@@ -102,10 +102,13 @@ class Product(Base):
     created_at: Mapped[datetime] = _timestamp()
     updated_at: Mapped[datetime] = _timestamp()
 
-    groups: Mapped[list[ComplementGroup]] = relationship(
+    # O produto não é dono do grupo: ele o usa. Quem carrega a regra de escolha
+    # (quantos sabores) é o vínculo, porque ela muda de produto para produto
+    # sobre a mesma lista. Apagar o produto apaga só os vínculos dele.
+    groups: Mapped[list[ProductGroup]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
-        order_by="ComplementGroup.sort_order, ComplementGroup.name",
+        order_by="ProductGroup.sort_order",
         lazy="selectin",
     )
 
@@ -133,7 +136,42 @@ class ComplementCategory(Base):
 
 
 class ComplementGroup(Base):
+    """Uma lista de escolhas com nome — "Sabores", "Coberturas".
+
+    Não pertence a produto nenhum: vários produtos usam a mesma lista. É o
+    modelo do Anota Aí/iFood e é o que faz os 31 sabores existirem uma vez só
+    em vez de uma vez por tamanho de pote.
+    """
+
     __tablename__ = "complement_groups"
+
+    id: Mapped[uuid.UUID] = _pk()
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    created_at: Mapped[datetime] = _timestamp()
+    updated_at: Mapped[datetime] = _timestamp()
+
+    complements: Mapped[list[Complement]] = relationship(
+        back_populates="group",
+        cascade="all, delete-orphan",
+        order_by="Complement.sort_order, Complement.name",
+        lazy="selectin",
+    )
+    used_by: Mapped[list[ProductGroup]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
+
+
+class ProductGroup(Base):
+    """O vínculo produto <-> grupo, e a regra de escolha daquele produto.
+
+    `min_choices`/`max_choices` moram aqui, e não no grupo, porque é o que muda:
+    o pote M escolhe 2 sabores da mesma lista de que o G escolhe 3.
+    """
+
+    __tablename__ = "product_groups"
 
     id: Mapped[uuid.UUID] = _pk()
     product_id: Mapped[uuid.UUID] = mapped_column(
@@ -141,7 +179,11 @@ class ComplementGroup(Base):
         ForeignKey("products.id", ondelete="CASCADE"),
         nullable=False,
     )
-    name: Mapped[str] = mapped_column(Text, nullable=False)
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        PGUuid(as_uuid=True),
+        ForeignKey("complement_groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     min_choices: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
@@ -158,15 +200,22 @@ class ComplementGroup(Base):
     updated_at: Mapped[datetime] = _timestamp()
 
     product: Mapped[Product] = relationship(back_populates="groups")
-    complements: Mapped[list[Complement]] = relationship(
-        back_populates="group",
-        cascade="all, delete-orphan",
-        order_by="Complement.sort_order, Complement.name",
-        lazy="selectin",
-    )
+    group: Mapped[ComplementGroup] = relationship(back_populates="used_by", lazy="selectin")
+
+    # O painel e o agente querem ver "o grupo Sabores deste produto, que pede 3
+    # escolhas" — uma coisa só. Estes dois atalhos deixam `ProductGroupRead`
+    # (from_attributes) achatar o vínculo e a lista sem código de conversão.
+    @property
+    def name(self) -> str:
+        return self.group.name
+
+    @property
+    def complements(self) -> list[Complement]:
+        return self.group.complements
 
     __table_args__ = (
         CheckConstraint("max_choices >= min_choices", name="chk_choices_range"),
+        UniqueConstraint("product_id", "group_id", name="uq_product_group"),
     )
 
 
@@ -427,7 +476,7 @@ class Conversation(Base):
         Text, nullable=False, default="whatsapp", server_default="whatsapp"
     )
     state: Mapped[str] = mapped_column(
-        Text, nullable=False, default="saudacao", server_default="saudacao"
+        Text, nullable=False, default="conversando", server_default="conversando"
     )
     slots: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"

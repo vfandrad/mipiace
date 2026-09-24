@@ -1,5 +1,9 @@
 /**
- * Grupo de opções de um produto e os complementos dentro dele.
+ * Grupo de opções de um produto e os itens dentro dele.
+ *
+ * A lista de itens é compartilhada entre os produtos que usam o grupo; o que
+ * pertence a ESTE produto é a regra de escolha ("escolhe 3"). Por isso o botão
+ * do rodapé remove o grupo do produto em vez de apagar a lista.
  *
  * Decisões que valem comentário, porque a versão anterior errava nelas:
  *
@@ -256,7 +260,9 @@ export const GroupCard = ({
               onClick={onDeleteGroup}
             >
               <Trash2 className="mr-2 h-4 w-4" />
-              Excluir grupo
+              {/* "Remover" e não "excluir": a lista é compartilhada e continua
+                  existindo para os outros produtos que a usam. */}
+              Remover deste produto
             </Button>
           </div>
         </div>

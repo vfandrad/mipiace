@@ -10,15 +10,23 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useAsyncSubmit } from '@/hooks/use-async-submit';
-import type { GroupInput } from '@/types/catalog';
+import type { GroupInput, GroupLibraryEntry } from '@/types/catalog';
+
+/** Valor da opção "criar uma lista nova" no select. */
+const NOVA = '';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   productId: string;
   productName: string;
+  /** Listas que já existem, para o produto reaproveitar em vez de copiar. */
+  library: GroupLibraryEntry[];
+  /** Grupos que este produto já usa — não faz sentido oferecê-los de novo. */
+  usedGroupIds: string[];
   /** O produto vai na rota (`POST /api/products/{id}/groups`), não no corpo. */
   onCreate: (productId: string, data: GroupInput) => Promise<unknown>;
 }
@@ -28,15 +36,23 @@ export const CreateGroupDialog = ({
   onOpenChange,
   productId,
   productName,
+  library,
+  usedGroupIds,
   onCreate,
 }: Props) => {
+  const [groupId, setGroupId] = useState(NOVA);
   const [name, setName] = useState('');
   const [min, setMin] = useState('0');
   const [max, setMax] = useState('3');
   const [required, setRequired] = useState(false);
   const { loading, run } = useAsyncSubmit();
 
+  const disponiveis = library.filter((g) => !usedGroupIds.includes(g.id));
+  const criandoNova = groupId === NOVA;
+  const podeSalvar = criandoNova ? name.trim().length > 0 : true;
+
   const reset = () => {
+    setGroupId(NOVA);
     setName('');
     setMin('0');
     setMax('3');
@@ -44,12 +60,13 @@ export const CreateGroupDialog = ({
   };
 
   const handleSubmit = () => {
-    if (!name.trim() || !productId) return;
+    if (!podeSalvar || !productId) return;
     run(async () => {
       const minChoices = Number.parseInt(min, 10) || 0;
       const maxChoices = Math.max(Number.parseInt(max, 10) || 1, minChoices || 1);
       await onCreate(productId, {
-        name: name.trim(),
+        // Um ou outro, nunca os dois: o backend recusa o payload com ambos.
+        ...(criandoNova ? { name: name.trim() } : { group_id: groupId }),
         min_choices: minChoices,
         max_choices: maxChoices,
         is_required: required,
@@ -63,22 +80,48 @@ export const CreateGroupDialog = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Novo grupo de opções para "{productName}"</DialogTitle>
+          <DialogTitle>Grupo de opções para "{productName}"</DialogTitle>
           <DialogDescription>
-            O grupo pertence só a este produto. Ex.: os "Sabores" do Pote 500ml são
-            independentes dos "Sabores" do Pote 240ml.
+            Uma lista de opções pode ser usada por vários produtos. Os mesmos sabores
+            servem ao pote de 240ml e ao de 500ml — o que muda é quantos o cliente
+            escolhe, e isso você define aqui.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
-          <div className="space-y-2">
-            <Label htmlFor="group-name">Nome</Label>
-            <Input
-              id="group-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ex.: Sabores, Coberturas"
-            />
-          </div>
+          {disponiveis.length > 0 && (
+            <div className="space-y-2">
+              <Label htmlFor="group-existing">Lista de opções</Label>
+              <Select
+                id="group-existing"
+                value={groupId}
+                onChange={(e) => setGroupId(e.target.value)}
+              >
+                <option value={NOVA}>Criar uma lista nova</option>
+                {disponiveis.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name} ({g.complements.length} itens)
+                  </option>
+                ))}
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Reaproveitar uma lista é o que faz "pistache acabou" valer para todos os
+                produtos de uma vez.
+              </p>
+            </div>
+          )}
+
+          {criandoNova && (
+            <div className="space-y-2">
+              <Label htmlFor="group-name">Nome da lista</Label>
+              <Input
+                id="group-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ex.: Sabores, Coberturas"
+              />
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="group-min">Mín. escolhas</Label>
@@ -115,8 +158,8 @@ export const CreateGroupDialog = ({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button onClick={handleSubmit} disabled={loading || !name.trim()}>
-            {loading ? 'Criando...' : 'Criar grupo'}
+          <Button onClick={handleSubmit} disabled={loading || !podeSalvar}>
+            {loading ? 'Salvando...' : criandoNova ? 'Criar grupo' : 'Usar esta lista'}
           </Button>
         </DialogFooter>
       </DialogContent>

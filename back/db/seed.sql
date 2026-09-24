@@ -8,7 +8,8 @@
 -- é usado no `python -m app.db.init_db --seed` de quem roda sem Docker.
 --
 -- Só o cardápio real: os três tamanhos (M/G/COMBO) e os 31 sabores da casa,
--- cada um marcado como com ou sem lactose.
+-- cada um marcado como com ou sem lactose. Os sabores são UMA lista, que os
+-- três tamanhos usam — o que muda por tamanho é quantos se escolhe.
 -- Nada de cliente, pedido, pagamento ou conversa fabricados: clientes, pedidos
 -- e o histórico do dashboard nascem vazios e são preenchidos pelo uso real do
 -- agente/painel. Isso troca "gráfico bonito desde o dia 1" por "nenhum dado
@@ -30,13 +31,22 @@ INSERT INTO products (id, name, description, base_price, is_available, sort_orde
 ON CONFLICT (id) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
--- Grupos de escolha — um por produto, com a quantidade de sabores do tamanho
+-- O grupo de sabores — UM, compartilhado pelos três tamanhos
 -- ----------------------------------------------------------------------------
-INSERT INTO complement_groups (id, product_id, name, min_choices, max_choices, is_required, sort_order) VALUES
-    ('22222222-2222-4222-8222-000000000010', '11111111-1111-4111-8111-000000000010', 'Escolha 2 sabores', 2, 2, true, 1),
-    ('22222222-2222-4222-8222-000000000011', '11111111-1111-4111-8111-000000000011', 'Escolha 3 sabores', 3, 3, true, 1),
-    ('22222222-2222-4222-8222-000000000012', '11111111-1111-4111-8111-000000000012', 'Escolha 6 sabores', 6, 6, true, 1)
+INSERT INTO complement_groups (id, name, sort_order) VALUES
+    ('22222222-2222-4222-8222-000000000010', 'Sabores', 1)
 ON CONFLICT (id) DO NOTHING;
+
+-- ----------------------------------------------------------------------------
+-- Quantos sabores cada tamanho escolhe — a regra mora no vínculo
+-- ----------------------------------------------------------------------------
+-- A lista é a mesma nos três; só muda o quanto. É por isso que "pistache
+-- acabou" é um clique e vale para o cardápio inteiro.
+INSERT INTO product_groups (product_id, group_id, min_choices, max_choices, is_required, sort_order) VALUES
+    ('11111111-1111-4111-8111-000000000010', '22222222-2222-4222-8222-000000000010', 2, 2, true, 1),
+    ('11111111-1111-4111-8111-000000000011', '22222222-2222-4222-8222-000000000010', 3, 3, true, 1),
+    ('11111111-1111-4111-8111-000000000012', '22222222-2222-4222-8222-000000000010', 6, 6, true, 1)
+ON CONFLICT (product_id, group_id) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
 -- Categorias de sabor
@@ -47,23 +57,18 @@ INSERT INTO complement_categories (id, name, sort_order) VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
--- Sabores (o cardápio completo da casa, repetido em todo grupo de sabor)
+-- Sabores — uma linha por sabor
 -- ----------------------------------------------------------------------------
--- Cross join entre os grupos de sabor e a lista de sabores, com guarda por nome
--- para o arquivo continuar idempotente sem precisar de id fixo por linha.
+-- Antes isto era um CROSS JOIN entre os três grupos e a lista: 93 linhas para
+-- 31 sabores. Com o grupo compartilhado, são 31.
 --
 -- Nenhum sabor cobra a mais: o preço do pote é o preço do pote, qualquer que
 -- seja a escolha. A coluna `extra_price` continua existindo (o painel deixa
 -- cobrar por um complemento, e o pedido congela o valor da venda), mas o
 -- cardápio da casa não usa.
 INSERT INTO complements (group_id, name, extra_price, is_available, sort_order, category_id)
-SELECT g.id, s.nome, s.extra, true, s.ordem, s.categoria_id
+SELECT '22222222-2222-4222-8222-000000000010'::uuid, s.nome, s.extra, true, s.ordem, s.categoria_id
 FROM (VALUES
-        ('22222222-2222-4222-8222-000000000010'::uuid),
-        ('22222222-2222-4222-8222-000000000011'::uuid),
-        ('22222222-2222-4222-8222-000000000012'::uuid)
-     ) AS g(id)
-CROSS JOIN (VALUES
         -- 1. Sem lactose
         ('Morango',                                   0.00,  1, '66666666-6666-4666-8666-000000000001'::uuid),
         ('Frutas vermelhas',                           0.00,  2, '66666666-6666-4666-8666-000000000001'::uuid),
@@ -99,7 +104,8 @@ CROSS JOIN (VALUES
         ('Kinder Bueno',                               0.00, 31, '66666666-6666-4666-8666-000000000002'::uuid)
      ) AS s(nome, extra, ordem, categoria_id)
 WHERE NOT EXISTS (
-    SELECT 1 FROM complements c WHERE c.group_id = g.id AND c.name = s.nome
+    SELECT 1 FROM complements c
+    WHERE c.group_id = '22222222-2222-4222-8222-000000000010'::uuid AND c.name = s.nome
 );
 
 COMMIT;

@@ -20,7 +20,13 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Complement, ComplementGroup, ComplementCategory, Product
+from app.db.models import (
+    Complement,
+    ComplementCategory,
+    ComplementGroup,
+    Product,
+    ProductGroup,
+)
 from app.domain.catalog import (
     CatalogComplement,
     CatalogGroup,
@@ -30,7 +36,7 @@ from app.domain.catalog import (
 
 #: Tudo que o CRUD do cardápio edita. Criar/editar/apagar é igual para os três,
 #: então as funções genéricas abaixo servem a todos.
-CatalogRow = Product | ComplementGroup | Complement | ComplementCategory
+CatalogRow = Product | ComplementGroup | ProductGroup | Complement | ComplementCategory
 
 
 # ---------------------------------------------------------------------------
@@ -81,17 +87,57 @@ async def create_product(session: AsyncSession, data: dict[str, Any]) -> Product
 
 
 # ---------------------------------------------------------------------------
-# Grupos de complementos
+# Grupos de complementos (a biblioteca) e os vínculos com os produtos
 # ---------------------------------------------------------------------------
+
+async def list_groups(session: AsyncSession) -> list[ComplementGroup]:
+    """A biblioteca de grupos — é dela que o painel oferece "usar este grupo"."""
+    stmt = select(ComplementGroup).order_by(
+        ComplementGroup.sort_order, ComplementGroup.name
+    )
+    result = await session.scalars(stmt)
+    return list(result)
+
 
 async def get_group(session: AsyncSession, group_id: UUID) -> ComplementGroup | None:
     return await session.get(ComplementGroup, group_id)
 
 
-async def create_group(
-    session: AsyncSession, *, product_id: UUID, data: dict[str, Any]
-) -> ComplementGroup:
-    return await _add(session, ComplementGroup(product_id=product_id, **data))
+async def create_group(session: AsyncSession, data: dict[str, Any]) -> ComplementGroup:
+    """Cria a lista. Ela ainda não pertence a produto nenhum — `link_group` faz isso."""
+    return await _add(session, ComplementGroup(**data))
+
+
+async def get_product_group(
+    session: AsyncSession, link_id: UUID
+) -> ProductGroup | None:
+    return await session.get(ProductGroup, link_id)
+
+
+async def find_link(
+    session: AsyncSession, *, product_id: UUID, group_id: UUID
+) -> ProductGroup | None:
+    """O vínculo existente entre este produto e este grupo, se houver."""
+    stmt = select(ProductGroup).where(
+        ProductGroup.product_id == product_id, ProductGroup.group_id == group_id
+    )
+    return await session.scalar(stmt)
+
+
+async def link_group(
+    session: AsyncSession, *, product_id: UUID, group_id: UUID, data: dict[str, Any]
+) -> ProductGroup:
+    """Faz o produto usar o grupo, com a regra de escolha DELE.
+
+    Se o vínculo já existe, atualiza a regra em vez de criar um segundo — dois
+    vínculos iguais fariam o agente perguntar os sabores duas vezes.
+    """
+    existente = await find_link(session, product_id=product_id, group_id=group_id)
+    if existente is not None:
+        return await update_item(session, existente, data)
+    return await _add(
+        session, ProductGroup(product_id=product_id, group_id=group_id, **data)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +184,8 @@ async def list_complement_categories(session: AsyncSession) -> list[ComplementCa
 _ORDERABLE = {
     "product": Product,
     "group": ComplementGroup,
+    # A ordem em que os grupos aparecem DENTRO de um produto é do vínculo.
+    "product_group": ProductGroup,
     "complement": Complement,
     "category": ComplementCategory,
 }
@@ -191,14 +239,15 @@ async def get_catalog_snapshot(session: AsyncSession) -> CatalogSnapshot:
                 description=product.description,
                 base_price=product.base_price,
                 is_available=product.is_available,
+                # `link` é o vínculo produto<->grupo: dele vem a regra de
+                # escolha daquele produto; do `link.group`, a lista de itens.
                 groups=[
                     CatalogGroup(
-                        id=group.id,
-                        product_id=group.product_id,
-                        name=group.name,
-                        min_choices=group.min_choices,
-                        max_choices=group.max_choices,
-                        is_required=group.is_required,
+                        id=link.group.id,
+                        name=link.group.name,
+                        min_choices=link.min_choices,
+                        max_choices=link.max_choices,
+                        is_required=link.is_required,
                         complements=[
                             CatalogComplement(
                                 id=complement.id,
@@ -212,10 +261,10 @@ async def get_catalog_snapshot(session: AsyncSession) -> CatalogSnapshot:
                                     else None
                                 ),
                             )
-                            for complement in group.complements
+                            for complement in link.group.complements
                         ],
                     )
-                    for group in product.groups
+                    for link in product.groups
                 ],
             )
             for product in rows

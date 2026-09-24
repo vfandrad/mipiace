@@ -28,9 +28,19 @@ export interface Complement {
   category_id?: string | null;
 }
 
+/**
+ * Um grupo COMO ESTE PRODUTO O USA.
+ *
+ * A lista de complementos ("Sabores") é compartilhada: os três tamanhos de pote
+ * usam a mesma, e por isso marcar um sabor como esgotado vale para todos. O que
+ * muda por produto é quantas escolhas ele pede — e é isso que mora no vínculo.
+ *
+ * `id` é do vínculo (é o que se edita ou se remove para tirar o grupo DESTE
+ * produto); `group_id` é da lista compartilhada.
+ */
 export interface ComplementGroup {
   id: string;
-  product_id: string;
+  group_id: string;
   name: string;
   min_choices: number;
   max_choices: number;
@@ -63,11 +73,26 @@ export interface ProductInput {
   is_available: boolean;
 }
 
+/**
+ * Payload de "usar um grupo neste produto".
+ *
+ * Ou aponta uma lista existente (`group_id`) — o "importar grupo" — ou cria uma
+ * nova pelo nome. Nunca os dois: o backend recusa.
+ */
 export interface GroupInput {
-  name: string;
+  group_id?: string;
+  name?: string;
   min_choices: number;
   max_choices: number;
   is_required: boolean;
+}
+
+/** Uma lista da biblioteca, como `GET /api/groups` devolve. */
+export interface GroupLibraryEntry {
+  id: string;
+  name: string;
+  sort_order?: number;
+  complements: Complement[];
 }
 
 export interface ComplementCategoryInput {
@@ -83,7 +108,7 @@ export interface ComplementInput {
 }
 
 /** O que pode ser reordenado arrastando no painel. */
-export type ReorderKind = 'product' | 'group' | 'complement' | 'category';
+export type ReorderKind = 'product' | 'product_group' | 'complement' | 'category';
 
 /** Tipo de entidade do catálogo — usado nas rotas genéricas de PATCH/DELETE. */
 export type CatalogEntity = 'product' | 'group' | 'complement' | 'category';

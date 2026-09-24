@@ -16,7 +16,8 @@ import pytest
 from app.services import catalog as catalog_service
 
 PRODUCT_ID = uuid4()
-GROUP_ID = uuid4()
+GROUP_ID = uuid4()       # a lista compartilhada ("Sabores")
+LINK_ID = uuid4()        # o vínculo deste produto com ela
 
 
 def _complement(name: str = "Pistache", extra: str = "4.00") -> SimpleNamespace:
@@ -31,10 +32,15 @@ def _complement(name: str = "Pistache", extra: str = "4.00") -> SimpleNamespace:
 
 
 def _group() -> SimpleNamespace:
+    """O grupo como o produto o usa: o vínculo achatado com a lista.
+
+    `id` é do vínculo (é o que se edita para mudar quantos sabores ESTE produto
+    pede) e `group_id` é da lista, que outros produtos também usam.
+    """
     return SimpleNamespace(
-        id=GROUP_ID,
-        product_id=PRODUCT_ID,
-        name="Escolha 3 sabores",
+        id=LINK_ID,
+        group_id=GROUP_ID,
+        name="Sabores",
         min_choices=3,
         max_choices=3,
         is_required=True,
@@ -269,3 +275,129 @@ def test_reordenar_lista_vazia_e_recusado(client, api_key):
         json={"kind": "product", "ids": []},
     )
     assert resposta.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Grupo compartilhado entre produtos
+# ---------------------------------------------------------------------------
+# A lista de opções ("Sabores") é uma só e vários produtos a usam; o que muda
+# por produto é quantas escolhas ele pede. Estes testes guardam os dois lados
+# desse contrato.
+
+
+@pytest.fixture
+def vinculo(monkeypatch):
+    """Captura o que a rota mandou para o serviço, sem banco nenhum."""
+    registro: dict = {}
+
+    async def _get_product(session, product_id):
+        return _product()
+
+    async def _get_group(session, group_id):
+        return SimpleNamespace(id=group_id, name="Sabores", sort_order=0, complements=[])
+
+    async def _create_group(session, data):
+        registro["grupo_criado"] = data
+        return SimpleNamespace(id=GROUP_ID, name=data["name"], sort_order=0, complements=[])
+
+    async def _link_group(session, *, product_id, group_id, data):
+        registro["vinculo"] = {"product_id": product_id, "group_id": group_id, **data}
+        return _group()
+
+    monkeypatch.setattr(catalog_service, "get_product", _get_product)
+    monkeypatch.setattr(catalog_service, "get_group", _get_group)
+    monkeypatch.setattr(catalog_service, "create_group", _create_group)
+    monkeypatch.setattr(catalog_service, "link_group", _link_group)
+    return registro
+
+
+def test_usar_grupo_existente_nao_cria_outra_lista(client, api_key, vinculo):
+    """O "importar grupo": aponta a lista que já existe, com a regra deste produto."""
+    resposta = client.post(
+        f"/api/products/{PRODUCT_ID}/groups",
+        headers={"X-API-Key": api_key},
+        json={"group_id": str(GROUP_ID), "min_choices": 2, "max_choices": 2, "is_required": True},
+    )
+    assert resposta.status_code == 201
+    assert "grupo_criado" not in vinculo          # nenhuma lista nova nasceu
+    assert vinculo["vinculo"]["group_id"] == GROUP_ID
+    assert vinculo["vinculo"]["min_choices"] == 2
+
+
+def test_criar_grupo_pelo_nome_cria_a_lista_e_vincula(client, api_key, vinculo):
+    resposta = client.post(
+        f"/api/products/{PRODUCT_ID}/groups",
+        headers={"X-API-Key": api_key},
+        json={"name": "  Coberturas ", "min_choices": 0, "max_choices": 1},
+    )
+    assert resposta.status_code == 201
+    assert vinculo["grupo_criado"]["name"] == "Coberturas"   # normalizado
+    assert vinculo["vinculo"]["product_id"] == PRODUCT_ID
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        # Nem os dois...
+        {"group_id": str(GROUP_ID), "name": "Sabores"},
+        # ...nem nenhum.
+        {"min_choices": 1, "max_choices": 2},
+        # Obrigatório com min=0 travaria o agente na hora de perguntar.
+        {"name": "Sabores", "min_choices": 0, "max_choices": 2, "is_required": True},
+        # max menor que min não descreve escolha nenhuma.
+        {"name": "Sabores", "min_choices": 3, "max_choices": 1},
+    ],
+)
+def test_vinculo_invalido_devolve_422(client, api_key, vinculo, payload):
+    resposta = client.post(
+        f"/api/products/{PRODUCT_ID}/groups", headers={"X-API-Key": api_key}, json=payload
+    )
+    assert resposta.status_code == 422
+
+
+def test_editar_o_vinculo_muda_a_regra_e_o_nome_da_lista(client, api_key, monkeypatch):
+    """Renomear vale para a lista inteira; a regra de escolha, só para este produto."""
+    grupo = SimpleNamespace(id=GROUP_ID, name="Sabores", sort_order=0, complements=[])
+    link = _group()
+    link.group = grupo
+    escritas: list[tuple[str, dict]] = []
+
+    async def _get_product_group(session, link_id):
+        return link
+
+    async def _update_item(session, item, data):
+        escritas.append(("grupo" if item is grupo else "vinculo", data))
+        return item
+
+    monkeypatch.setattr(catalog_service, "get_product_group", _get_product_group)
+    monkeypatch.setattr(catalog_service, "update_item", _update_item)
+
+    resposta = client.patch(
+        f"/api/product-groups/{LINK_ID}",
+        headers={"X-API-Key": api_key},
+        json={"name": "Sabores do dia", "min_choices": 4, "max_choices": 4},
+    )
+    assert resposta.status_code == 200
+    assert ("grupo", {"name": "Sabores do dia"}) in escritas
+    assert ("vinculo", {"min_choices": 4, "max_choices": 4}) in escritas
+
+
+def test_remover_o_grupo_do_produto_nao_apaga_a_lista(client, api_key, monkeypatch):
+    apagados: list = []
+    link = _group()
+
+    async def _get_product_group(session, link_id):
+        return link
+
+    async def _delete_item(session, item):
+        apagados.append(item)
+
+    monkeypatch.setattr(catalog_service, "get_product_group", _get_product_group)
+    monkeypatch.setattr(catalog_service, "delete_item", _delete_item)
+
+    resposta = client.delete(
+        f"/api/product-groups/{LINK_ID}", headers={"X-API-Key": api_key}
+    )
+    assert resposta.status_code == 204
+    # O que sai é o VÍNCULO, nunca a lista: os outros produtos continuam com ela.
+    assert apagados == [link]
