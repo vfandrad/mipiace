@@ -19,7 +19,7 @@ e não este arquivo.
 from __future__ import annotations
 
 import re
-from typing import Sequence
+from collections.abc import Sequence
 
 from app.agent.llm import Turn
 from app.agent.plan import Action, Address, AgentPlan, Operation

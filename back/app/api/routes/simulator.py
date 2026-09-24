@@ -10,16 +10,16 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 
-from app.agent.whatsapp import InboundMessage
 from app.agent.runner import handle_inbound
 from app.agent.session import load_or_create, reset_session
+from app.agent.whatsapp import InboundMessage
 from app.api.deps import SessionDep, bad_request, not_found, require_fake_mode
 from app.schemas.order import OrderSummary
 from app.services import orders as orders_service
 from app.services import payments as payments_service
 from app.services.pix_provider import FakePaymentProvider, get_payment_provider
-from pydantic import BaseModel, Field
 
 router = APIRouter(
     prefix="/api/simulator",

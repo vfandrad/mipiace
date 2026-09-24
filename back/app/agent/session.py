@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Sequence
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text

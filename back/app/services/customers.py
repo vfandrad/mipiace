@@ -24,8 +24,6 @@ async def get_customer_by_phone(session: AsyncSession, phone: str) -> Customer |
     return await session.scalar(select(Customer).where(Customer.phone == phone))
 
 
-async def get_customer(session: AsyncSession, customer_id: UUID) -> Customer | None:
-    return await session.get(Customer, customer_id)
 
 
 async def create_customer(

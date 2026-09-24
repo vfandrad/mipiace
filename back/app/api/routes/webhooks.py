@@ -23,8 +23,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
 from app.agent import inbox
-from app.agent.whatsapp import EvolutionAdapter, phone_allowed
 from app.agent.runner import handle_inbound, handle_outbound_echo
+from app.agent.whatsapp import EvolutionAdapter, phone_allowed
 from app.api.deps import SessionDep
 from app.core.config import get_settings
 from app.core.logging import get_logger

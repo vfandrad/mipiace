@@ -12,13 +12,11 @@ from typing import Any
 from uuid import UUID
 
 from app.agent import renderer as r
-from app.agent.whatsapp import InboundMessage
-from app.agent.whatsapp import get_channel_adapter
-from app.agent.llm import get_llm_client
-from app.agent.plan import AgentPlan
 from app.agent.checkout import AgentDeps, build_deps
+from app.agent.llm import get_llm_client
 from app.agent.machine import describe_situation
 from app.agent.machine import run as run_machine
+from app.agent.plan import AgentPlan
 from app.agent.session import (
     ConversationSession,
     already_seen,
@@ -29,6 +27,7 @@ from app.agent.session import (
     save_session,
 )
 from app.agent.states import assert_transition
+from app.agent.whatsapp import InboundMessage, get_channel_adapter
 from app.core.config import get_settings
 from app.domain.catalog import CatalogSnapshot
 from app.domain.enums import ConversationState, MessageDirection, OrderChannel

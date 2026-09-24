@@ -1,6 +1,6 @@
 """Fechamento do pedido — a parte do agente que tem efeito colateral.
 
-O executor (`machine.py`) decide o que acontece; este módulo é o que de fato
+O turno (`machine.py`) decide o que acontece; este módulo é o que de fato
 cria o pedido no banco e pede o Pix ao provedor. Ficam juntos aqui porque é a
 resposta para "onde o pedido nasce": endereço, resumo final, criação do pedido,
 cobrança e consulta de status.
@@ -12,8 +12,9 @@ As dependências externas chegam por `AgentDeps`, injetadas em `build_deps()`.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any
 from uuid import UUID
 
 from app.agent import renderer as r
@@ -178,17 +179,3 @@ async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str
             expires_minutes=deps.settings.pix_expiration_minutes,
         )
     ]
-
-
-async def order_status_reply(deps: AgentDeps, session: ConversationSession) -> list[str]:
-    """Situação do pedido ativo — o cliente pode perguntar em qualquer estado."""
-    if session.active_order_id is None:
-        return [r.no_active_order()]
-    try:
-        summary = await deps.order_summary(deps.db, session.active_order_id)
-    except Exception:
-        logger.exception("falha ao consultar pedido %s", session.active_order_id)
-        summary = None
-    if summary is None:
-        return [r.no_active_order()]
-    return [r.order_status(summary)]

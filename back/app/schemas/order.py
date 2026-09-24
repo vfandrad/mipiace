@@ -138,9 +138,6 @@ class OrderStatusUpdate(BaseModel):
 
     status: OrderStatus
 
-    ticket_url: str | None = None
-    expires_at: datetime | None = None
-
 
 __all__ = [
     "AddressRead",

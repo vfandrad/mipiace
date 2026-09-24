@@ -85,7 +85,7 @@ _REENTERABLE: frozenset[S] = frozenset(
 )
 
 
-def advance(session: "ConversationSession", destination: S) -> None:
+def advance(session: ConversationSession, destination: S) -> None:
     """Única porta de mudança de estado — valida contra a tabela de transições."""
     if session.state == destination and destination not in _REENTERABLE:
         return

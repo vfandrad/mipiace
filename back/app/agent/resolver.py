@@ -14,10 +14,11 @@ máquina traduz em "qual dos dois você quer?".
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from enum import Enum
-from typing import Sequence, TypeVar
+from enum import StrEnum
+from typing import TypeVar
 
 from app.domain.catalog import (
     CatalogComplement,
@@ -45,20 +46,12 @@ _STOPWORDS = frozenset(
         # médios recebia, calado, um pote de R$ 90.
         "dois", "duas", "tres", "quatro", "cinco", "meia", "meio",
         # "tem acai?" -> a consulta é "acai"; o resto é a pergunta.
-        "tem", "temos", "voces", "vcs", "queria", "tinha",
+        "tem", "temos", "voces", "vcs", "tinha",
     }
 )
 
 
-def clean_query(text: str) -> str:
-    """O trecho do cliente sem o ruído do pedido — para mostrar de volta a ele.
-
-    `Não trabalhamos com "tem acai"` soa quebrado; `... com "acai"` não.
-    """
-    return _clean(text)
-
-
-class MatchStatus(str, Enum):
+class MatchStatus(StrEnum):
     """Como o texto do cliente se comportou contra o catálogo."""
 
     OK = "ok"                    # exatamente um item disponível
@@ -236,21 +229,6 @@ def resolve_complement(query: str, group: CatalogGroup) -> ComplementMatch:
     candidates = _match_names(query, group.complements)
     status, complement, shortlist = _classify(candidates)
     return ComplementMatch(status, query, complement, list(shortlist))
-
-
-def pick_by_number(text: str, options: Sequence[str]) -> str | None:
-    """Resolve resposta numérica ("2") contra a lista que acabamos de oferecer.
-
-    Devolve o id (string) escolhido ou None. Fica aqui, e não na máquina,
-    porque também é uma forma de casar texto do cliente com o catálogo.
-    """
-    stripped = text.strip().lstrip("#").strip().rstrip(".)-").strip()
-    if not stripped.isdigit():
-        return None
-    index = int(stripped)
-    if 1 <= index <= len(options):
-        return options[index - 1]
-    return None
 
 
 def split_queries(text: str) -> list[str]:

@@ -85,30 +85,3 @@ def parse_state(raw: str) -> ConversationState:
         return ConversationState(raw)
     except ValueError:
         return LEGACY_STATES.get(raw, ConversationState.CONVERSANDO)
-
-
-class Intent(StrEnum):
-    """Intenções que o LLM pode extrair de uma mensagem do cliente.
-
-    Note que a intenção não decide o fluxo sozinha: a máquina de estados só
-    aceita as intenções que fazem sentido no estado atual.
-    """
-
-    SAUDAR = "saudar"
-    PERGUNTAR = "perguntar"
-    ESCOLHER_PRODUTO = "escolher_produto"
-    ESCOLHER_COMPLEMENTOS = "escolher_complementos"
-    ADICIONAR_MAIS = "adicionar_mais"
-    REMOVER_ITEM = "remover_item"
-    FINALIZAR_PEDIDO = "finalizar_pedido"
-    INFORMAR_ENDERECO = "informar_endereco"
-    INFORMAR_NOME = "informar_nome"
-    ESCOLHER_RETIRADA = "escolher_retirada"
-    ESCOLHER_ENTREGA = "escolher_entrega"
-    CONFIRMAR = "confirmar"
-    NEGAR = "negar"
-    CANCELAR = "cancelar"
-    CONSULTAR_STATUS = "consultar_status"
-    VER_CARDAPIO = "ver_cardapio"
-    FALAR_COM_HUMANO = "falar_com_humano"
-    DESCONHECIDO = "desconhecido"

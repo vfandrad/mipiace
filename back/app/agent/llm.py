@@ -15,8 +15,9 @@ limitado do que um agente que responde erro 500 no WhatsApp.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from functools import lru_cache
-from typing import Protocol, Sequence
+from typing import Protocol
 
 from pydantic import BaseModel
 
@@ -63,7 +64,7 @@ def get_llm_client() -> LLMClient:
     settings = get_settings()
 
     if not settings.fake_mode and settings.openai_api_key:
-        from app.agent.llm_openai import OpenAILLMClient
+        from app.agent.llm_openai import OpenAILLMClient  # noqa: PLC0415
 
         return OpenAILLMClient(settings)
 
@@ -73,6 +74,6 @@ def get_llm_client() -> LLMClient:
             "usando o LLM falso."
         )
 
-    from app.agent.llm_fake import FakeLLMClient
+    from app.agent.llm_fake import FakeLLMClient  # noqa: PLC0415
 
     return FakeLLMClient()
