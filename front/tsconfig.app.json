@@ -1,22 +1,20 @@
 {
   "compilerOptions": {
     "jsx": "react-jsx",
-    "lib": [
-      "ES2020",
-      "DOM"
-    ],
+    "lib": ["ES2020", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "paths": {
-      "@/*": [
-        "./src/*"
-      ]
-    },
+    "paths": { "@/*": ["./src/*"] },
     "skipLibCheck": true,
-    "strict": false,
-    "target": "ES2020"
+    "target": "ES2020",
+
+    // Ligado de propósito. Antes era `false`, e como `npm run build` é só
+    // transpilação (esbuild/SWC), o TypeScript nunca rodava em caminho nenhum:
+    // erro de tipo não reprovava build nem CI. `npm run typecheck` fecha isso.
+    "strict": true,
+    // Foi o que deixou passar dezenas de exports mortos em components/ui.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
   },
-  "include": [
-    "src"
-  ]
+  "include": ["src"]
 }

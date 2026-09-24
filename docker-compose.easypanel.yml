@@ -91,9 +91,14 @@ services:
       WA_MAX_MESSAGES_PER_MINUTE: ${WA_MAX_MESSAGES_PER_MINUTE:-12}
       WA_DEBOUNCE_SECONDS: ${WA_DEBOUNCE_SECONDS:-3}
       HANDOFF_RETURN_MINUTES: ${HANDOFF_RETURN_MINUTES:-15}
-      # Dados da loja. Vazios, o agente admite que não sabe em vez de
-      # inventar; preenchidos, ele responde horário, endereço, área e prazo
-      # de entrega na hora (são as perguntas que o catálogo não responde).
+      # A LOJA — é aqui que uma empresa nova é configurada. Nenhum nome de
+      # cliente vive no código; veja back/.env.example para a lista completa.
+      STORE_NAME: ${STORE_NAME:-Nossa Loja}
+      STORE_EMOJI: ${STORE_EMOJI:-}
+      STORE_SEGMENT: ${STORE_SEGMENT:-loja}
+      STORE_CITY: ${STORE_CITY:-}
+      # Vazios, o agente admite que não sabe em vez de inventar; preenchidos,
+      # ele responde horário, endereço, área e prazo na hora.
       STORE_HOURS: ${STORE_HOURS:-}
       STORE_ADDRESS: ${STORE_ADDRESS:-}
       STORE_DELIVERY_AREA: ${STORE_DELIVERY_AREA:-}
@@ -118,6 +123,9 @@ services:
         # redeploy, não basta reiniciar. A chave fica visível no navegador.
         VITE_API_BASE_URL: ${VITE_API_BASE_URL}
         VITE_ADMIN_API_KEY: ${ADMIN_API_KEY}
+        # A loja também: o nome e o logo entram no bundle no build.
+        VITE_STORE_NAME: ${STORE_NAME:-Nossa Loja}
+        VITE_STORE_LOGO_URL: ${STORE_LOGO_URL:-}
     depends_on:
       backend:
         condition: service_started

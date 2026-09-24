@@ -8,8 +8,6 @@ pydantic-settings>=2.11
 sqlalchemy>=2.0.44
 psycopg[binary]>=3.2.10
 httpx>=0.28
-python-dotenv>=1.1
-anthropic>=0.72
 openai>=1.54
 
 # dev/test

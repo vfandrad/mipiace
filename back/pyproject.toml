@@ -1,0 +1,50 @@
+# Configuração única do backend: lint e testes.
+#
+# Não há build system aqui de propósito — o projeto roda como aplicação
+# (uvicorn app.main:app), não como pacote publicado. Este arquivo existe para
+# que `ruff` e `pytest` tenham uma fonte só de configuração.
+#
+# `ruff format` NÃO é usado, e isso é decisão, não esquecimento. O código já é
+# formatado à mão com cuidado — os comentários dos enums e das tabelas ficam
+# alinhados em coluna, que é o que os torna legíveis — e o formatter desfaz esse
+# alinhamento em 49 arquivos sem ganhar nada. `ruff check` fica: ele acha import
+# inútil, variável morta e erro de verdade, que é o que queremos dele.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv", "__pycache__", ".pytest_cache"]
+
+[tool.ruff.lint]
+# Conjunto pequeno e de alto sinal. O objetivo é pegar import inútil, variável
+# não usada e erro de verdade — não impor estilo pessoal em cima de um código
+# que já está legível.
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes (import/variável não usada, nome indefinido)
+    "I",    # ordenação de imports
+    "UP",   # sintaxe moderna de Python
+    "B",    # bugbear (armadilhas comuns)
+    "PLC",  # convenções do pylint
+]
+ignore = [
+    "E501",   # comprimento de linha: o formatter cuida, e docstring em português estoura
+    "B008",   # Depends() no default do parâmetro é o idioma do FastAPI
+    "UP017",  # datetime.UTC no lugar de timezone.utc: troca cosmética, muito arquivo
+    "UP047",  # sintaxe de genéricos do PEP 695: menos familiar que TypeVar
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Nos testes, import tardio é técnica: ele controla o cache de `get_settings`
+# depois do monkeypatch. Fora deles a regra vale e o desvio leva `noqa`.
+"tests/*" = ["PLC0415"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "strict"
+# `eval` é a suíte que chama a OpenAI de verdade: custa token e depende de rede,
+# então fica de fora por padrão. Roda sob demanda com `pytest -m eval`.
+markers = [
+    "eval: exercita o prompt real contra a OpenAI (precisa de OPENAI_API_KEY)",
+]
+addopts = "-m 'not eval' --strict-markers"
