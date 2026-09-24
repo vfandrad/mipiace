@@ -15,13 +15,13 @@ from typing import Any
 
 import pytest
 
-from app.agent.machine import human_on_the_line, run
-from app.agent.plan import Action, AgentPlan, Operation
+from app.agent.machine import run
+from app.agent.operations import human_on_the_line
+from app.agent.plan import Action, AgentPlan
 from app.agent.runner import handle_inbound
 from app.agent.whatsapp import InboundMessage
 from app.core.config import get_settings
 from app.domain.enums import ConversationState as S
-
 from tests.test_agent_machine import build_deps, build_session, op, plano
 
 
@@ -101,3 +101,26 @@ async def test_conversa_antiga_sem_marca_nao_fica_presa() -> None:
     session = build_session(S.ATENDIMENTO_HUMANO)
     session.handoff = True
     assert human_on_the_line(session) is False
+
+
+@pytest.mark.asyncio
+async def test_atendimento_humano_nunca_emudece() -> None:
+    """A garantia mais cara do agente: em handoff ele para de conduzir, não de falar.
+
+    O slot `handoff_avisado` era gravado uma vez e nunca limpo, então a partir
+    da TERCEIRA mensagem o turno devolvia lista vazia para sempre. Três
+    clientes simulados bateram nisso — "alooo? tem alguém aí?" caía no vazio.
+    """
+    from tests.test_agent_machine import build_deps, build_session, op, plano  # noqa: PLC0415
+
+    deps, session = build_deps(), build_session()
+
+    escalou = await run(deps, session, plano(op(Action.REQUEST_HUMAN)), "quero falar com alguem")
+    assert escalou, "escalar já tem de responder"
+    assert session.handoff
+
+    # As mensagens seguintes, todas sem operação de pedido: nenhuma pode calar.
+    for numero, fala in enumerate(["alooo?", "tem alguem ai?", "oi???", "voces sumiram?"], 2):
+        respostas = await run(deps, session, plano(op(Action.REQUEST_HUMAN)), fala)
+        assert respostas, f"o bot ficou mudo na mensagem {numero}: {fala!r}"
+        assert any(r.strip() for r in respostas), f"resposta vazia em {fala!r}"

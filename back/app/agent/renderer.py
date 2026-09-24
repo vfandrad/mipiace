@@ -14,13 +14,28 @@ Duas regras deste arquivo, as duas vindas de teste com cliente de verdade:
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from decimal import Decimal
-from typing import Any, Iterable, Sequence
+from typing import Any
 
+from app.core.config import get_settings
 from app.domain.cart import Cart, CartItem
 from app.domain.catalog import CatalogGroup, CatalogProduct, CatalogSnapshot
 
-LOJA = "Mi Piace Gelateria"
+
+def _loja() -> str:
+    """O nome da loja vem da configuração, nunca do código.
+
+    A Mi Piace é o primeiro caso de uso, não o sistema: a mesma imagem atende
+    uma açaiteria mudando `STORE_NAME` no ambiente.
+    """
+    return get_settings().store_name
+
+
+def _emoji() -> str:
+    """Emoji da casa, com o espaço já embutido — vazio some sem deixar buraco."""
+    emoji = get_settings().store_emoji.strip()
+    return f"{emoji} " if emoji else ""
 
 
 def money(value: Decimal | int | float | str) -> str:
@@ -39,7 +54,7 @@ def _com_preco(name: str, price: Decimal) -> str:
 # ---------------------------------------------------------------------------
 
 def greeting() -> str:
-    return f"Oi! 🍨 Aqui é a *{LOJA}*."
+    return f"Oi! {_emoji()}Aqui é a *{_loja()}*."
 
 
 def ask_what_they_want() -> str:
@@ -101,7 +116,7 @@ def menu(catalog: CatalogSnapshot) -> str:
     # lista numerada convida a responder "2" — que é justamente a muleta que
     # este agente não deveria precisar. A ordem continua existindo para quem
     # responder assim mesmo; ela só não é mais a interface.
-    linhas = [f"🍨 *{LOJA}* — cardápio de hoje", ""]
+    linhas = [f"{_emoji()}*{_loja()}* — cardápio de hoje", ""]
     for product in products:
         linhas.append(f"• *{product.name}* — {money(product.base_price)}")
         if product.description:
@@ -228,7 +243,7 @@ def flavor_removed(name: str) -> str:
 
 
 def flavor_already_chosen(name: str) -> str:
-    return f"O *{name}* já está nesse pote — não dá pra repetir o mesmo sabor. 😊"
+    return f"O *{name}* já está nesse item — não dá pra repetir a mesma opção. 😊"
 
 
 def complement_not_found(query: str, group: CatalogGroup) -> str:
@@ -240,7 +255,7 @@ def complement_unavailable(name: str) -> str:
 
 
 def group_full(group: CatalogGroup) -> str:
-    return f"Esse pote já está completo com {group.max_choices} sabores. 😉"
+    return f"Esse item já está completo com {group.max_choices} opções. 😉"
 
 
 def item_has_no_flavors(name: str) -> str:
@@ -376,9 +391,6 @@ def ask_address(missing: Iterable[str]) -> str:
     return f"Só faltam {' e '.join(labels)}. Pode me mandar?"
 
 
-def confirm_saved_address(address: dict[str, Any]) -> str:
-    return f"Seu último endereço foi:\n{format_address(address)}\n\nPode ser esse mesmo?"
-
 
 def format_address(address: dict[str, Any] | None) -> str:
     if not address:
@@ -465,27 +477,26 @@ def pix_failed() -> str:
     )
 
 
-def payment_confirmed(order_code: str) -> str:
+def order_awaiting_payment() -> str:
+    """O cliente tenta mexer no pedido com o Pix já emitido.
+
+    Antes o carrinho aceitava a mudança e o bot mostrava um pedido novo de
+    R$ 9,00 para quem tinha um Pix de R$ 73,00 em aberto.
+    """
     return (
-        f"Pagamento confirmado! ✅ Pedido *{order_code}* já foi para a produção.\n"
-        "Obrigado pela preferência — logo mais o gelato chega até você. 🍨"
+        "Seu pedido já está fechado e esperando o pagamento do Pix. 💳\n"
+        "Assim que ele cair eu te aviso — e aí a gente monta o próximo. "
+        "Se preferir mudar alguma coisa agora, posso chamar alguém do time. 😊"
     )
 
 
-def order_status(summary: Any) -> str:
-    """Status do pedido a partir do OrderSummary do serviço de pedidos."""
-    code = getattr(summary, "code", "—")
-    status = getattr(summary, "status", "—")
-    payment = getattr(summary, "payment_status", "—")
-    total = getattr(summary, "total", None)
-    linhas = [f"Pedido *{code}*", f"Situação: *{status}*", f"Pagamento: *{payment}*"]
-    if total is not None:
-        linhas.append(f"Total: {money(total)}")
-    return "\n".join(linhas)
+def payment_confirmed(order_code: str) -> str:
+    return (
+        f"Pagamento confirmado! ✅ Pedido *{order_code}* já foi para a produção.\n"
+        f"Obrigado pela preferência — já já chega até você. {_emoji()}".rstrip()
+    )
 
 
-def no_active_order() -> str:
-    return "Não achei nenhum pedido em aberto no seu número. Quer fazer um agora? 🍨"
 
 
 # ---------------------------------------------------------------------------
@@ -511,7 +522,7 @@ def offer_human() -> str:
 
 def handoff() -> str:
     return (
-        f"Já chamei uma pessoa do time da {LOJA} pra falar com você. 👋\n"
+        f"Já chamei uma pessoa do time da {_loja()} pra falar com você. 👋\n"
         "Enquanto isso, se quiser, eu sigo com seu pedido por aqui."
     )
 
@@ -526,6 +537,16 @@ def still_waiting_human() -> str:
         "Ainda estou aguardando alguém da equipe aparecer por aqui. 🙏\n"
         "Se preferir, posso continuar seu pedido comigo mesmo — é só me dizer."
     )
+
+
+def still_waiting_human_short() -> str:
+    """Resposta curta enquanto o atendente não chega.
+
+    Existe porque a alternativa era silêncio: o aviso longo saía uma vez e
+    depois o bot parava de responder. Quem está esperando atendimento precisa
+    saber que ainda está sendo ouvido, mesmo que a notícia seja "ainda não".
+    """
+    return "Ainda por aqui com você — assim que alguém do time aparecer, eu aviso. 🙏"
 
 
 def back_from_human() -> str:

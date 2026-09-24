@@ -19,7 +19,6 @@ import pytest
 from app.agent.machine import describe_situation, run
 from app.agent.plan import Action, Operation
 from app.domain.enums import FulfillmentType
-
 from tests.test_agent_machine import build_deps, build_session, op, plano
 
 

@@ -145,3 +145,6 @@ class AgentPlan(BaseModel):
 
     def has(self, action: Action) -> bool:
         return any(op.action is action for op in self.operations)
+
+    def has_any(self, actions: frozenset[Action] | set[Action]) -> bool:
+        return any(op.action in actions for op in self.operations)

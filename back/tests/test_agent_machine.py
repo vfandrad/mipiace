@@ -35,7 +35,6 @@ from app.domain.catalog import (
 )
 from app.domain.enums import ConversationState as S
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -50,7 +49,6 @@ def build_catalog() -> CatalogSnapshot:
         groups=[
             CatalogGroup(
                 id=sabores_id,
-                product_id=pote_id,
                 name="Escolha 2 sabores",
                 min_choices=2,
                 max_choices=2,
@@ -75,7 +73,6 @@ def build_catalog() -> CatalogSnapshot:
         groups=[
             CatalogGroup(
                 id=sabores240_id,
-                product_id=pote240_id,
                 name="Escolha 1 sabor",
                 min_choices=1,
                 max_choices=1,
@@ -603,3 +600,195 @@ async def test_resposta_morna_nao_vira_cobranca() -> None:
     # E um sim de verdade logo depois fecha normalmente.
     replies = await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "isso, pode mandar")
     assert session.state is S.AGUARDANDO_PAGAMENTO
+
+
+# ---------------------------------------------------------------------------
+# O que as conversas de teste encontraram
+# ---------------------------------------------------------------------------
+# Três clientes simulados conversaram com o modelo de verdade e acharam estes
+# defeitos. Cada um vira um teste aqui, porque nenhum deles precisa de LLM para
+# ser reproduzido — são do código.
+
+
+@pytest.mark.parametrize(
+    "resposta",
+    [
+        "pode ser",
+        "acho que sim",
+        "acho que sim, pode ser",   # a vírgula furava a trava
+        "sei la, pode ser",
+        "talvez",
+        "tanto faz",
+        "pode ser que sim",
+    ],
+)
+def test_resposta_morna_nunca_gera_pix(resposta: str) -> None:
+    """A única trava obrigatória: quase-sim não é sim quando há dinheiro.
+
+    `_hedged` só olhava o começo da frase, então "acho que sim, pode ser" —
+    duas respostas mornas emendadas — passava direto e emitia o Pix.
+    """
+    from app.agent.machine import _hedged  # noqa: PLC0415
+
+    assert _hedged(resposta), f"{resposta!r} deveria ser tratada como morna"
+
+
+@pytest.mark.parametrize(
+    "resposta",
+    ["sim", "isso mesmo", "pode mandar o pix", "sim, pode mandar", "perfeito", "ta certo"],
+)
+def test_sim_claro_continua_confirmando(resposta: str) -> None:
+    """A trava não pode engolir a confirmação de verdade."""
+    from app.agent.machine import _hedged  # noqa: PLC0415
+
+    assert not _hedged(resposta), f"{resposta!r} é um sim claro"
+
+
+@pytest.mark.asyncio
+async def test_endereco_que_o_cliente_nao_disse_e_descartado() -> None:
+    """Endereço é o único dado do pedido sem catálogo para conferir — e a IA
+    inventou um bairro respondendo "sim" a "qual o bairro?".
+
+    A entrega iria para o lugar errado, e o cliente não teria como perceber.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    await run(
+        deps,
+        session,
+        plano(
+            op(
+                Action.UPDATE_ADDRESS,
+                address=Address(rua="Rua das Flores", numero="128", bairro="Jardim América"),
+            )
+        ),
+        "entrega na rua das flores 128",   # o cliente NÃO disse o bairro
+    )
+
+    endereco = session.slots.get("address", {})
+    assert endereco.get("rua") == "Rua das Flores"
+    assert endereco.get("numero") == "128"
+    assert "bairro" not in endereco, f"bairro inventado entrou no pedido: {endereco}"
+
+
+@pytest.mark.asyncio
+async def test_endereco_que_o_cliente_disse_entra_mesmo_com_erro_de_digitacao() -> None:
+    """A trava é frouxa de propósito: quem escreve "flres" no WhatsApp é gente."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    await run(
+        deps,
+        session,
+        plano(
+            op(
+                Action.UPDATE_ADDRESS,
+                address=Address(rua="Rua das Flores", numero="128", bairro="Centro"),
+            )
+        ),
+        "entrega na rua das flres 128 centro",
+    )
+
+    endereco = session.slots.get("address", {})
+    assert endereco.get("rua") == "Rua das Flores"
+    assert endereco.get("bairro") == "Centro"
+
+
+@pytest.mark.asyncio
+async def test_pix_pendente_congela_o_pedido() -> None:
+    """Com o Pix emitido, mexer no pedido montaria um segundo por baixo.
+
+    Um cliente simulado pediu "poe mais uma casquinha" logo depois de receber
+    um Pix de R$ 73,00, e o bot respondeu "*Seu pedido* 1x Casquinha — R$ 9,00.
+    Quer mais alguma coisa ou já posso fechar?". Dois pedidos, um Pix.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
+        "pode fechar, vou retirar",
+    )
+    await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim, confirmo")
+    assert session.state is S.AGUARDANDO_PAGAMENTO
+
+    respostas = await run(
+        deps,
+        session,
+        plano(op(Action.ADD_ITEM, product_name="Casquinha")),
+        "poe mais uma casquinha",
+    )
+
+    assert session.cart.is_empty, f"o carrinho foi remontado: {session.cart.items}"
+    assert session.state is S.AGUARDANDO_PAGAMENTO
+    assert any("esperando o pagamento" in resposta for resposta in respostas), respostas
+
+
+@pytest.mark.asyncio
+async def test_com_pix_pendente_ainda_da_para_cancelar_e_perguntar() -> None:
+    """O congelamento vale para o PEDIDO, não para a conversa."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
+        "pode fechar",
+    )
+    await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim")
+
+    perguntou = await run(
+        deps,
+        session,
+        plano(op(Action.ANSWER_QUESTION, question_topic="prazo", question_text="demora?")),
+        "quanto demora?",
+    )
+    assert perguntou
+
+    cancelou = await run(deps, session, plano(op(Action.CANCEL_ORDER)), "cancela")
+    assert cancelou
+    assert session.state is S.CANCELADO
+
+
+@pytest.mark.asyncio
+async def test_tirar_uma_de_tres_nao_apaga_a_linha() -> None:
+    """"tira uma casquinha" havendo 3 tira UMA — o executor apagava as três."""
+    deps, session = build_deps(), build_session()
+    await run(
+        deps,
+        session,
+        plano(op(Action.ADD_ITEM, product_name="Casquinha", quantity=3)),
+        "me ve 3 casquinha",
+    )
+    assert session.cart.items[0].quantity == 3
+
+    await run(
+        deps,
+        session,
+        plano(op(Action.REMOVE_ITEM, product_name="Casquinha", quantity=1)),
+        "tira uma casquinha",
+    )
+
+    assert len(session.cart.items) == 1, "a linha inteira foi apagada"
+    assert session.cart.items[0].quantity == 2
+
+
+@pytest.mark.asyncio
+async def test_tirar_sem_dizer_quantos_apaga_a_linha() -> None:
+    """Sem quantidade, "tira a casquinha" continua tirando tudo."""
+    deps, session = build_deps(), build_session()
+    await run(
+        deps,
+        session,
+        plano(op(Action.ADD_ITEM, product_name="Casquinha", quantity=3)),
+        "me ve 3 casquinha",
+    )
+    await run(
+        deps,
+        session,
+        plano(op(Action.REMOVE_ITEM, product_name="Casquinha")),
+        "tira a casquinha",
+    )
+    assert session.cart.is_empty
