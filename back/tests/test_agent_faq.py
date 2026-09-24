@@ -73,7 +73,6 @@ def test_sem_acucar_procura_no_cardapio_do_dia() -> None:
                 groups=[
                     CatalogGroup(
                         id=grupo_id,
-                        product_id=produto_id,
                         name="Escolha 3 sabores",
                         min_choices=3,
                         max_choices=3,
@@ -176,7 +175,6 @@ def test_pergunta_por_categoria_de_sabor_lista_a_categoria() -> None:
                 groups=[
                     CatalogGroup(
                         id=grupo_id,
-                        product_id=produto_id,
                         name="Escolha 3 sabores",
                         min_choices=3,
                         max_choices=3,

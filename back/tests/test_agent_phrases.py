@@ -40,7 +40,6 @@ def build_cardapio() -> CatalogSnapshot:
             groups=[
                 CatalogGroup(
                     id=group_id,
-                    product_id=product_id,
                     name=f"Escolha {sabores} sabores",
                     min_choices=sabores,
                     max_choices=sabores,

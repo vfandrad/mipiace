@@ -14,7 +14,6 @@ import pytest
 
 from app.agent.resolver import (
     MatchStatus,
-    pick_by_number,
     resolve_complement,
     resolve_product,
     split_queries,
@@ -49,7 +48,6 @@ def catalog() -> CatalogSnapshot:
         groups=[
             CatalogGroup(
                 id=sabores_500,
-                product_id=pote_id,
                 name="Sabores",
                 min_choices=3,
                 max_choices=3,
@@ -147,14 +145,6 @@ def test_complemento_inexistente(catalog: CatalogSnapshot) -> None:
 
 
 # --- utilitários ------------------------------------------------------------
-
-def test_escolha_por_numero() -> None:
-    options = ["a", "b", "c"]
-    assert pick_by_number("2", options) == "b"
-    assert pick_by_number("2.", options) == "b"
-    assert pick_by_number("9", options) is None
-    assert pick_by_number("pistache", options) is None
-
 
 def test_split_queries() -> None:
     assert split_queries("pistache, morango e limão") == [

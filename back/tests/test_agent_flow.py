@@ -15,12 +15,11 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.agent import runner
-from app.agent.whatsapp import InboundMessage
-from app.agent.whatsapp import ConsoleAdapter
+from app.agent.checkout import AgentDeps
 from app.agent.llm import Turn
 from app.agent.llm_fake import FakeLLMClient
-from app.agent.checkout import AgentDeps
 from app.agent.session import ConversationSession
+from app.agent.whatsapp import ConsoleAdapter, InboundMessage
 from app.core.config import get_settings
 from app.domain.catalog import (
     CatalogComplement,
@@ -48,7 +47,6 @@ def build_catalog() -> CatalogSnapshot:
         groups=[
             CatalogGroup(
                 id=sabores_id,
-                product_id=pote_id,
                 name="Sabores",
                 min_choices=3,
                 max_choices=3,
@@ -66,7 +64,6 @@ def build_catalog() -> CatalogSnapshot:
             ),
             CatalogGroup(
                 id=cobertura_id,
-                product_id=pote_id,
                 name="Cobertura",
                 min_choices=0,
                 max_choices=1,
