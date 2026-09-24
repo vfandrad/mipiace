@@ -30,7 +30,7 @@ export default defineConfig(({ mode }) => ({
     host: "::",
     port: 8080,
   },
-  plugins: [react(), storeName(loadEnv(mode, process.cwd(), "").VITE_STORE_NAME || "Nossa Loja")],
+  plugins: [react(), storeName(loadEnv(mode, process.cwd(), "").VITE_STORE_NAME || "Mi Piace Gelateria")],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

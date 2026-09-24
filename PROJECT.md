@@ -519,11 +519,18 @@ lista — é o que faz "acabou" valer para o cardápio inteiro de uma vez.
 **3. As taxonomias também são dado**, não constante: "Sem lactose" numa
 gelateria, "Vegetariano" numa hamburgueria. Cadastre em *Categorias de item*.
 
-**4. O que sobra de específico:** a paleta de cores do painel
+**4. Os defaults são os da Mi Piace, e isso é proposital.** O que a
+generalização trouxe é a OPÇÃO de trocar, não a obrigação de configurar: sem
+`.env`, o sistema continua sendo o da casa que ele atende hoje. Deixar os
+defaults genéricos foi tentado e deu errado — um deploy sem as variáveis
+subiu se apresentando como "Nossa Loja", e configuração esquecida virou perda
+de identidade. Trocar a loja é sobrescrever; não é preencher do zero.
+
+**5. O que sobra de específico:** a paleta de cores do painel
 (`front/src/index.css`, num bloco de tokens no topo) e o logo em
-`front/public/`. Se os `STORE_*` ficarem vazios, o agente **admite que não
-sabe** em vez de inventar — um horário inventado numa loja fechada é pior do
-que "não tenho certeza".
+`front/public/`. Os quatro `STORE_HOURS`/`ADDRESS`/`DELIVERY_*` seguem vazios
+por padrão: sem eles o agente **admite que não sabe** em vez de inventar — um
+horário inventado numa loja fechada é pior do que "não tenho certeza".
 
 Se você se pegar escrevendo o nome de um cliente dentro de um `.py` ou `.tsx`,
 pare: é sinal de que falta um campo de configuração. Há um teste que verifica

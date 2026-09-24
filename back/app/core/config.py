@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     )
 
     # --- Aplicação -----------------------------------------------------------
-    app_name: str = "Atendimento WhatsApp"
+    app_name: str = "Mi Piace API"
     environment: str = "development"
     debug: bool = True
     public_base_url: str = "http://localhost:8000"
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # número comercial aprovado, basta parear um QR code.
     evolution_api_url: str = "http://localhost:8081"
     evolution_api_key: str | None = None
-    evolution_instance: str = "loja"
+    evolution_instance: str = "mipiace"
     # Evolution API não assina o corpo do webhook como a Meta faz; a validação
     # é um token compartilhado na query string da URL cadastrada em WEBHOOK_GLOBAL_URL.
     evolution_webhook_token: str | None = None
@@ -105,17 +105,19 @@ class Settings(BaseSettings):
     # configuração. Para o tamanho deste produto, uma instância por cliente é
     # mais simples de operar e de entender do que multi-tenancy.
 
-    # Os defaults abaixo são genéricos de propósito: o nome de um cliente não
-    # pertence ao código. Quem instala preenche no `.env` (veja `.env.example`).
+    # Os defaults são os da Mi Piace, e é de propósito: o que a generalização
+    # trouxe foi a OPÇÃO de trocar, não a obrigação de configurar. Uma loja
+    # nova sobrescreve estas quatro no `.env`; sem elas, o sistema continua
+    # sendo o da casa que ele atende hoje — e não um genérico sem identidade.
     #: Como a loja se apresenta ao cliente no WhatsApp e no painel.
-    store_name: str = "Nossa Loja"
+    store_name: str = "Mi Piace Gelateria"
     #: Emoji que abre o cardápio e a saudação. Vazio = nenhum.
-    store_emoji: str = ""
+    store_emoji: str = "🍨"
     #: O ramo, em uma palavra, para o prompt situar o modelo ("gelateria",
     #: "açaiteria", "doceria"). Não muda o que ele pode fazer, só o vocabulário.
-    store_segment: str = "loja"
+    store_segment: str = "gelateria"
     #: Cidade do recebedor — o BR Code do Pix carrega esse campo.
-    store_city: str = ""
+    store_city: str = "SAO PAULO"
 
     # As quatro abaixo não são obrigatórias, e é de propósito: vazias, o agente
     # admite que não sabe em vez de inventar ("a gente abre às 10h" numa loja

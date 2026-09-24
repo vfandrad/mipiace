@@ -20,9 +20,13 @@ export const ADMIN_API_KEY = readEnv('VITE_ADMIN_API_KEY', 'dev-local-key');
  * Identidade da loja.
  *
  * O painel serve a qualquer casa do mesmo nicho, então nome e logo vêm do
- * ambiente — do mesmo jeito que `STORE_NAME` no backend. Sem logo configurado,
- * o cabeçalho mostra o nome em texto, que funciona para quem ainda não tem
- * arquivo de marca.
+ * ambiente — do mesmo jeito que `STORE_NAME` no backend. Os defaults são os da
+ * Mi Piace de propósito: a generalização trouxe a OPÇÃO de trocar, não a
+ * obrigação de configurar. Uma loja nova sobrescreve; sem sobrescrever, o
+ * painel continua sendo o da casa que ele atende hoje.
+ *
+ * Apontando `VITE_STORE_LOGO_URL` para vazio, o cabeçalho mostra o nome em
+ * texto — que é o que uma casa nova tem antes de ter arquivo de marca.
  */
-export const STORE_NAME = readEnv('VITE_STORE_NAME', 'Nossa Loja');
-export const STORE_LOGO_URL = readEnv('VITE_STORE_LOGO_URL', '');
+export const STORE_NAME = readEnv('VITE_STORE_NAME', 'Mi Piace Gelateria');
+export const STORE_LOGO_URL = readEnv('VITE_STORE_LOGO_URL', '/logo-mipiace.png');

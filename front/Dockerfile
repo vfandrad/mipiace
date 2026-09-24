@@ -27,8 +27,8 @@ ARG VITE_API_BASE_URL=http://localhost:8000
 ARG VITE_ADMIN_API_KEY=dev-local-key
 # A identidade da loja entra no bundle aqui: trocar de cliente é rebuildar a
 # imagem com outros args, não editar código.
-ARG VITE_STORE_NAME="Nossa Loja"
-ARG VITE_STORE_LOGO_URL=
+ARG VITE_STORE_NAME="Mi Piace Gelateria"
+ARG VITE_STORE_LOGO_URL=/logo-mipiace.png
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 ENV VITE_ADMIN_API_KEY=$VITE_ADMIN_API_KEY
 ENV VITE_STORE_NAME=$VITE_STORE_NAME

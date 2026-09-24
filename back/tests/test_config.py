@@ -41,13 +41,30 @@ def test_env_example_nao_inventa_variavel() -> None:
     )
 
 
-def test_a_loja_nao_esta_escrita_no_codigo() -> None:
-    """Os defaults são genéricos: o nome do cliente mora no ambiente.
+def test_a_loja_e_configuravel_sem_tocar_no_codigo(monkeypatch) -> None:
+    """O que a generalização trouxe é a OPÇÃO de trocar, não um sistema sem dono.
 
-    É o que permite subir a mesma imagem para uma segunda empresa mudando só o
-    `.env` — e o que impede o nome de uma loja vazar na cobrança de outra.
+    Os defaults continuam sendo os da Mi Piace de propósito: sem `.env`, o
+    sistema é o da casa que ele atende hoje. Uma tentativa anterior deixou os
+    defaults genéricos e o resultado foi um deploy em producao se apresentando
+    como "Nossa Loja" — configuração esquecida virou perda de identidade.
+
+    O que precisa ser verdade é isto: trocar as variáveis troca a loja inteira,
+    sem editar uma linha de código.
     """
     padrao = Settings(_env_file=None)
-    assert "piace" not in padrao.store_name.lower()
-    assert "piace" not in padrao.app_name.lower()
-    assert padrao.store_segment == "loja"
+    assert padrao.store_name == "Mi Piace Gelateria"
+
+    for chave, valor in {
+        "STORE_NAME": "Açaí do Bairro",
+        "STORE_EMOJI": "🍧",
+        "STORE_SEGMENT": "açaiteria",
+        "STORE_CITY": "PORTO VELHO",
+    }.items():
+        monkeypatch.setenv(chave, valor)
+
+    outra = Settings(_env_file=None)
+    assert outra.store_name == "Açaí do Bairro"
+    assert outra.store_emoji == "🍧"
+    assert outra.store_segment == "açaiteria"
+    assert outra.store_city == "PORTO VELHO"
