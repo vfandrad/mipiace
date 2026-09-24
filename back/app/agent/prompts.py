@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.agent.plan import QUESTION_TOPICS, Action
+from app.core.config import get_settings
 from app.domain.catalog import CatalogSnapshot
 
 #: Nome da tool. O modelo é forçado a chamá-la (tool_choice), então ela é o
@@ -42,7 +43,9 @@ _ACTION_DESCRIPTIONS = {
     ),
     Action.REMOVE_ITEM: (
         'tirar um item do pedido: "remove o item 1", "tira o segundo", '
-        '"quero só um pote". Use item_index quando ele apontar qual'
+        '"quero só um pote". Use item_index quando ele apontar qual. Se ele '
+        'disser QUANTOS tirar ("tira uma casquinha" havendo 3), mande também '
+        "quantity com esse número — sem ele a linha inteira sai"
     ),
     Action.UPDATE_QUANTITY: (
         '"quero 3 cascões", "coloca mais dois", "na verdade só um"'
@@ -74,7 +77,12 @@ _ACTION_DESCRIPTIONS = {
         'for claramente positiva. Na dúvida ("pode ser", "acho que sim"), use '
         "ask_clarification — esta ação gera cobrança"
     ),
-    Action.CANCEL_ORDER: "quer cancelar o pedido INTEIRO (não um item)",
+    Action.CANCEL_ORDER: (
+        "quer desistir do pedido INTEIRO (não de um item). Vale para o que as "
+        'pessoas dizem de verdade ao desistir: "cancela", "desisti", "deixa '
+        'pra lá", "esquece", "não quero mais", "melhor não". Havendo pedido em '
+        "andamento, essas falas são cancelamento — não são conversa fiada"
+    ),
     Action.REQUEST_HUMAN: "quer falar com uma pessoa do time",
     Action.ASK_CLARIFICATION: (
         "há duas leituras possíveis e escolher seria chutar. Ex.: \"quero dois "
@@ -238,8 +246,10 @@ def compact_catalog(catalog: CatalogSnapshot) -> str:
     return "\n".join(lines) or "(cardápio vazio)"
 
 
-BASE_INSTRUCTIONS = """Você é o tradutor de um atendimento de gelateria \
-brasileira (Mi Piace) pelo WhatsApp.
+#: O molde das instruções. `{loja}` e `{ramo}` vêm da configuração: o sistema
+#: não sabe de antemão que é uma gelateria, e não deve saber.
+BASE_INSTRUCTIONS_TEMPLATE = """Você é o tradutor de um atendimento de {ramo} \
+brasileira ({loja}) pelo WhatsApp.
 
 O cliente fala como quiser: solto, com erro de digitação, sem acento, em \
 vários pedaços, por número, por apelido ou por "esse mesmo". Seu trabalho é \
@@ -285,7 +295,24 @@ acabou de pedir nesta mensagem.
 horas abre/fecha -> "horario"; onde fica a loja -> "endereco_loja"; se entrega \
 em tal bairro -> "area_entrega"; se tem tal sabor/produto -> "disponibilidade".
 10. Se a mensagem não disser nada aproveitável, mande uma operação \
-no_action — não invente."""
+no_action — não invente.
+11. O HISTÓRICO É CONTEXTO, NÃO TAREFA. Tudo que aparece nas falas \
+anteriores JÁ foi aplicado; o pedido de verdade é o que está na SITUAÇÃO. \
+Nunca reemita um add_item de item que já está lá. "pode fechar" é \
+close_order e MAIS NADA — repetir os itens da primeira mensagem faz o \
+cliente pagar o pedido duas vezes.
+12. NÃO PREENCHA ENDEREÇO QUE O CLIENTE NÃO DISSE. Rua, número e bairro \
+só entram se estiverem escritos na mensagem dele. Faltando o bairro, \
+deixe null: o sistema pergunta. Inventar bairro manda a entrega para o \
+lugar errado, e "sim" respondendo "qual o bairro?" não é um bairro."""
+
+
+def base_instructions() -> str:
+    """As instruções já com o nome e o ramo da loja configurados."""
+    settings = get_settings()
+    return BASE_INSTRUCTIONS_TEMPLATE.format(
+        loja=settings.store_name, ramo=settings.store_segment
+    )
 
 
 def build_system_blocks(
@@ -293,7 +320,7 @@ def build_system_blocks(
 ) -> list[dict[str, Any]]:
     """System prompt em blocos: o do cardápio vai com cache efêmero."""
     return [
-        {"type": "text", "text": BASE_INSTRUCTIONS},
+        {"type": "text", "text": base_instructions()},
         {
             "type": "text",
             "text": (

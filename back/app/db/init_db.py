@@ -54,7 +54,7 @@ async def init_db(*, seed: bool = False, force: bool = False) -> None:
 
 
 async def _main() -> None:
-    parser = argparse.ArgumentParser(description="Cria o schema do Mi Piace.")
+    parser = argparse.ArgumentParser(description="Cria o schema do banco.")
     parser.add_argument("--seed", action="store_true", help="também aplica o seed")
     parser.add_argument(
         "--force", action="store_true", help="reaplica mesmo se já existir"

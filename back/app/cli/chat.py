@@ -16,10 +16,10 @@ import asyncio
 import logging
 import sys
 
-from app.agent.whatsapp import InboundMessage
 from app.agent.renderer import money
 from app.agent.runner import handle_inbound, settings_snapshot
 from app.agent.session import load_or_create, reset_session
+from app.agent.whatsapp import InboundMessage
 from app.core.config import get_settings
 
 CHANNEL = "simulador"
@@ -77,8 +77,8 @@ async def main(phone: str = DEFAULT_PHONE) -> int:
     settings = get_settings()
 
     try:
-        from app.db.session import get_sessionmaker
-    except Exception as exc:  # o Agente 1 é dono desta camada
+        from app.db.session import get_sessionmaker  # noqa: PLC0415
+    except Exception as exc:  # sem banco no ar a CLI avisa em vez de estourar
         print(f"{_ERR}Não consegui carregar app.db.session: {exc}{_OFF}")
         return 1
 
@@ -86,7 +86,7 @@ async def main(phone: str = DEFAULT_PHONE) -> int:
     info = settings_snapshot()
 
     print("=" * 60)
-    print(" Mi Piace — simulador de WhatsApp no terminal")
+    print(f" {settings.store_name} — simulador de WhatsApp no terminal")
     print(f" LLM: {info['llm']} | fake_mode: {info['fake_mode']} | telefone: {phone}")
     print(" Comandos: /reset  /estado  /sair")
     print("=" * 60)

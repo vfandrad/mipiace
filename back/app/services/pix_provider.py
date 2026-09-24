@@ -11,10 +11,12 @@ Pix é cobrado?" — e a decisão entre os dois provedores cabe em uma linha.
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from functools import lru_cache
 from typing import Any, Protocol
+from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
@@ -152,13 +154,13 @@ class MercadoPagoProvider:
         body: dict[str, Any] = {
             "transaction_amount": float(Decimal(amount)),
             "payment_method_id": "pix",
-            "description": f"Mi Piace — pedido {order_code}",
+            "description": f"{get_settings().store_name} — pedido {order_code}",
             "external_reference": str(order_id),
             "notification_url": self._notification_url,
             # O MP quer offset explícito e milissegundos neste campo.
             "date_of_expiration": expires_at.strftime("%Y-%m-%dT%H:%M:%S.000+00:00"),
             "payer": {
-                "email": f"pedido-{order_id.hex[:12]}@mipiace.app",
+                "email": _payer_email(order_id),
                 "first_name": first_name,
             },
         }
@@ -238,16 +240,48 @@ __all__ = ["MercadoPagoProvider", "PaymentProviderError", "map_status"]
 _APPROVED: set[str] = set()
 
 
+def _payer_email(order_id: UUID) -> str:
+    """E-mail técnico do pagador, exigido pelo Mercado Pago.
+
+    O cliente chega pelo WhatsApp: não temos e-mail dele, e pedir um só para
+    satisfazer a API seria atrito puro. O domínio sai da URL pública da
+    instalação para não carimbar o nome de uma loja na cobrança de outra.
+    """
+    host = urlparse(get_settings().public_base_url).hostname or "localhost"
+    return f"pedido-{order_id.hex[:12]}@{host}"
+
+
 def _fake_qr_code(order_code: str, amount: Decimal) -> str:
-    """Payload no formato do BR Code, com dígitos derivados do pedido."""
+    """Payload no formato do BR Code, com dígitos derivados do pedido.
+
+    O nome e a cidade do recebedor saem da configuração porque o BR Code os
+    carrega em campos de tamanho fixo — é o mesmo lugar onde o provedor real
+    poria os dados da loja.
+    """
+    settings = get_settings()
     seed = f"{order_code}:{amount}".encode()
     digest = hashlib.sha256(seed).hexdigest().upper()
+    # Campos 59 (nome do recebedor) e 60 (cidade): dois dígitos de tamanho
+    # seguidos do valor, em maiúsculas e sem acento, como manda o padrão.
+    nome = _brcode_field("59", settings.store_name, 25)
+    cidade = _brcode_field("60", settings.store_city, 15)
     return (
         "00020126580014BR.GOV.BCB.PIX0136"
         + digest[:32]
-        + "5204000053039865802BR5908MI PIACE6009SAO PAULO62070503***6304"
+        # 5204 0000 (MCC) + 5303 986 (moeda BRL) + 5802 BR (país)
+        + "5204000053039865802BR"
+        + nome
+        + cidade
+        + "62070503***6304"
         + digest[32:36]
     )
+
+
+def _brcode_field(tag: str, value: str, limit: int) -> str:
+    """Um campo do BR Code: tag + tamanho em 2 dígitos + valor."""
+    texto = unicodedata.normalize("NFKD", value.strip().upper())
+    texto = "".join(c for c in texto if not unicodedata.combining(c))[:limit]
+    return f"{tag}{len(texto):02d}{texto}"
 
 
 class FakePaymentProvider:

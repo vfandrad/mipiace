@@ -1,4 +1,4 @@
-"""Aplicação FastAPI do Mi Piace.
+"""Aplicação FastAPI do atendimento por WhatsApp.
 
 Monta três grupos de rotas:
   - públicas: `/health` e os webhooks (que validam o próprio remetente);
@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.fake_mode,
     )
     yield
-    from app.db.session import dispose_engine
+    from app.db.session import dispose_engine  # noqa: PLC0415
 
     await dispose_engine()
 
@@ -53,7 +53,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version=API_VERSION,
-        description="Backend do MVP Mi Piace: catálogo, pedidos, Pix e agente de WhatsApp.",
+        description="Catálogo, pedidos, Pix e o agente de WhatsApp.",
         lifespan=lifespan,
     )
 

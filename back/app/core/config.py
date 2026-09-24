@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     )
 
     # --- Aplicação -----------------------------------------------------------
-    app_name: str = "Mi Piace API"
+    app_name: str = "Atendimento WhatsApp"
     environment: str = "development"
     debug: bool = True
     public_base_url: str = "http://localhost:8000"
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # número comercial aprovado, basta parear um QR code.
     evolution_api_url: str = "http://localhost:8081"
     evolution_api_key: str | None = None
-    evolution_instance: str = "mipiace"
+    evolution_instance: str = "loja"
     # Evolution API não assina o corpo do webhook como a Meta faz; a validação
     # é um token compartilhado na query string da URL cadastrada em WEBHOOK_GLOBAL_URL.
     evolution_webhook_token: str | None = None
@@ -90,17 +90,37 @@ class Settings(BaseSettings):
     delivery_fee: Decimal = Decimal("5.00")
     pix_expiration_minutes: int = 30
     session_ttl_minutes: int = 60
-    max_nlu_failures: int = 3  # depois disso, cai para atendimento humano
     #: Quanto tempo o bot fica mudo esperando alguém da loja assumir a conversa.
     #: Passado isso sem resposta humana, ele reassume em vez de deixar o cliente
     #: falando sozinho — escalar para humano só ajuda se houver humano.
     handoff_return_minutes: int = 15
 
     # --- Dados da loja -------------------------------------------------------
-    # Nada aqui é obrigatório, e é de propósito: vazio, o agente admite que não
-    # sabe em vez de inventar ("a gente abre às 10h" numa loja fechada é pior
-    # do que "não tenho certeza"). Preenchido, ele responde na hora — são as
-    # quatro perguntas que mais aparecem e que o catálogo não responde.
+    # É AQUI que uma segunda empresa é configurada. A Mi Piace é o primeiro caso
+    # de uso, não o sistema: nada de nome, emoji ou vocabulário de gelateria
+    # deve estar escrito no código. Uma açaiteria sobe o mesmo binário com
+    # STORE_NAME e STORE_EMOJI diferentes e um catálogo próprio.
+    #
+    # O desenho é um deploy por loja — sem `tenant_id`, sem tabela de
+    # configuração. Para o tamanho deste produto, uma instância por cliente é
+    # mais simples de operar e de entender do que multi-tenancy.
+
+    # Os defaults abaixo são genéricos de propósito: o nome de um cliente não
+    # pertence ao código. Quem instala preenche no `.env` (veja `.env.example`).
+    #: Como a loja se apresenta ao cliente no WhatsApp e no painel.
+    store_name: str = "Nossa Loja"
+    #: Emoji que abre o cardápio e a saudação. Vazio = nenhum.
+    store_emoji: str = ""
+    #: O ramo, em uma palavra, para o prompt situar o modelo ("gelateria",
+    #: "açaiteria", "doceria"). Não muda o que ele pode fazer, só o vocabulário.
+    store_segment: str = "loja"
+    #: Cidade do recebedor — o BR Code do Pix carrega esse campo.
+    store_city: str = ""
+
+    # As quatro abaixo não são obrigatórias, e é de propósito: vazias, o agente
+    # admite que não sabe em vez de inventar ("a gente abre às 10h" numa loja
+    # fechada é pior do que "não tenho certeza"). Preenchidas, ele responde na
+    # hora — são as perguntas que mais aparecem e que o catálogo não responde.
     #: "Seg a sáb, das 14h às 22h"
     store_hours: str | None = None
     #: "Rua das Flores, 123 — Centro"

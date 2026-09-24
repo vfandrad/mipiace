@@ -6,7 +6,7 @@ import { useLayoutEffect, useCallback, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { BarChart3, MessageSquare, Package, Store } from 'lucide-react';
-import logoMiPiace from '@/assets/logo-mipiace.png';
+import { StoreMark } from '@/components/layout/StoreMark';
 
 const NAV_ITEMS = [
   { path: '/producao', label: 'Produção', icon: Store },
@@ -51,11 +51,7 @@ export function Header() {
     <header className="sticky top-0 z-50 w-full border-b border-border bg-card/80 backdrop-blur-sm pt-safe">
       <div className="container flex h-16 items-center justify-between gap-2">
         <Link to="/" className="flex shrink-0 items-center gap-2">
-          <img
-            src={logoMiPiace}
-            alt="Mi Piace Gelato"
-            className="h-8 sm:h-10 object-contain"
-          />
+          <StoreMark />
         </Link>
 
         <nav ref={navRef} className="relative flex shrink-0 items-center bg-secondary rounded-lg p-1">
