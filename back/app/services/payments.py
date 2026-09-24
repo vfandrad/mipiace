@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.db.models import Order, Payment, WebhookEvent
+from app.domain.cart import money
 from app.domain.enums import OrderStatus, PaymentStatus
-from app.services import pricing
 from app.services.orders import OrderError, OrderNotFoundError, get_order
 from app.services.pix_provider import (
     PaymentStatusResult,
@@ -151,7 +151,7 @@ async def create_pix_for_order(session: AsyncSession, order_id: UUID) -> PixChar
             "provider": charge.provider,
             "provider_payment_id": charge.provider_payment_id,
             "method": "pix",
-            "amount": pricing.money(charge.amount),
+            "amount": money(charge.amount),
             "status": PaymentStatus.PENDENTE,
             "qr_code": charge.qr_code,
             "qr_code_base64": charge.qr_code_base64,
@@ -224,7 +224,7 @@ async def notify_agent_payment_approved(session: AsyncSession, order_id: UUID) -
     paralelo), o pagamento continua registrado.
     """
     try:
-        from app.agent.runner import notify_payment_approved
+        from app.agent.runner import notify_payment_approved  # noqa: PLC0415
     except ImportError:  # pragma: no cover - agente opcional
         logger.warning("app.agent.runner indisponível; cliente não foi notificado.")
         return

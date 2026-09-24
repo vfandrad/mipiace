@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.db.models import Order, OrderItem, OrderItemComplement, order_code_seq
-from app.domain.cart import Cart
+from app.domain.cart import Cart, item_unit_price, money
 from app.domain.enums import FulfillmentType, OrderChannel, OrderStatus, PaymentStatus
 from app.schemas.order import OrderCreated, OrderSummary, OrderSummaryItem
 from app.services import customers as customers_service
@@ -199,9 +199,9 @@ async def create_order_from_cart(
             order_id=order.id,
             product_id=cart_item.product_id,
             product_name_snapshot=cart_item.product_name,
-            unit_base_price=pricing.money(cart_item.unit_base_price),
+            unit_base_price=money(cart_item.unit_base_price),
             quantity=cart_item.quantity,
-            line_total=pricing.item_line_total(cart_item),
+            line_total=cart_item.line_total,
             details=cart_item.details,
         )
         session.add(item)
@@ -212,7 +212,7 @@ async def create_order_from_cart(
                     order_item_id=item.id,
                     complement_id=complement.id,
                     complement_name_snapshot=complement.name,
-                    extra_price_snapshot=pricing.money(complement.extra_price),
+                    extra_price_snapshot=money(complement.extra_price),
                 )
             )
 
@@ -255,7 +255,7 @@ async def update_order_status(
 
 
 def _summary_item(item: OrderItem) -> OrderSummaryItem:
-    unit_price = pricing.item_unit_price(
+    unit_price = item_unit_price(
         item.unit_base_price, (c.extra_price_snapshot for c in item.complements)
     )
     return OrderSummaryItem(

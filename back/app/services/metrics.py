@@ -7,11 +7,12 @@ cancelada) mora no fragmento `_VALID_SALE` e nas views do `schema.sql`.
 from __future__ import annotations
 
 from decimal import Decimal
-
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.cart import money
 from app.schemas.metrics import (
     DailySales,
     HourlySales,
@@ -19,7 +20,6 @@ from app.schemas.metrics import (
     MetricsSummary,
     ProductSales,
 )
-from app.services.pricing import money
 
 ZERO = Decimal("0.00")
 
