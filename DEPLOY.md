@@ -2,7 +2,7 @@
 
 Do servidor vazio até o cliente mandar "oi" no WhatsApp e pagar o Pix.
 Para entender o sistema antes, leia o [README](README.md); para saber onde
-cada coisa mora no código, o [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md).
+cada coisa mora no código, o [PROJECT.md](PROJECT.md).
 
 Tudo que está aqui roda como um usuário comum com acesso ao Docker. O que
 aparece depois de `#` é comentário, não precisa digitar.
@@ -321,6 +321,59 @@ ALTER INDEX IF EXISTS idx_complements_flavor_category RENAME TO idx_complements_
 ```sql
 UPDATE complements SET extra_price = 0 WHERE extra_price <> 0;
 ```
+
+**Grupo de complementos compartilhado entre produtos** — a maior mudança de
+schema até hoje, e a que mais muda o dia a dia do lojista.
+
+Antes, cada produto tinha o SEU grupo de sabores, logo a sua cópia da lista: os
+31 sabores da casa viravam 93 linhas em `complements`. Marcar "pistache acabou"
+custava três cliques, e os três podiam divergir — quem pedia o pote médio via
+pistache, quem pedia o grande não via. Agora o grupo é uma lista compartilhada
+e a regra de escolha ("escolhe 3") mora no vínculo `product_groups`, que é o
+modelo do Anota Aí e do iFood.
+
+O arquivo está em `back/db/migrations/2026-09-grupo-compartilhado.sql`:
+
+```bash
+docker compose exec -T db psql -U postgres -d postgres     -v ON_ERROR_STOP=1 < back/db/migrations/2026-09-grupo-compartilhado.sql
+```
+
+Ele roda inteiro numa transação — ou passa tudo, ou não muda nada. **Faça
+backup antes** (`pg_dump`), como sempre.
+
+O passo delicado está lá dentro e é o terceiro: `order_item_complements`
+aponta para `complements` com `ON DELETE RESTRICT`, então o histórico de vendas
+é **repontado** para a linha que fica antes de qualquer cópia ser apagada. Sem
+isso a migração falharia — e, pior, forçá-la apagaria o que o cliente pediu.
+
+A migração agrupa por **conjunto de sabores**: grupos que oferecem exatamente a
+mesma lista viram um só; um grupo com lista diferente (uma "Coberturas" ao lado
+de "Sabores") continua separado. Então ela é segura para um cardápio que já
+saiu do caso da Mi Piace.
+
+Depois de aplicar, confira:
+
+```sql
+SELECT (SELECT count(*) FROM complements)        AS sabores,
+       (SELECT count(*) FROM complement_groups)  AS listas,
+       (SELECT count(*) FROM product_groups)     AS vinculos;
+-- No cardápio da Mi Piace: 31 sabores, 1 lista, 3 vínculos (era 93 / 3 / 0).
+```
+
+**Variáveis novas no mesmo deploy.** A identidade da loja saiu do código e
+virou configuração; sem estas, o bot se apresenta como "Nossa Loja":
+
+```bash
+STORE_NAME=Mi Piace Gelateria
+STORE_EMOJI=🍨
+STORE_SEGMENT=gelateria
+STORE_CITY=SAO PAULO
+STORE_LOGO_URL=/logo-mipiace.png
+```
+
+`STORE_NAME` e `STORE_LOGO_URL` também entram no bundle do painel
+(`VITE_STORE_NAME`, `VITE_STORE_LOGO_URL`), então **o front precisa ser
+rebuildado** — não basta reiniciar o container.
 
 **Trocar segredos:**
 
