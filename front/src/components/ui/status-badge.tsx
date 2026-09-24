@@ -4,7 +4,7 @@
  */
 
 import type { OrderStatus, PaymentStatus } from '@/types/order';
-import { ORDER_STATUS_INFO, paymentInfo, statusPillClass } from '@/lib/status';
+import { ORDER_STATUS_INFO, paymentInfo } from '@/lib/status';
 import { cn } from '@/lib/utils';
 
 interface StatusBadgeProps {
@@ -17,7 +17,7 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
     <span
       className={cn(
         'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium',
-        statusPillClass(status),
+        ORDER_STATUS_INFO[status].pill,
         className,
       )}
     >

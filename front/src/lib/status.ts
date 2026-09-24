@@ -2,53 +2,74 @@
  * Rótulos e cores dos status — a única tabela de status do painel.
  *
  * Antes cada tela mantinha a sua (Kanban, Dashboard, StatusBadge e a lista de
- * pedidos recentes), e elas divergiam. Aqui ficam o texto e o *tom* de cor;
- * cada tela monta a classe do jeito que precisa, porque os usos são diferentes:
- * a coluna do Kanban pinta uma borda, o Dashboard pinta um bloco inteiro e o
- * badge pinta uma pílula.
+ * pedidos recentes), e elas divergiam. Aqui ficam o texto e as classes.
+ *
+ * **As classes são literais, e isso não é verbosidade — é o que faz o estilo
+ * existir.** Antes este arquivo guardava um *tom* (`'new'`, `'ready'`) e três
+ * funções montavam a classe por interpolação: `` `status-${tone}` ``,
+ * `` `border-b-status-${tone}` ``, `` `bg-status-${tone}-bg` ``. O Tailwind
+ * descobre quais classes gerar varrendo o texto do código-fonte; string montada
+ * em tempo de execução ele não enxerga, então essas classes simplesmente não
+ * iam para o CSS final. No build, `border-b-status-*` e `.status-new` tinham
+ * zero ocorrências: a barra colorida do cabeçalho das colunas do Kanban e todas
+ * as pílulas de status saíam sem cor nenhuma em produção.
+ *
+ * Por isso cada classe aqui aparece inteira, escrita à mão. É a regra da casa:
+ * nenhuma classe do Tailwind pode ser montada por concatenação.
  */
 
 import type { OrderStatus, PaymentStatus } from '@/types/order';
-
-/** Tom de cor de cada status; vira classe Tailwind nas funções abaixo. */
-type Tone = 'new' | 'production' | 'ready' | 'delivered' | 'danger';
 
 interface StatusInfo {
   /** Texto no singular: "Novo" (badge de um pedido). */
   label: string;
   /** Texto no plural: "Novos" (cabeçalho de coluna/bloco contador). */
   plural: string;
-  tone: Tone;
+  /** Pílula do badge. */
+  pill: string;
+  /** Borda inferior do cabeçalho da coluna do Kanban. */
+  border: string;
+  /** Bloco contador do Dashboard. */
+  tile: string;
 }
 
 export const ORDER_STATUS_INFO: Record<OrderStatus, StatusInfo> = {
-  novo: { label: 'Novo', plural: 'Novos', tone: 'new' },
-  preparando: { label: 'Preparando', plural: 'Preparando', tone: 'production' },
-  entrega: { label: 'Saiu p/ entrega', plural: 'Em entrega', tone: 'ready' },
-  finalizado: { label: 'Finalizado', plural: 'Finalizados', tone: 'delivered' },
-  cancelado: { label: 'Cancelado', plural: 'Cancelados', tone: 'danger' },
+  novo: {
+    label: 'Novo',
+    plural: 'Novos',
+    pill: 'bg-status-new-bg text-status-new font-medium',
+    border: 'border-b-status-new',
+    tile: 'bg-status-new-bg text-status-new',
+  },
+  preparando: {
+    label: 'Preparando',
+    plural: 'Preparando',
+    pill: 'bg-status-production-bg text-status-production font-medium',
+    border: 'border-b-status-production',
+    tile: 'bg-status-production-bg text-status-production',
+  },
+  entrega: {
+    label: 'Saiu p/ entrega',
+    plural: 'Em entrega',
+    pill: 'bg-status-ready-bg text-status-ready font-medium',
+    border: 'border-b-status-ready',
+    tile: 'bg-status-ready-bg text-status-ready',
+  },
+  finalizado: {
+    label: 'Finalizado',
+    plural: 'Finalizados',
+    pill: 'bg-status-delivered-bg text-status-delivered font-medium',
+    border: 'border-b-status-delivered',
+    tile: 'bg-status-delivered-bg text-status-delivered',
+  },
+  cancelado: {
+    label: 'Cancelado',
+    plural: 'Cancelados',
+    pill: 'bg-destructive/10 text-destructive font-medium',
+    border: 'border-b-destructive',
+    tile: 'bg-destructive/10 text-destructive',
+  },
 };
-
-/** Pílula do badge de status. */
-export function statusPillClass(status: OrderStatus): string {
-  const tone = ORDER_STATUS_INFO[status].tone;
-  return tone === 'danger'
-    ? 'bg-destructive/10 text-destructive font-medium'
-    : `status-${tone}`;
-}
-
-/** Borda inferior do cabeçalho da coluna do Kanban. */
-export function statusBorderClass(status: OrderStatus): string {
-  const tone = ORDER_STATUS_INFO[status].tone;
-  return tone === 'danger' ? 'border-b-destructive' : `border-b-status-${tone}`;
-}
-
-/** Fundo e texto do bloco contador do Dashboard. */
-export function statusTileClass(status: OrderStatus): { bg: string; text: string } {
-  const tone = ORDER_STATUS_INFO[status].tone;
-  if (tone === 'danger') return { bg: 'bg-destructive/10', text: 'text-destructive' };
-  return { bg: `bg-status-${tone}-bg`, text: `text-status-${tone}` };
-}
 
 const PAYMENT_INFO: Record<PaymentStatus, { label: string; className: string }> = {
   pago: { label: 'Pago', className: 'bg-status-ready-bg text-status-ready' },

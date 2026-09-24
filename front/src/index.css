@@ -2,7 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Design System - Mi Piace Gelateria */
+/* Design System.
+   A paleta é a identidade visual da loja: para outra casa, troque os tokens
+   deste bloco — nenhum componente escreve cor fora deles. */
 /* Paleta terrosa com verde oliva como cor primária */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -59,20 +61,6 @@
     --status-delivered: 30 15% 55%;      /* Cinza terroso */
     --status-delivered-bg: 30 15% 94%;
 
-    /* Payment Status */
-    --paid: 84 35% 42%;
-    --pending: 35 70% 50%;
-
-    /* Sidebar */
-    --sidebar-background: 40 20% 99%;
-    --sidebar-foreground: 30 20% 18%;
-    --sidebar-primary: 84 25% 32%;
-    --sidebar-primary-foreground: 40 20% 99%;
-    --sidebar-accent: 80 18% 90%;
-    --sidebar-accent-foreground: 30 20% 18%;
-    --sidebar-border: 35 18% 88%;
-    --sidebar-ring: 84 25% 32%;
-
     /* Chart Colors - Tons terrosos */
     --chart-1: 84 30% 38%;               /* Verde oliva */
     --chart-2: 35 55% 48%;               /* Âmbar */
@@ -81,35 +69,6 @@
     --chart-5: 30 20% 55%;               /* Taupe */
   }
 
-  .dark {
-    --background: 220 20% 10%;
-    --foreground: 210 20% 98%;
-    --card: 220 20% 14%;
-    --card-foreground: 210 20% 98%;
-    --popover: 220 20% 14%;
-    --popover-foreground: 210 20% 98%;
-    --primary: 0 0% 100%;
-    --primary-foreground: 220 20% 10%;
-    --secondary: 220 14% 20%;
-    --secondary-foreground: 210 20% 98%;
-    --muted: 220 14% 20%;
-    --muted-foreground: 220 10% 60%;
-    --accent: 220 14% 20%;
-    --accent-foreground: 210 20% 98%;
-    --destructive: 0 62% 50%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 220 14% 20%;
-    --input: 220 14% 20%;
-    --ring: 210 20% 98%;
-    --sidebar-background: 220 20% 10%;
-    --sidebar-foreground: 210 20% 98%;
-    --sidebar-primary: 0 0% 100%;
-    --sidebar-primary-foreground: 220 20% 10%;
-    --sidebar-accent: 220 14% 20%;
-    --sidebar-accent-foreground: 210 20% 98%;
-    --sidebar-border: 220 14% 20%;
-    --sidebar-ring: 210 20% 98%;
-  }
 }
 
 @layer base {
@@ -164,23 +123,6 @@
     @apply bg-card rounded-xl border border-border/50 p-6 shadow-sm hover:shadow-md transition-shadow duration-200;
   }
 
-  /* Status badges */
-  .status-new {
-    @apply bg-[hsl(var(--status-new-bg))] text-[hsl(var(--status-new))] font-medium;
-  }
-
-  .status-production {
-    @apply bg-[hsl(var(--status-production-bg))] text-[hsl(var(--status-production))] font-medium;
-  }
-
-  .status-ready {
-    @apply bg-[hsl(var(--status-ready-bg))] text-[hsl(var(--status-ready))] font-medium;
-  }
-
-  .status-delivered {
-    @apply bg-[hsl(var(--status-delivered-bg))] text-[hsl(var(--status-delivered))] font-medium;
-  }
-
   /* Order card */
   .order-card {
     @apply bg-card rounded-lg border border-border/50 p-4 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer;
@@ -197,10 +139,6 @@
   /* Action button */
   .action-btn {
     @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none;
-  }
-
-  .action-btn-primary {
-    @apply action-btn bg-primary text-primary-foreground hover:bg-primary/90;
   }
 
   .action-btn-secondary {
@@ -277,15 +215,6 @@
      esses pedacos, entao quem encosta neles precisa se afastar. */
   .pt-safe {
     padding-top: env(safe-area-inset-top, 0px);
-  }
-
-  .pb-safe {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
-
-  .px-safe {
-    padding-left: env(safe-area-inset-left, 0px);
-    padding-right: env(safe-area-inset-right, 0px);
   }
 
   /* Altura da tela que o Safari do iOS realmente mostra. `100vh` la conta a

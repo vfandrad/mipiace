@@ -4,7 +4,7 @@
 
 import type { Order, OrderStatus } from '@/types/order';
 import { OrderCard } from './OrderCard';
-import { ORDER_STATUS_INFO, statusBorderClass } from '@/lib/status';
+import { ORDER_STATUS_INFO } from '@/lib/status';
 import { cn } from '@/lib/utils';
 
 interface KanbanColumnProps {
@@ -17,7 +17,7 @@ export function KanbanColumn({ status, orders, onStatusChange }: KanbanColumnPro
 
   return (
     <div className="kanban-column flex flex-col">
-      <div className={cn('pb-3 mb-4 border-b-2', statusBorderClass(status))}>
+      <div className={cn('pb-3 mb-4 border-b-2', ORDER_STATUS_INFO[status].border)}>
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-foreground">{ORDER_STATUS_INFO[status].plural}</h3>
           <span className="flex items-center justify-center h-6 w-6 rounded-full bg-card text-sm font-medium shadow-sm">

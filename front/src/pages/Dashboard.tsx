@@ -7,7 +7,7 @@
 
 import { useState } from 'react';
 import { DollarSign, Package, ShoppingCart, TrendingUp } from 'lucide-react';
-import { Header } from '@/components/layout/Header';
+import { Page, PageTitle } from '@/components/layout/Page';
 import { RefreshButton } from '@/components/common/RefreshButton';
 import { KPICard } from '@/components/dashboard/KPICard';
 import { SalesChart } from '@/components/dashboard/SalesChart';
@@ -20,7 +20,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useMetrics } from '@/hooks/use-metrics';
 import { useOrders } from '@/hooks/use-orders';
 import { formatCurrency, formatInteger, toNumber } from '@/lib/format';
-import { ORDER_STATUS_INFO, statusTileClass } from '@/lib/status';
+import { STORE_NAME } from '@/lib/config';
+import { ORDER_STATUS_INFO } from '@/lib/status';
+import { cn } from '@/lib/utils';
 import { RANGE_LABELS } from '@/lib/transforms';
 import type { MetricsRange } from '@/types/metrics';
 import type { OrderStatus } from '@/types/order';
@@ -47,137 +49,125 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-screen-safe bg-background">
-      <Header />
-      <main className="container py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-            <p className="text-muted-foreground">Acompanhe o desempenho da sua gelateria</p>
-          </div>
-          <div className="flex items-center gap-2">
+    <Page className="space-y-6">
+      <PageTitle
+        title="Dashboard"
+        subtitle={`Acompanhe o desempenho de ${STORE_NAME}`}
+        actions={
+          <>
             <DateFilter value={range} onChange={setRange} />
             <RefreshButton onRefresh={() => refetchAll()} />
-          </div>
+          </>
+        }
+      />
+
+      {/* KPIs */}
+      {summary.isLoading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-32 rounded-lg" />
+          ))}
         </div>
-
-        {/* KPIs */}
-        {summary.isLoading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[0, 1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-32 rounded-lg" />
-            ))}
-          </div>
-        ) : summary.isError ? (
-          <QueryError
-            error={summary.error}
-            onRetry={() => summary.refetch()}
-            title="Não foi possível carregar os indicadores"
+      ) : summary.isError ? (
+        <QueryError
+          error={summary.error}
+          onRetry={() => summary.refetch()}
+          title="Não foi possível carregar os indicadores"
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <KPICard
+            title={`Vendas (${range})`}
+            value={formatCurrency(data?.total_vendas)}
+            change={toNumber(data?.variacao_percentual)}
+            changeLabel="vs período anterior"
+            icon={<DollarSign className="h-5 w-5 text-muted-foreground" />}
           />
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <KPICard
-              title={`Vendas (${range})`}
-              value={formatCurrency(data?.total_vendas)}
-              change={toNumber(data?.variacao_percentual)}
-              changeLabel="vs período anterior"
-              icon={<DollarSign className="h-5 w-5 text-muted-foreground" />}
-            />
-            <KPICard
-              title="Pedidos"
-              value={formatInteger(data?.total_pedidos)}
-              icon={<ShoppingCart className="h-5 w-5 text-muted-foreground" />}
-            />
-            <KPICard
-              title="Ticket médio"
-              value={formatCurrency(data?.ticket_medio)}
-              icon={<TrendingUp className="h-5 w-5 text-muted-foreground" />}
-            />
-            <KPICard
-              title="Em produção agora"
-              value={formatInteger(statusCount('novo') + statusCount('preparando'))}
-              icon={<Package className="h-5 w-5 text-muted-foreground" />}
-            />
-          </div>
-        )}
-
-        {/* Gráficos */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <SalesChart
-            data={daily.data ?? []}
-            isLoading={daily.isLoading}
-            isError={daily.isError}
-            error={daily.error}
-            onRetry={() => daily.refetch()}
-            periodLabel={periodLabel}
+          <KPICard
+            title="Pedidos"
+            value={formatInteger(data?.total_pedidos)}
+            icon={<ShoppingCart className="h-5 w-5 text-muted-foreground" />}
           />
-          <ProductsChart
-            data={products.data ?? []}
-            isLoading={products.isLoading}
-            isError={products.isError}
-            error={products.error}
-            onRetry={() => products.refetch()}
+          <KPICard
+            title="Ticket médio"
+            value={formatCurrency(data?.ticket_medio)}
+            icon={<TrendingUp className="h-5 w-5 text-muted-foreground" />}
           />
-          <HourlyChart
-            data={hourly.data ?? []}
-            isLoading={hourly.isLoading}
-            isError={hourly.isError}
-            error={hourly.error}
-            onRetry={() => hourly.refetch()}
+          <KPICard
+            title="Em produção agora"
+            value={formatInteger(statusCount('novo') + statusCount('preparando'))}
+            icon={<Package className="h-5 w-5 text-muted-foreground" />}
           />
-
-          <div className="kpi-card">
-            <h3 className="font-semibold mb-4 text-sm sm:text-base">Status de produção</h3>
-            {orders.isLoading && summary.isLoading ? (
-              <div className="grid grid-cols-2 gap-3">
-                {[0, 1, 2, 3].map((i) => (
-                  <Skeleton key={i} className="h-20 rounded-lg" />
-                ))}
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-3">
-                {PRODUCTION_STATUSES.map((status) => {
-                  const tile = statusTileClass(status);
-                  return (
-                    <div key={status} className={`p-3 sm:p-4 rounded-lg ${tile.bg}`}>
-                      <p className={`text-2xl sm:text-3xl font-bold ${tile.text}`}>
-                        {statusCount(status)}
-                      </p>
-                      <p className={`text-xs sm:text-sm ${tile.text}/80 mt-1`}>
-                        {ORDER_STATUS_INFO[status].plural}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         </div>
+      )}
 
-        {/* Pedidos recentes */}
-        {orders.isError ? (
-          <QueryError
-            error={orders.error}
-            onRetry={() => orders.refetch()}
-            title="Não foi possível carregar os pedidos recentes"
-          />
-        ) : orders.isLoading ? (
-          <Skeleton className="h-48 rounded-lg" />
-        ) : (
-          <RecentOrders orders={orders.orders} />
-        )}
+      {/* Gráficos */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <SalesChart
+          data={daily.data ?? []}
+          isLoading={daily.isLoading}
+          isError={daily.isError}
+          error={daily.error}
+          onRetry={() => daily.refetch()}
+          periodLabel={periodLabel}
+        />
+        <ProductsChart
+          data={products.data ?? []}
+          isLoading={products.isLoading}
+          isError={products.isError}
+          error={products.error}
+          onRetry={() => products.refetch()}
+        />
+        <HourlyChart
+          data={hourly.data ?? []}
+          isLoading={hourly.isLoading}
+          isError={hourly.isError}
+          error={hourly.error}
+          onRetry={() => hourly.refetch()}
+        />
 
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={refetchAll}
-            className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-4"
-          >
-            Atualizar métricas
-          </button>
+        <div className="kpi-card">
+          <h3 className="font-semibold mb-4 text-sm sm:text-base">Status de produção</h3>
+          {orders.isLoading && summary.isLoading ? (
+            <div className="grid grid-cols-2 gap-3">
+              {[0, 1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-20 rounded-lg" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {PRODUCTION_STATUSES.map((status) => (
+                // `tile` traz fundo e texto juntos; a legenda usa opacity-80
+                // em vez de `text-...(/80)` porque cor montada com barra é
+                // outra classe que o Tailwind não enxergaria (ver lib/status).
+                <div
+                  key={status}
+                  className={cn('p-3 sm:p-4 rounded-lg', ORDER_STATUS_INFO[status].tile)}
+                >
+                  <p className="text-2xl sm:text-3xl font-bold">{statusCount(status)}</p>
+                  <p className="text-xs sm:text-sm opacity-80 mt-1">
+                    {ORDER_STATUS_INFO[status].plural}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      </main>
-    </div>
+      </div>
+
+      {/* Pedidos recentes */}
+      {orders.isError ? (
+        <QueryError
+          error={orders.error}
+          onRetry={() => orders.refetch()}
+          title="Não foi possível carregar os pedidos recentes"
+        />
+      ) : orders.isLoading ? (
+        <Skeleton className="h-48 rounded-lg" />
+      ) : (
+        <RecentOrders orders={orders.orders} />
+      )}
+    </Page>
   );
 };
 
