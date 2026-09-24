@@ -53,6 +53,11 @@ export function toDate(value: Date | string | null | undefined): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/** Data em milissegundos, para ordenar. Inválida ou ausente vira 0 (vai ao fim). */
+export function toMillis(value: Date | string | null | undefined): number {
+  return toDate(value)?.getTime() ?? 0;
+}
+
 /** Minutos decorridos desde a data (nunca negativo). */
 export function minutesSince(value: Date | string | null | undefined, now = Date.now()): number {
   const date = toDate(value);

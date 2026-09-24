@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Header } from '@/components/layout/Header';
+import { Page, PageTitle } from '@/components/layout/Page';
 import { KanbanColumn } from '@/components/producao/KanbanColumn';
 import { QueryError } from '@/components/common/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -40,15 +40,12 @@ const Producao = () => {
   const cancelledCount = orders.filter((order) => order.status === 'cancelado').length;
 
   return (
-    <div className="min-h-screen-safe bg-background">
-      <Header />
-      <main className="container py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
-        <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Produção</h1>
-            <p className="text-muted-foreground">Gerencie o fluxo de pedidos</p>
-          </div>
-          <div className="flex items-center gap-2">
+    <Page className="space-y-6">
+      <PageTitle
+        title="Produção"
+        subtitle="Gerencie o fluxo de pedidos"
+        actions={
+          <>
             {/* Olho no lugar do texto: "Mostrar cancelados (0)" ocupava metade
                 da faixa no celular para uma ação secundária. O contador vira um
                 selo ao lado quando existe algo escondido. O `title` faz as
@@ -74,40 +71,40 @@ const Producao = () => {
               )}
             </Button>
             <RefreshButton onRefresh={() => refetch()} />
-          </div>
-        </div>
+          </>
+        }
+      />
 
-        {isError ? (
-          <QueryError
-            error={error}
-            onRetry={() => refetch()}
-            title="Não foi possível carregar os pedidos"
-          />
-        ) : isLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {KANBAN_STATUSES.map((status) => (
-              <Skeleton key={status} className="h-64 rounded-lg" />
-            ))}
-          </div>
-        ) : (
-          <div
-            className={cn(
-              'grid grid-cols-1 md:grid-cols-2 gap-4',
-              showCancelled ? 'xl:grid-cols-4' : 'xl:grid-cols-3',
-            )}
-          >
-            {columns.map((status) => (
-              <KanbanColumn
-                key={status}
-                status={status}
-                orders={orders.filter((order) => order.status === status)}
-                onStatusChange={handleStatusChange}
-              />
-            ))}
-          </div>
-        )}
-      </main>
-    </div>
+      {isError ? (
+        <QueryError
+          error={error}
+          onRetry={() => refetch()}
+          title="Não foi possível carregar os pedidos"
+        />
+      ) : isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {KANBAN_STATUSES.map((status) => (
+            <Skeleton key={status} className="h-64 rounded-lg" />
+          ))}
+        </div>
+      ) : (
+        <div
+          className={cn(
+            'grid grid-cols-1 md:grid-cols-2 gap-4',
+            showCancelled ? 'xl:grid-cols-4' : 'xl:grid-cols-3',
+          )}
+        >
+          {columns.map((status) => (
+            <KanbanColumn
+              key={status}
+              status={status}
+              orders={orders.filter((order) => order.status === status)}
+              onStatusChange={handleStatusChange}
+            />
+          ))}
+        </div>
+      )}
+    </Page>
   );
 };
 

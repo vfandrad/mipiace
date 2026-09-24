@@ -1,5 +1,5 @@
 /**
- * Cliente HTTP da API Mi Piace.
+ * Cliente HTTP do backend.
  *
  * Única porta de saída do front. Duas regras aqui:
  *  - a URL base vem do ambiente (`VITE_API_BASE_URL`), nunca hardcoded;
@@ -14,12 +14,13 @@ import type {
   ComplementCategoryInput,
   ComplementCategory,
   GroupInput,
+  GroupLibraryEntry,
   Product,
   ProductInput,
   ProductListResponse,
   ReorderKind,
 } from '@/types/catalog';
-import type { ApiOrder, OrderStatus } from '@/types/order';
+import type { Order, OrderStatus } from '@/types/order';
 import type {
   DailySales,
   HourlySales,
@@ -93,6 +94,17 @@ export function extractErrorMessage(payload: unknown, status: number): string {
   }
 
   return fallbackMessageForStatus(status);
+}
+
+/**
+ * A mensagem de um erro capturado, para a descrição do toast.
+ *
+ * Os três hooks de mutação escreviam `error instanceof Error ? ... : undefined`
+ * cada um por conta. `undefined` é proposital: o toast já tem título, e um
+ * segundo texto genérico embaixo só rouba espaço.
+ */
+export function errorDescription(error: unknown): string | undefined {
+  return error instanceof Error ? error.message : undefined;
 }
 
 type QueryValue = string | number | boolean | undefined | null;
@@ -238,6 +250,11 @@ export function deleteComplementCategory(id: string): Promise<void> {
   return request<void>(`/api/complement-categories/${id}`, { method: 'DELETE' });
 }
 
+/** A biblioteca de grupos — é dela que sai o "usar um grupo que já existe". */
+export function listGroups(): Promise<GroupLibraryEntry[]> {
+  return request<GroupLibraryEntry[]>('/api/groups').then((groups) => groups ?? []);
+}
+
 export function createGroup(productId: string, data: GroupInput): Promise<ComplementGroup> {
   return request<ComplementGroup>(`/api/products/${productId}/groups`, {
     method: 'POST',
@@ -245,12 +262,21 @@ export function createGroup(productId: string, data: GroupInput): Promise<Comple
   });
 }
 
+/**
+ * Edita o grupo deste produto: a regra de escolha (do vínculo) e/ou o nome (da
+ * lista compartilhada). `id` é o do vínculo — o mesmo que vem em `group.id`.
+ */
 export function updateGroup(id: string, data: Partial<GroupInput>): Promise<ComplementGroup> {
-  return request<ComplementGroup>(`/api/groups/${id}`, { method: 'PATCH', body: data });
+  return request<ComplementGroup>(`/api/product-groups/${id}`, { method: 'PATCH', body: data });
 }
 
+/**
+ * Tira o grupo DESTE produto. A lista continua existindo para os outros — quem
+ * apaga a lista inteira é `DELETE /api/groups/{group_id}`, que o painel não
+ * expõe porque apagaria os sabores de todos os produtos de uma vez.
+ */
 export function deleteGroup(id: string): Promise<void> {
-  return request<void>(`/api/groups/${id}`, { method: 'DELETE' });
+  return request<void>(`/api/product-groups/${id}`, { method: 'DELETE' });
 }
 
 export function createComplement(groupId: string, data: ComplementInput): Promise<Complement> {
@@ -275,15 +301,15 @@ export function deleteComplement(id: string): Promise<void> {
 export async function fetchOrders(params?: {
   status?: OrderStatus;
   limit?: number;
-}): Promise<ApiOrder[]> {
-  const data = await request<ApiOrder[] | { orders: ApiOrder[] }>('/api/orders', {
+}): Promise<Order[]> {
+  const data = await request<Order[] | { orders: Order[] }>('/api/orders', {
     query: { status: params?.status, limit: params?.limit },
   });
-  return unwrapList<ApiOrder>(data, 'orders');
+  return unwrapList<Order>(data, 'orders');
 }
 
-export function updateOrderStatus(id: string, status: OrderStatus): Promise<ApiOrder> {
-  return request<ApiOrder>(`/api/orders/${id}/status`, {
+export function updateOrderStatus(id: string, status: OrderStatus): Promise<Order> {
+  return request<Order>(`/api/orders/${id}/status`, {
     method: 'PATCH',
     body: { status },
   });

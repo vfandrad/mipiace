@@ -7,9 +7,9 @@ import {
   toProductPoints,
   toSalesPoints,
 } from './transforms';
-import type { ApiOrder } from '@/types/order';
+import type { Order } from '@/types/order';
 
-const baseOrder: ApiOrder = {
+const baseOrder: Order = {
   id: 'o1',
   code: 'MP-0007',
   status: 'novo',
@@ -42,8 +42,8 @@ describe('toOrder', () => {
     const order = toOrder(baseOrder);
     expect(order.code).toBe('MP-0007');
     expect(order.total).toBe(50);
-    expect(order.deliveryFee).toBe(5);
-    expect(order.customerName).toBe('Ana');
+    expect(order.delivery_fee).toBe(5);
+    expect(order.customer_name).toBe('Ana');
     expect(order.items[0].product_name_snapshot).toBe('Pote 500ml');
     expect(order.payment?.qr_code).toBe('00020126...');
   });
@@ -61,8 +61,8 @@ describe('toOrder', () => {
       customer_name: 'Bruno',
       customer_phone: '5511888887777',
     });
-    expect(order.customerName).toBe('Bruno');
-    expect(order.customerPhone).toBe('5511888887777');
+    expect(order.customer_name).toBe('Bruno');
+    expect(order.customer_phone).toBe('5511888887777');
   });
 
   it('sobrevive a pedido sem itens, sem endereço e sem pagamento', () => {

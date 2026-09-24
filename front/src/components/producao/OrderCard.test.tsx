@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { OrderCard } from './OrderCard';
 import { toOrder } from '@/lib/transforms';
-import type { ApiOrder } from '@/types/order';
+import type { Order } from '@/types/order';
 
-const apiOrder: ApiOrder = {
+const apiOrder: Order = {
   id: 'o1',
   code: 'MP-0007',
   status: 'novo',
@@ -29,7 +29,7 @@ const apiOrder: ApiOrder = {
   payment: { amount: 50, status: 'pendente', qr_code: '00020126580014BR.GOV.BCB.PIX' },
 };
 
-function renderCard(overrides: Partial<ApiOrder> = {}, onStatusChange = vi.fn()) {
+function renderCard(overrides: Partial<Order> = {}, onStatusChange = vi.fn()) {
   render(<OrderCard order={toOrder({ ...apiOrder, ...overrides })} onStatusChange={onStatusChange} />);
   return onStatusChange;
 }

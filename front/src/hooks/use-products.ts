@@ -18,7 +18,9 @@ import {
   deleteGroup,
   deleteProduct,
   fetchComplementCategories,
+  errorDescription as describe,
   fetchProducts,
+  listGroups,
   reorderCatalog,
   updateComplement,
   updateComplementCategory,
@@ -31,6 +33,7 @@ import type {
   ComplementInput,
   ComplementCategoryInput,
   GroupInput,
+  GroupLibraryEntry,
   Product,
   ProductInput,
   ReorderKind,
@@ -38,10 +41,7 @@ import type {
 
 export const PRODUCTS_QUERY_KEY = ['products'] as const;
 const CATEGORIES_QUERY_KEY = ['complement-categories'] as const;
-
-function describe(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
+const GROUPS_QUERY_KEY = ['complement-groups'] as const;
 
 /** Aplica uma função em todos os complementos da árvore. */
 function mapComplements(
@@ -71,6 +71,13 @@ export function useProducts() {
   const categoriesQuery = useQuery({
     queryKey: CATEGORIES_QUERY_KEY,
     queryFn: fetchComplementCategories,
+  });
+
+  // A biblioteca de grupos: é ela que permite um produto novo reaproveitar a
+  // lista de sabores que já existe, em vez de ganhar uma cópia só dele.
+  const groupsQuery = useQuery({
+    queryKey: GROUPS_QUERY_KEY,
+    queryFn: listGroups,
   });
 
   const products = query.data ?? [];
@@ -154,8 +161,9 @@ export function useProducts() {
     mutationFn: ({ productId, data }: { productId: string; data: GroupInput }) =>
       createGroup(productId, data),
     onSuccess: () => {
-      toast.success('Grupo criado');
+      toast.success('Grupo adicionado ao produto');
       invalidate();
+      queryClient.invalidateQueries({ queryKey: GROUPS_QUERY_KEY });
     },
     onError: (error) => toast.error('Erro ao criar o grupo', { description: describe(error) }),
   });
@@ -246,6 +254,7 @@ export function useProducts() {
   return {
     products,
     complementCategories: categoriesQuery.data ?? [],
+    groupLibrary: (groupsQuery.data ?? []) as GroupLibraryEntry[],
     isLoading: query.isLoading,
     isError: query.isError,
     error: query.error,
@@ -279,15 +288,26 @@ export function useProducts() {
           p.id === productId ? { ...p, groups: ordenarPorIds(p.groups, ids) } : p,
         ),
       );
-      reorderMutation.mutate({ kind: 'group', ids }, { onError: () => rollback(context) });
+      reorderMutation.mutate(
+        { kind: 'product_group', ids },
+        { onError: () => rollback(context) },
+      );
     },
 
-    reorderComplements: async (groupId: string, ids: string[]) => {
+    /**
+     * `linkId` é o grupo como aquele produto o vê; a lista, porém, é
+     * compartilhada, então a nova ordem vale para todo produto que a usa — e o
+     * cache precisa mostrar isso na hora, senão a tela mente até o refetch.
+     */
+    reorderComplements: async (linkId: string, ids: string[]) => {
+      const sharedId = products
+        .flatMap((p) => p.groups)
+        .find((g) => g.id === linkId)?.group_id;
       const context = await patchCache((old) =>
         old.map((p) => ({
           ...p,
           groups: p.groups.map((g) =>
-            g.id === groupId ? { ...g, complements: ordenarPorIds(g.complements, ids) } : g,
+            g.group_id === sharedId ? { ...g, complements: ordenarPorIds(g.complements, ids) } : g,
           ),
         })),
       );

@@ -4,9 +4,9 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { fetchOrders, updateOrderStatus } from '@/lib/api';
+import { errorDescription, fetchOrders, updateOrderStatus } from '@/lib/api';
 import { toOrder } from '@/lib/transforms';
-import type { ApiOrder, OrderStatus } from '@/types/order';
+import type { Order, OrderStatus } from '@/types/order';
 
 export const ORDERS_QUERY_KEY = ['orders'] as const;
 
@@ -27,8 +27,8 @@ export function useOrders() {
     // Atualização otimista: o card muda de coluna na hora, sem esperar o servidor.
     onMutate: async ({ id, status }) => {
       await queryClient.cancelQueries({ queryKey: ORDERS_QUERY_KEY });
-      const previous = queryClient.getQueryData<ApiOrder[]>(ORDERS_QUERY_KEY);
-      queryClient.setQueryData<ApiOrder[]>(ORDERS_QUERY_KEY, (old) =>
+      const previous = queryClient.getQueryData<Order[]>(ORDERS_QUERY_KEY);
+      queryClient.setQueryData<Order[]>(ORDERS_QUERY_KEY, (old) =>
         old?.map((order) => (order.id === id ? { ...order, status } : order)),
       );
       return { previous };
@@ -36,7 +36,7 @@ export function useOrders() {
     onError: (error, _vars, context) => {
       if (context?.previous) queryClient.setQueryData(ORDERS_QUERY_KEY, context.previous);
       toast.error('Não foi possível mover o pedido', {
-        description: error instanceof Error ? error.message : undefined,
+        description: errorDescription(error),
       });
     },
     onSettled: () => {

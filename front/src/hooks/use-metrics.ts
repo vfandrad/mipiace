@@ -19,7 +19,7 @@ import type { MetricsRange } from '@/types/metrics';
 
 const STALE_TIME = 30_000;
 
-export function useMetricsSummary(range: MetricsRange) {
+function useMetricsSummary(range: MetricsRange) {
   return useQuery({
     queryKey: ['metrics', 'summary', range],
     queryFn: () => fetchMetricsSummary(range),
@@ -27,7 +27,7 @@ export function useMetricsSummary(range: MetricsRange) {
   });
 }
 
-export function useDailySales(range: MetricsRange) {
+function useDailySales(range: MetricsRange) {
   return useQuery({
     queryKey: ['metrics', 'daily-sales', range],
     queryFn: () => fetchDailySales(RANGE_TO_DAYS[range], range),
@@ -36,7 +36,7 @@ export function useDailySales(range: MetricsRange) {
   });
 }
 
-export function useProductSales(range: MetricsRange) {
+function useProductSales(range: MetricsRange) {
   return useQuery({
     queryKey: ['metrics', 'product-sales', range],
     queryFn: () => fetchProductSales(range),
@@ -45,7 +45,7 @@ export function useProductSales(range: MetricsRange) {
   });
 }
 
-export function useHourlySales(range: MetricsRange) {
+function useHourlySales(range: MetricsRange) {
   return useQuery({
     queryKey: ['metrics', 'hourly-sales', range],
     queryFn: () => fetchHourlySales(range),

@@ -71,10 +71,12 @@ describe('request', () => {
 
   it('vira ApiError de rede quando o fetch rejeita', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
-    const error = await request('/api/products').catch((e) => e);
+    const error = await request('/api/products').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
-    expect(error.status).toBe(0);
-    expect(error.message).toContain('servidor');
+    // O `as` vem depois do toBeInstanceOf acima: a asserção de tipo só é
+    // honesta porque o teste já provou que é um ApiError.
+    expect((error as ApiError).status).toBe(0);
+    expect((error as ApiError).message).toContain('servidor');
   });
 
   it('devolve undefined em 204 sem tentar parsear o corpo', async () => {

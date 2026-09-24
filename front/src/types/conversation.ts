@@ -3,16 +3,13 @@
  * Os estados espelham `back/app/domain/enums.py::ConversationState`.
  */
 
-export const CONVERSATION_STATES = [
-  'conversando',
-  'confirmando_pedido',
-  'aguardando_pagamento',
-  'concluido',
-  'atendimento_humano',
-  'cancelado',
-] as const;
-
-export type ConversationState = (typeof CONVERSATION_STATES)[number];
+export type ConversationState =
+  | 'conversando'
+  | 'confirmando_pedido'
+  | 'aguardando_pagamento'
+  | 'concluido'
+  | 'atendimento_humano'
+  | 'cancelado';
 
 export type MessageDirection = 'entrada' | 'saida';
 

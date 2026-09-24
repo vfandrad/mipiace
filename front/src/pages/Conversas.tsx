@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Bot, Hand } from 'lucide-react';
-import { Header } from '@/components/layout/Header';
+import { Page, PageTitle } from '@/components/layout/Page';
 import { Button } from '@/components/ui/button';
 import { RefreshButton } from '@/components/common/RefreshButton';
 import { ConversationList } from '@/components/conversas/ConversationList';
@@ -46,22 +46,18 @@ const Conversas = () => {
   const handoff = useHandoffMutation();
 
   return (
-    <div className="min-h-screen-safe bg-background">
-      <Header />
-      <main className="container py-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Conversas</h1>
-            <p className="text-muted-foreground">
-              Acompanhe o agente de WhatsApp e assuma o atendimento quando quiser
-            </p>
-          </div>
+    <Page className="space-y-4">
+      <PageTitle
+        title="Conversas"
+        subtitle="Acompanhe o agente de WhatsApp e assuma o atendimento quando quiser"
+        actions={
           <RefreshButton
             onRefresh={() =>
               Promise.all([conversationsQuery.refetch(), messagesQuery.refetch()])
             }
           />
-        </div>
+        }
+      />
 
         <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4">
           {/* Lista */}
@@ -146,8 +142,7 @@ const Conversas = () => {
             )}
           </section>
         </div>
-      </main>
-    </div>
+    </Page>
   );
 };
 

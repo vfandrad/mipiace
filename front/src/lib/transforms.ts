@@ -5,7 +5,7 @@
  */
 
 import { toNumber } from './format';
-import type { ApiOrder, Order, OrderStatus } from '@/types/order';
+import type { Order } from '@/types/order';
 import type {
   DailySales,
   HourlySales,
@@ -23,24 +23,23 @@ import type {
  * (`customer.name`) ou achatado (`customer_name`); aceitamos os dois para o
  * front não depender dessa escolha.
  */
-export function toOrder(api: ApiOrder): Order {
-  const created = api.created_at ? new Date(api.created_at) : new Date();
-
+export function toOrder(api: Order): Order {
   return {
-    id: api.id,
+    ...api,
     code: api.code ?? '',
-    status: (api.status ?? 'novo') as OrderStatus,
-    paymentStatus: api.payment_status ?? 'pendente',
-    fulfillmentType: api.fulfillment_type ?? 'entrega',
+    status: api.status ?? 'novo',
+    payment_status: api.payment_status ?? 'pendente',
+    fulfillment_type: api.fulfillment_type ?? 'entrega',
     channel: api.channel ?? 'whatsapp',
-    customerName: api.customer?.name ?? api.customer_name ?? '',
-    customerPhone: api.customer?.phone ?? api.customer_phone ?? '',
+    // O backend manda o cliente aninhado OU achatado; o resto do front lê só
+    // a forma achatada e não precisa saber dessa escolha.
+    customer_name: api.customer?.name ?? api.customer_name ?? '',
+    customer_phone: api.customer?.phone ?? api.customer_phone ?? '',
     address: api.address ?? null,
     subtotal: toNumber(api.subtotal),
-    deliveryFee: toNumber(api.delivery_fee),
+    delivery_fee: toNumber(api.delivery_fee),
     total: toNumber(api.total),
     notes: api.notes ?? null,
-    createdAt: Number.isNaN(created.getTime()) ? new Date() : created,
     items: (api.items ?? []).map((item) => ({
       ...item,
       quantity: toNumber(item.quantity, 1),

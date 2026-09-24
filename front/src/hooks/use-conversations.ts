@@ -8,7 +8,9 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { toMillis } from '@/lib/format';
 import {
+  errorDescription,
   fetchConversationMessages,
   fetchConversations,
   setConversationHandoff,
@@ -27,15 +29,9 @@ export function useConversations() {
     // Mais recente primeiro; conversa sem mensagem vai para o fim.
     select: (rows) =>
       [...(rows ?? [])].sort(
-        (a, b) => timestamp(b.last_message_at) - timestamp(a.last_message_at),
+        (a, b) => toMillis(b.last_message_at) - toMillis(a.last_message_at),
       ),
   });
-}
-
-function timestamp(value: string | null | undefined): number {
-  if (!value) return 0;
-  const parsed = new Date(value).getTime();
-  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 export function useConversationMessages(conversationId: string | null) {
@@ -72,7 +68,7 @@ export function useHandoffMutation() {
         queryClient.setQueryData(CONVERSATIONS_QUERY_KEY, context.previous);
       }
       toast.error('Não foi possível alterar o atendimento', {
-        description: error instanceof Error ? error.message : undefined,
+        description: errorDescription(error),
       });
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: CONVERSATIONS_QUERY_KEY }),

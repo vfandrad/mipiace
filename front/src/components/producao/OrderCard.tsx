@@ -42,13 +42,13 @@ const ACTION_CONFIG: Partial<
 
 export function OrderCard({ order, onStatusChange }: OrderCardProps) {
   const [copied, setCopied] = useState(false);
-  const minutesAgo = minutesSince(order.createdAt);
+  const minutesAgo = minutesSince(order.created_at);
   const isOpen = order.status !== 'finalizado' && order.status !== 'cancelado';
   const isUrgent = minutesAgo > 15 && isOpen;
   const nextStatus = nextOrderStatus(order.status);
   const action = nextStatus ? ACTION_CONFIG[nextStatus] : null;
   const address = formatAddress(order);
-  const pixCode = order.paymentStatus === 'pendente' ? order.payment?.qr_code : null;
+  const pixCode = order.payment_status === 'pendente' ? order.payment?.qr_code : null;
 
   const copyPix = async () => {
     if (!pixCode) return;
@@ -78,7 +78,7 @@ export function OrderCard({ order, onStatusChange }: OrderCardProps) {
         </span>
         <div className="flex items-center gap-1 text-sm text-muted-foreground shrink-0">
           <Clock className="h-3.5 w-3.5" />
-          <span>{formatTime(order.createdAt)}</span>
+          <span>{formatTime(order.created_at)}</span>
           <span className={cn('text-xs', isUrgent && 'text-destructive font-medium')}>
             ({minutesAgo}min)
           </span>
@@ -88,16 +88,16 @@ export function OrderCard({ order, onStatusChange }: OrderCardProps) {
       {/* Cliente */}
       <div className="mb-2">
         <p className="font-semibold text-foreground truncate">
-          {order.customerName || 'Cliente sem nome'}
+          {order.customer_name || 'Cliente sem nome'}
         </p>
-        {order.customerPhone && (
-          <p className="text-xs text-muted-foreground">{formatPhone(order.customerPhone)}</p>
+        {order.customer_phone && (
+          <p className="text-xs text-muted-foreground">{formatPhone(order.customer_phone)}</p>
         )}
       </div>
 
       {/* Pagamento */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <PaymentBadge status={order.paymentStatus} />
+        <PaymentBadge status={order.payment_status} />
       </div>
 
       {/* Endereço de entrega */}
@@ -105,7 +105,7 @@ export function OrderCard({ order, onStatusChange }: OrderCardProps) {
           o pedido e deixá-lo no balcão esperando o cliente. Sem isso, o Kanban
           mostrava só a ausência de endereço, que é fácil confundir com dado
           faltando. */}
-      {order.fulfillmentType === 'retirada' && (
+      {order.fulfillment_type === 'retirada' && (
         <div className="flex items-center gap-1.5 text-sm font-medium text-[hsl(var(--status-production))]">
           <Store className="h-3.5 w-3.5 shrink-0" />
           <span>Retirada na loja</span>
@@ -165,11 +165,11 @@ export function OrderCard({ order, onStatusChange }: OrderCardProps) {
 
       {/* Totais */}
       <div className="border-t border-border pt-3 space-y-1">
-        {order.deliveryFee > 0 && (
+        {order.delivery_fee > 0 && (
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>Subtotal / entrega</span>
             <span>
-              {formatCurrency(order.subtotal)} + {formatCurrency(order.deliveryFee)}
+              {formatCurrency(order.subtotal)} + {formatCurrency(order.delivery_fee)}
             </span>
           </div>
         )}

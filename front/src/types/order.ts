@@ -6,15 +6,13 @@
  * catálogo inteiro só para traduzir ids.
  */
 
-export const ORDER_STATUSES = [
-  'novo',
-  'preparando',
-  'entrega',
-  'finalizado',
-  'cancelado',
-] as const;
-
-export type OrderStatus = (typeof ORDER_STATUSES)[number];
+/** Espelha `back/app/domain/enums.py::OrderStatus`. */
+export type OrderStatus =
+  | 'novo'
+  | 'preparando'
+  | 'entrega'
+  | 'finalizado'
+  | 'cancelado';
 
 export type PaymentStatus =
   | 'pendente'
@@ -67,8 +65,21 @@ export interface OrderAddress {
   referencia?: string | null;
 }
 
-/** Pedido cru como vem de `GET /api/orders`. */
-export interface ApiOrder {
+/**
+ * O pedido, em snake_case do backend ao JSX.
+ *
+ * Eram duas interfaces — `ApiOrder` e `Order` — com a mesma lista de ~18
+ * campos em duas grafias, mais o `toOrder` reescrevendo essa lista pela
+ * terceira vez. Só que `items[]` e `complements[]` atravessavam sem tradução,
+ * então `product_name_snapshot` e `line_total` chegavam ao JSX em snake_case de
+ * qualquer jeito: o front era misto, que é o pior dos dois mundos. `catalog.ts`
+ * e `conversation.ts` já viviam em snake_case e provam que dá.
+ *
+ * `toOrder` continua existindo, e agora só faz o que realmente era trabalho
+ * dele: converter dinheiro que chega como string, e conciliar o cliente que o
+ * backend manda ora aninhado, ora achatado.
+ */
+export interface Order {
   id: string;
   code: string;
   status: OrderStatus;
@@ -79,33 +90,14 @@ export interface ApiOrder {
   delivery_fee: number;
   total: number;
   notes?: string | null;
+  /** ISO do backend; use `formatTime`/`toMillis`, que aceitam string. */
   created_at: string;
   paid_at?: string | null;
-  /** O back pode mandar o cliente aninhado ou achatado; aceitamos os dois. */
+  /** Forma aninhada que o backend às vezes manda; `toOrder` a concilia abaixo. */
   customer?: { id?: string; name?: string | null; phone?: string | null } | null;
   customer_name?: string | null;
   customer_phone?: string | null;
   address?: OrderAddress | null;
   items: OrderItem[];
   payment?: OrderPayment | null;
-}
-
-/** Pedido normalizado para consumo dos componentes. */
-export interface Order {
-  id: string;
-  code: string;
-  status: OrderStatus;
-  paymentStatus: PaymentStatus;
-  fulfillmentType: FulfillmentType;
-  channel: OrderChannel;
-  customerName: string;
-  customerPhone: string;
-  address: OrderAddress | null;
-  subtotal: number;
-  deliveryFee: number;
-  total: number;
-  notes: string | null;
-  createdAt: Date;
-  items: OrderItem[];
-  payment: OrderPayment | null;
 }

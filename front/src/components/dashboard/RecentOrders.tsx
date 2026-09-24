@@ -5,7 +5,7 @@
 import type { Order } from '@/types/order';
 import { PaymentBadge, StatusBadge } from '@/components/ui/status-badge';
 import { EmptyState } from '@/components/common/QueryState';
-import { formatCurrency, formatTime } from '@/lib/format';
+import { formatCurrency, formatTime, toMillis } from '@/lib/format';
 import {
   Table,
   TableBody,
@@ -22,7 +22,7 @@ interface RecentOrdersProps {
 
 export function RecentOrders({ orders, limit = 10 }: RecentOrdersProps) {
   const rows = [...orders]
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .sort((a, b) => toMillis(b.created_at) - toMillis(a.created_at))
     .slice(0, limit);
 
   return (
@@ -48,7 +48,7 @@ export function RecentOrders({ orders, limit = 10 }: RecentOrdersProps) {
               {rows.map((order) => (
                 <TableRow key={order.id} className="animate-fade-in">
                   <TableCell className="font-mono text-xs">{order.code || '-'}</TableCell>
-                  <TableCell className="font-medium">{order.customerName || '-'}</TableCell>
+                  <TableCell className="font-medium">{order.customer_name || '-'}</TableCell>
                   <TableCell className="max-w-[220px] truncate">
                     {order.items
                       .map((item) => `${item.quantity}x ${item.product_name_snapshot}`)
@@ -61,10 +61,10 @@ export function RecentOrders({ orders, limit = 10 }: RecentOrdersProps) {
                     <StatusBadge status={order.status} />
                   </TableCell>
                   <TableCell>
-                    <PaymentBadge status={order.paymentStatus} />
+                    <PaymentBadge status={order.payment_status} />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {formatTime(order.createdAt)}
+                    {formatTime(order.created_at)}
                   </TableCell>
                 </TableRow>
               ))}
