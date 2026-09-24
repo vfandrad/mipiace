@@ -1,0 +1,290 @@
+================================================================================
+ TESTE DE CONVERSA COM O AGENTE — 3 CLIENTES SIMULADOS
+ Mi Piace / plataforma de atendimento por WhatsApp
+ 24 de setembro de 2026
+================================================================================
+
+COMO FOI FEITO
+
+  Três agentes independentes conversaram com o sistema fazendo o papel de
+  cliente, um personagem difícil cada, adaptando a próxima mensagem ao que o
+  bot respondia — não um roteiro fixo.
+
+  Tudo com o modelo REAL (gpt-4o-mini) e o executor real. Catálogo de teste
+  (Pote 500ml R$32 / 2 sabores, Pote 240ml R$18 / 1 sabor, Casquinha R$9,
+  Milkshake indisponível, Maracujá esgotado, taxa R$5). Pedido e Pix falsos,
+  mas com o VALOR REAL do carrinho — nada foi cobrado de verdade.
+
+  Foram DUAS rodadas. A primeira não vale como medida do produto: o harness
+  que eu escrevi tinha dois defeitos graves que faziam o agente parecer
+  quebrado. Está tudo explicado no fim deste arquivo, na seção "O QUE A
+  RODADA 1 MEDIU ERRADO", porque errar assim é instrutivo.
+
+  Os números abaixo são os da RODADA 2, com o harness corrigido.
+
+--------------------------------------------------------------------------------
+ PLACAR
+--------------------------------------------------------------------------------
+
+  Cliente indeciso (corrige o tempo todo) .............  8 de 11
+  Cliente apressado (manda tudo de uma vez) ........... 10 de 12
+  Cliente difícil (desiste, volta, reclama) ........... 12 de 14
+                                                        -----------
+                                                        30 de 37
+
+  Defeitos encontrados:  4 críticos, 8 importantes, 9 menores
+  Corrigidos agora:      4 críticos e 1 importante (os que são do CÓDIGO)
+  Em aberto:             7 importantes e 9 menores (quase todos do MODELO)
+
+--------------------------------------------------------------------------------
+ O QUE FOI CORRIGIDO NESTA SESSÃO
+--------------------------------------------------------------------------------
+
+[C1] CRÍTICO — O atendimento humano virava silêncio permanente
+     Achado por 2 dos 3 clientes, de forma reprodutível.
+
+     O cliente pedia atendente. O bot avisava "já chamei alguém", avisava uma
+     segunda vez "ainda estou aguardando" e, a partir da TERCEIRA mensagem,
+     NÃO RESPONDIA MAIS NADA. Nunca.
+
+         CLIENTE: alooo? tem alguém aí?
+         [estado] estado=atendimento_humano ... ATENDIMENTO HUMANO
+         (nenhuma linha BOT — turno produziu zero mensagens)
+
+     A causa estava em machine.py, em _handoff_turn: o slot `handoff_avisado`
+     era gravado uma vez e nunca mais limpo, então o turno devolvia lista
+     vazia para sempre. O comentário no código prometia "uma vez a cada
+     tanto"; a implementação era "uma vez e nunca mais". A docstring da
+     própria função dizia que ficar mudo "era o defeito mais caro do agente".
+
+     Correção: o silêncio virou limitado no tempo. O aviso longo se repete a
+     cada 3 minutos; no intervalo sai um reconhecimento curto. O cliente nunca
+     fala com o vazio.
+     Teste que trava: test_atendimento_humano_nunca_emudece
+
+[C2] CRÍTICO — O carrinho continuava editável depois do Pix emitido
+     Achado pelo cliente apressado.
+
+     Confirmou um pedido de R$ 73,00, recebeu o Pix, e disse "poe mais uma
+     casquinha". O bot aceitou, montou um SEGUNDO pedido por baixo do
+     primeiro e respondeu "*Seu pedido* 1x Casquinha — R$ 9,00. Quer mais
+     alguma coisa ou já posso fechar?" — para quem tinha um Pix de R$ 73,00
+     em aberto. Sem aviso, sem bloqueio, sem handoff.
+
+     Correção: pagamento pendente congela o pedido. Perguntar, cancelar e
+     pedir atendente continuam funcionando normalmente — o congelamento é do
+     PEDIDO, não da conversa.
+     Testes: test_pix_pendente_congela_o_pedido
+             test_com_pix_pendente_ainda_da_para_cancelar_e_perguntar
+
+[C3] CRÍTICO — Resposta morna gerava Pix
+     Achado por 2 dos 3 clientes na rodada 1, confirmado no código.
+
+     Na confirmação final, "acho que sim, pode ser" emitia o Pix na hora. A
+     trava existia, mas só olhava o começo da frase: bastava uma vírgula para
+     furá-la. "pode ser" sozinho era barrado; "acho que sim, pode ser" — duas
+     respostas mornas emendadas — passava direto.
+
+     Correção: a trava passou a olhar cada pedaço da frase, separando por
+     vírgula, ponto e vírgula, " e " e " mas ". Na dúvida, morna: o custo de
+     errar para esse lado é uma pergunta a mais; para o outro é cobrar quem
+     não concordou.
+     Teste: test_resposta_morna_nunca_gera_pix (7 variações)
+            test_sim_claro_continua_confirmando (garante que não engoliu o sim)
+
+[C4] CRÍTICO — O modelo inventava o bairro do endereço
+     Achado pelo cliente atropelado, reproduzível.
+
+     Respondendo "sim" à pergunta "qual o bairro?", o modelo preenchia
+     "Jardim América" — um bairro que o cliente nunca digitou. Corrigido,
+     inventava outro ("Centro"). A entrega iria para o lugar errado e o
+     cliente não teria como perceber.
+
+     Esse é o ponto cego da arquitetura: produto e sabor têm o catálogo para
+     dizer se existem. ENDEREÇO NÃO TEM. É o único dado do pedido sem nada
+     para contradizer o modelo.
+
+     Correção em dois níveis, como manda o desenho do projeto:
+       - prompt: regra explícita de deixar null o que o cliente não disse;
+       - CÓDIGO (a que vale): operations._disse_isso() — um campo de endereço
+         só entra se aparecer na mensagem do cliente. A conferência é frouxa
+         de propósito (aceita "flres" para "Flores"), mas barra o que não tem
+         relação nenhuma com o que foi dito.
+     Testes: test_endereco_que_o_cliente_nao_disse_e_descartado
+             test_endereco_que_o_cliente_disse_entra_mesmo_com_erro_de_digitacao
+
+[I1] IMPORTANTE — "tira UMA casquinha" removia as TRÊS
+     Achado pelo cliente apressado.
+
+     Com 3 casquinhas no pedido, "tira uma casquinha" apagava a linha inteira:
+     R$ 18,00 a menos sem o cliente pedir. E o bot dizia "Tirei o Casquinha",
+     no singular, escondendo o tamanho do estrago.
+
+     Correção: o executor passou a honrar a quantidade na remoção, e o prompt
+     passou a pedir que ela venha preenchida.
+     Testes: test_tirar_uma_de_tres_nao_apaga_a_linha
+             test_tirar_sem_dizer_quantos_apaga_a_linha
+
+--------------------------------------------------------------------------------
+ O QUE CONTINUA EM ABERTO
+--------------------------------------------------------------------------------
+
+  Quase tudo aqui é falha de INTERPRETAÇÃO do modelo, não do executor. O
+  caminho de correção é o prompt + casos no eval, não código novo — e cada um
+  desses ajustes precisa ser medido, porque mexer no prompt conserta um fluxo
+  e quebra outro.
+
+  Ordenados por risco:
+
+  [A1] Informar o endereço RE-EXECUTA o último add_item          (2 de 2 vezes)
+       O cliente pede o item e diz "pode fechar"; o bot pede o endereço; ele
+       manda só o endereço — e o modelo reemite o add_item do turno anterior,
+       duplicando o item DENTRO do resumo final. R$ 36 viraram R$ 54.
+       Acrescentei a regra 11 no prompt ("o histórico é contexto, não tarefa")
+       e o caso "fechar_nao_repete_o_pedido" no eval, que passa. Mas o cenário
+       específico do endereço ainda não está coberto por um caso próprio.
+       >> É o defeito em aberto de maior risco. Merece uma trava determinística
+          no executor, não só prompt.
+
+  [A2] Pergunta virando item no carrinho
+       "entao quanto q eu pago no pix agora" foi lido como add_item e entrou
+       uma casquinha. Pergunta não pode virar compra.
+
+  [A3] Remoção fantasma junto com adição
+       "opa eu queria 2 casquinha ainda ce tirou as 3" gerou add_item +
+       remove_item, e o remove apagou um item que o cliente nem citou. O
+       subtotal ficou igual por coincidência, o que mascara a perda.
+
+  [A4] set_fulfillment inventado
+       O modelo decide "entrega" ou "retirada" sem o cliente falar. Como a
+       entrega custa R$ 5, é um slot financeiro inventado. Num dos testes o
+       cliente negou explicitamente ("nem falei que ia buscar") e o slot ficou
+       errado por 11 turnos.
+       >> Mesma natureza do bairro inventado (C4) e provavelmente merece o
+          mesmo tipo de trava no código.
+
+  [A5] Confirmação informal não fecha
+       "fechou mano manda o pix" e "ta certo isso mesmo pode mandar" voltaram
+       como close_order e só reexibiram o resumo. Só "sim" avançou. Isso vai na
+       direção contrária da regra do projeto (nada de palavra obrigatória) — e
+       o cliente apressado gastou 3 mensagens para pagar.
+
+  [A6] Pergunta feita junto com uma ADIÇÃO é descartada
+       "me ve 3 casquinha tbm e vcs aceitam cartao" → a pergunta virou
+       no_action e morreu. Curiosamente, pergunta + EDIÇÃO funciona.
+
+  [A7] "quero um pote" chuta o tamanho (e chuta o mais caro)
+       Deveria perguntar. Diferença de R$ 14, sempre para cima. Note que
+       "quero dois potes" é tratado certo (o bot pergunta) — o caso do
+       singular escapou.
+
+  [A8] Sabor repetido no mesmo pote é impossível, e o bot não explica
+       "quero os dois de pistache" entra em loop: o bot repete a mesma
+       pergunta sem nunca dizer que repetir não é permitido. A causa é que
+       describe_situation remove da lista os sabores já escolhidos, então a
+       repetição fica estruturalmente inalcançável. Se a regra é essa, o bot
+       precisa DIZER; se não é, o filtro está errado.
+
+  [A9] Depois do Pix, o bot não sabe nada sobre o pedido
+       "qual sabor eu escolhi mesmo?" foi respondido com "Temos sim:
+       *Pistache*" — tratou pergunta sobre o pedido dele como pergunta de
+       cardápio. O carrinho é esvaziado ao emitir o Pix e nada expõe o pedido
+       já registrado ao agente.
+
+  MENORES (não afetam dinheiro nem perdem pedido):
+    - itens idênticos não agrupam em quantidade (duas linhas "1x Casquinha")
+    - resumo do pedido impresso duas vezes seguidas em alguns turnos
+    - "?" às vezes repapagueia a resposta anterior
+    - "Endereço anotado" reimpresso sem mudança
+    - "não temos maracujá no cardápio" quando ele existe e só está esgotado
+    - pedido de desconto escala para humano em vez de responder
+    - "manda o pix logo" com carrinho vazio gera 3 mensagens contraditórias
+    - mensagens redundantes ("Fecho já" seguido de "Fechado")
+    - troca de tamanho escolhe sozinha qual sabor manter
+
+--------------------------------------------------------------------------------
+ O QUE FUNCIONOU BEM
+--------------------------------------------------------------------------------
+
+  Os três relatórios convergiram nisto, e vale registrar porque é o núcleo do
+  produto:
+
+  A ARITMÉTICA NUNCA ERROU. Em nenhum dos ~70 turnos. Subtotal, taxa e total
+  sempre fecharam com os itens, e o valor do Pix foi exatamente o total do
+  resumo confirmado nas três conversas. Onde houve erro de valor, a causa foi
+  sempre o CONTEÚDO do carrinho, nunca a conta. O backend calcula dinheiro
+  corretamente.
+
+  ZERO ALUCINAÇÃO DE CATÁLOGO. Açaí, milkshake, pote de 2 litros, maracujá
+  esgotado — todos recusados. Nenhum produto, preço ou promoção inventado em
+  conversa nenhuma. Pediram desconto: não inventou. Perguntaram horário e
+  endereço da loja: admitiu que não sabe e ofereceu chamar alguém, em vez de
+  chutar.
+
+  EDITAR NÃO É ADICIONAR. "troca o chocolate por morango" edita o item no
+  lugar, subtotal intacto. Trocar o TAMANHO depois de escolher os sabores
+  também funciona, e o sistema ainda decide sozinho quais sabores cabem no
+  tamanho menor. Era o defeito historicamente mais caro e ele está curado.
+
+  AMBIGUIDADE PERIGOSA VIRA PERGUNTA. "quero dois potes" (R$ 36 ou R$ 64?) fez
+  o bot perguntar em vez de chutar, com o carrinho intacto.
+
+  NENHUMA PALAVRA OU NÚMERO OBRIGATÓRIO. Os três clientes falaram truncado,
+  sem acento e com erro de digitação o tempo todo — "keria", "pistach",
+  "xocolate", "os grandes", "pensando bem o de 240", "tira o primeiro" — e o
+  agente acompanhou. A abertura com produto + 2 sabores + modalidade +
+  endereço numa frase só, sem pontuação, foi entendida 100%.
+
+  RUÍDO NÃO DESTRÓI PEDIDO. "asdkjh", emoji e "?" não alteraram o carrinho; o
+  contador de falhas subiu e zerou sozinho, e a frase de erro varia em vez de
+  repetir.
+
+  CANCELAR LIMPA DE VERDADE, inclusive de dentro do atendimento humano e
+  depois do Pix emitido. Pedido cancelado nunca ressuscitou.
+
+  PERGUNTA NÃO DERRUBA O FLUXO. Taxa, prazo, pagamento, disponibilidade,
+  horário — todas respondidas com o pedido intacto, voltando ao ponto exato.
+
+--------------------------------------------------------------------------------
+ O QUE A RODADA 1 MEDIU ERRADO (e por que isso importa)
+--------------------------------------------------------------------------------
+
+  A primeira rodada acusou 8 defeitos CRÍTICOS. Seis eram do meu harness de
+  teste, não do sistema. Registro aqui porque o erro é didático:
+
+  1. O catálogo era construído com uuid4() a cada chamada do script. Como cada
+     mensagem é um processo novo, o carrinho salvo em disco apontava para
+     produtos que não existiam mais. Efeito: o agente não reconhecia o próprio
+     item, respondia "O Pote 500ml não leva escolha de sabor" (falso), e
+     responder o sabor criava item novo em vez de editar.
+     >> Isso sozinho fabricou os falsos críticos "impossível trocar sabor" e
+        "editar vira adicionar, pedido inflado de R$ 64 para R$ 192".
+
+  2. O pedido falso devolvia total = R$ 37,00 fixo.
+     >> Fabricou o falso crítico "o Pix cobra valor diferente do confirmado".
+        Um dos agentes, aliás, provou isso sozinho: mostrou o Pix saindo
+        R$ 37,00 tanto para um pedido de R$ 73 quanto para um de R$ 105 — o
+        que é assinatura de valor fixo, não de erro de cálculo.
+
+  A lição: relatório de subagente é dado, não veredito. Os seis falsos
+  positivos tinham transcrição, evidência e gravidade atribuída — e estavam
+  errados. Os dois críticos REAIS da rodada 1 (a trava da resposta morna e o
+  bairro inventado) só apareceram porque cada acusação foi conferida contra o
+  código antes de virar correção.
+
+--------------------------------------------------------------------------------
+ ESTADO DO PROJETO AO FIM DESTA SESSÃO
+--------------------------------------------------------------------------------
+
+  Backend ..... ruff limpo, 245 testes passando
+  Evals ....... 22 casos contra o gpt-4o-mini REAL: 22 passando
+  Frontend .... tsc --noEmit limpo, 0 erros de lint, 40 testes, build ok
+  Docker ...... imagens de back e front constroem e sobem
+
+  Os evals ao vivo rodam sob demanda, porque gastam token:
+
+      cd back && FAKE_MODE=false pytest -m eval
+
+  A suíte padrão (pytest) não os inclui e não custa nada.
+
+================================================================================
