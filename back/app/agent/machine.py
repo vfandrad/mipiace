@@ -407,7 +407,7 @@ async def run(
             # aconteceu.
             return turn.notes + turn.finished
 
-    replies = await _next_step(deps, session, plan, turn)
+    replies = await _next_step(deps, session, plan, turn, primeira_vez=primeira_vez)
     if voltou_do_humano and replies:
         replies = [r.back_from_human()] + replies
     if primeira_vez and replies:
@@ -417,7 +417,12 @@ async def run(
 
 
 async def _next_step(
-    deps: AgentDeps, session: ConversationSession, plan: AgentPlan, turn: Turn
+    deps: AgentDeps,
+    session: ConversationSession,
+    plan: AgentPlan,
+    turn: Turn,
+    *,
+    primeira_vez: bool = False,
 ) -> list[str]:
     """Depois de aplicar tudo: o que o bot fala agora.
 
@@ -466,23 +471,39 @@ async def _next_step(
         session.fail_count = 0
         return turn.notes + await _checkout_step(deps, session)
 
-    # 4. Mexeu no pedido: confirma e pergunta se quer mais.
+    # 4. Mexeu no pedido: confirma e pergunta se quer mais. Carrinho ficou
+    #    vazio (tirou tudo) não repete o cardápio inteiro — a lista completa
+    #    é só para quem PEDE pra ver (show_menu) ou pra quem chega sem saber
+    #    o que tem (passo 5, na primeira mensagem); aqui um convite curto
+    #    já basta.
     if turn.changed:
         session.fail_count = 0
         session.slots.pop(AWAITING_CONFIRM, None)
         if session.cart.is_empty:
-            return turn.notes + [menu(deps, session)]
+            return turn.notes + [r.ask_what_they_want()]
+        # Escolheu entrega mas ainda não disse o endereço: pergunta agora,
+        # não só lá na frente ao fechar. É o mesmo ponto cego do sabor
+        # pendente (passo 2) — falta um dado, então é dele que se fala.
+        if fulfillment_of(session) is FulfillmentType.ENTREGA:
+            faltando = missing_address_fields(address_of(session))
+            if faltando:
+                return turn.notes + [r.ask_address(faltando)]
         return turn.notes + [r.ask_more_or_close(session.cart)]
 
     # 5. Cumprimento, agradecimento, conversa fiada: abre o atendimento em vez
-    #    de dizer "não entendi" a quem só disse oi. Com um Pix já emitido e
-    #    ainda pendente, "carrinho vazio, o que você vai querer?" soa como se
-    #    o pedido tivesse sumido — fala do pedido em aberto em vez do cardápio.
+    #    de dizer "não entendi" a quem só disse oi. O cardápio inteiro só sai
+    #    na PRIMEIRA mensagem da conversa — ajuda quem chega sem saber o que
+    #    tem — ou quando o cliente pede de propósito (show_menu); mandar a
+    #    lista toda de novo a cada "oi" mais tarde é spam. Com um Pix já
+    #    emitido e ainda pendente, fala do pedido em aberto em vez de
+    #    qualquer uma das duas coisas.
     if plan.has(Action.NO_ACTION) and session.cart.is_empty:
         session.fail_count = 0
         if session.active_order_id is not None:
             return turn.notes + [await pending_order_status(deps, session)]
-        return turn.notes + [menu(deps, session)]
+        if primeira_vez:
+            return turn.notes + [menu(deps, session)]
+        return turn.notes + [r.ask_what_they_want()]
 
     # 6. Nada aconteceu mesmo: reparo progressivo, sem cardápio na cara dele.
     return _fallback(deps, session, plan)

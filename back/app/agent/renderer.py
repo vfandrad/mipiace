@@ -74,13 +74,23 @@ def _flavors_of(product: CatalogProduct) -> list[Any]:
     return list(vistos.values())
 
 
-def _flavor_block(flavors: Sequence[Any], titulo: str = "Sabores de hoje") -> list[str]:
-    """Sabores agrupados por categoria, em linha corrida.
+#: Quantos sabores cabem numa linha antes de quebrar. Um cardápio de
+#: gelateria de verdade passa de 30 sabores — tudo numa linha corrida vira
+#: parede que o WhatsApp quebra onde bem entende, e ilegível é ilegível dos
+#: dois jeitos (uma linha gigante ou 30 linhas de uma palavra só).
+_SABORES_POR_LINHA = 4
 
-    Trinta e um sabores, um por linha, viram uma parede que ninguém lê — e no
-    WhatsApp ainda custa rolagem a cada erro. Agrupados por "Sem lactose" /
-    "Com lactose" e separados por ·, cabem em poucas linhas e ainda respondem
-    de antemão a pergunta mais comum da gelateria.
+
+def _em_grupos(itens: Sequence[str], tamanho: int) -> list[list[str]]:
+    return [list(itens[i : i + tamanho]) for i in range(0, len(itens), tamanho)]
+
+
+def _flavor_block(flavors: Sequence[Any], titulo: str = "Sabores de hoje") -> list[str]:
+    """Sabores agrupados por categoria, em linhas curtas e escaneáveis.
+
+    Agrupados por "Sem lactose" / "Com lactose" (quando existe mais de uma
+    categoria) e quebrados de poucos em poucos por linha — cabe na tela do
+    celular sem rolagem horizontal e sem virar uma lista infinita vertical.
     """
     if not flavors:
         return []
@@ -93,12 +103,12 @@ def _flavor_block(flavors: Sequence[Any], titulo: str = "Sabores de hoje") -> li
         )
 
     linhas = [f"*{titulo}* ({len(flavors)})"]
-    if len(por_categoria) == 1:
-        linhas.append(" · ".join(next(iter(por_categoria.values()))))
-        return linhas
-
+    varias_categorias = len(por_categoria) > 1
     for categoria, nomes in por_categoria.items():
-        linhas.append(f"_{categoria}_: " + " · ".join(nomes))
+        if varias_categorias:
+            linhas.append(f"_{categoria}_ ({len(nomes)})")
+        for grupo in _em_grupos(nomes, _SABORES_POR_LINHA):
+            linhas.append(", ".join(grupo))
     return linhas
 
 

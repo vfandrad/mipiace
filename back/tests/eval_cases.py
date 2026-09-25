@@ -489,4 +489,18 @@ CASES: tuple[EvalCase, ...] = (
         extras=(Operation(action=Action.ADD_ITEM, product_name="Pote 240ml", add_flavors=["Pistache"]),),
         verificar=trocou_uma_unidade_por_produto_novo,
     ),
+
+    # --- O que a quarta rodada de testes encontrou --------------------------
+    EvalCase(
+        id="pergunta_junto_com_item_novo_nao_some",
+        mensagem="e uma casquinha também, vocês tem maracuja hoje?",
+        porque=(
+            "um pedido de item e uma pergunta de disponibilidade na mesma "
+            "mensagem — a pergunta sumiu do plano numa conversa de teste "
+            "real, só o item foi registrado"
+        ),
+        preparar=pote_montado,
+        acao=Action.ANSWER_QUESTION,
+        campos={"question_topic": "disponibilidade", "raw_text": "maracuja"},
+    ),
 )

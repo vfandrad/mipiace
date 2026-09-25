@@ -623,6 +623,49 @@ async def test_fallback_progressivo_nunca_cala_o_bot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cardapio_completo_so_na_primeira_mensagem() -> None:
+    """A lista inteira de sabores só sai para quem chega sem saber o que tem.
+
+    Mandar o cardápio de novo a cada "oi" mais tarde vira spam — pedido
+    explícito do dono do produto depois de ver isso acontecer num cardápio
+    real com 30+ sabores.
+    """
+    deps, session = build_deps(), build_session()
+
+    primeira = await run(deps, session, plano(op(Action.NO_ACTION)), "oi")
+    segunda = await run(deps, session, plano(op(Action.NO_ACTION)), "oi de novo")
+
+    assert any("cardápio de hoje" in reply for reply in primeira)
+    assert not any("cardápio de hoje" in reply for reply in segunda)
+    assert segunda  # continua respondendo, só não repete a lista inteira
+
+
+@pytest.mark.asyncio
+async def test_cardapio_nao_repete_quando_carrinho_esvazia() -> None:
+    """Tirar o único item do pedido não dispara o cardápio inteiro de novo."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    replies = await run(
+        deps, session, plano(op(Action.REMOVE_ITEM, item_index=1)), "tira o pote"
+    )
+
+    assert not any("cardápio de hoje" in reply for reply in replies)
+    assert replies
+
+
+@pytest.mark.asyncio
+async def test_cardapio_completo_quando_pedido_de_proposito() -> None:
+    """show_menu continua mostrando a lista inteira, a qualquer momento da conversa."""
+    deps, session = build_deps(), build_session()
+    await run(deps, session, AgentPlan(), "oi")  # já mostrou uma vez
+
+    replies = await run(deps, session, plano(op(Action.SHOW_MENU)), "me manda o cardapio")
+
+    assert any("cardápio de hoje" in reply for reply in replies)
+
+
+@pytest.mark.asyncio
 async def test_resposta_morna_nao_vira_cobranca() -> None:
     """"pode ser" não é um sim. Cobrança não se faz com quase-certeza."""
     deps, session = build_deps(), build_session()
@@ -737,6 +780,20 @@ async def test_endereco_que_o_cliente_disse_entra_mesmo_com_erro_de_digitacao() 
     endereco = session.slots.get("address", {})
     assert endereco.get("rua") == "Rua das Flores"
     assert endereco.get("bairro") == "Centro"
+
+
+@pytest.mark.asyncio
+async def test_entrega_sem_endereco_pergunta_na_hora_nao_so_ao_fechar() -> None:
+    """Escolher entrega já pergunta o endereço, sem esperar o "pode fechar"."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    replies = await run(
+        deps, session, plano(op(Action.SET_FULFILLMENT, fulfillment="entrega")), "quero entrega"
+    )
+
+    assert any("endereço" in reply.lower() for reply in replies), replies
+    assert session.slots.get("closing") is not True  # ainda não pediu pra fechar
 
 
 @pytest.mark.asyncio

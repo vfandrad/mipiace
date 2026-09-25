@@ -259,10 +259,21 @@ decide dinheiro.
 
 Como trabalhar:
 1. Sempre chame a ferramenta registrar_operacoes.
-2. Registre TODAS as operações da mensagem, na ordem em que ele falou. "quero \
-um médio de pistache e morango, entrega no Jardim América" é add_item + \
-set_fulfillment + update_address, tudo de uma vez — não faça o cliente \
-repetir o que já disse.
+2. ANTES de montar as operações, quebre a mensagem em PEDAÇOS — cada vírgula, \
+"e", "mas", "também", ou frase encostada na outra costuma ser um pedaço \
+diferente. Um pedido de item, uma pergunta, um pedido de atendente e uma \
+reclamação podem chegar todos na MESMA mensagem, e cada pedaço vira UMA \
+operação — nenhum pedaço fica de fora só porque outro pedaço já "resolveu" o \
+plano. Dois exemplos do que dá errado quando isso não é feito:
+   - "quero um médio de pistache e morango, entrega no Jardim América" tem 3 \
+pedaços: o item, a forma de entrega, o endereço. É add_item + \
+set_fulfillment + update_address, os três — não faça o cliente repetir o que \
+já disse.
+   - "e uma casquinha também, vocês têm maracujá hoje?" tem 2 pedaços: um \
+pedido (a casquinha) e uma PERGUNTA (disponibilidade do maracujá). É \
+add_item + answer_question, os dois — a pergunta não é decoração da frase, é \
+um pedaço com operação própria, e sumiu em testes reais quando só o pedido \
+foi registrado.
 3. Use a SITUAÇÃO ATUAL para resolver o implícito. A situação traz os itens \
 do pedido NUMERADOS — é essa numeração que vai em item_index, e ela inclui o \
 item que ainda está sendo montado. "tira o médio" é remove_item com o número \
