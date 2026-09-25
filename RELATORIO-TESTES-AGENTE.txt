@@ -451,3 +451,153 @@ COMO FOI FEITO
       cd back && FAKE_MODE=false pytest -m eval
 
 ================================================================================
+ RODADA 3 — 6 CLIENTES SIMULADOS, 3 SUBAGENTES EM PARALELO
+ 25 de setembro de 2026 (mesmo dia da rodada 2, sessão seguinte)
+================================================================================
+
+COMO FOI FEITO
+
+  Mesmo desenho da rodada 2: três subagentes, dois clientes cada, LLM real,
+  harness em memória. Desta vez mirando (1) o único defeito que tinha ficado
+  explicitamente em aberto — troca de tamanho descartando sabor sem avisar —
+  e (2) regressão adversarial de tudo que foi corrigido nas duas rodadas
+  anteriores, testado de um jeito diferente do que já tinha sido tentado.
+
+  O harness ganhou um registro de pedidos persistido no pickle (antes
+  `order_summary` sempre devolvia `None`): dois subagentes reportaram como
+  "regressão" a correção D3 da rodada 2 (pergunta sobre pedido pago) porque o
+  harness nunca tinha sido atualizado para guardar o pedido depois de criado
+  — o código estava certo, o fake é que mentia. Fica registrado porque é a
+  mesma lição da rodada 1, de novo: o harness também é código, e código de
+  teste desatualizado finge bug que não existe.
+
+--------------------------------------------------------------------------------
+ DEFEITOS ENCONTRADOS E CORRIGIDOS NO CÓDIGO
+--------------------------------------------------------------------------------
+
+[D7] CRÍTICO — "cancela isso, mas na verdade quero X" perdia o X em silêncio
+     Achado de forma independente por dois subagentes, em conversas
+     diferentes. O plano do modelo vinha CORRETO (cancel_order seguido de
+     add_item, ou de request_human), mas o executor parava no primeiro
+     `turn.finished` — a primeira operação que fecha o turno sozinha
+     (cancelar, chamar atendente) cortava a fila e tudo que vinha depois era
+     silenciosamente descartado. Num caso, o cliente cancelou o pedido e
+     pediu outro na mesma mensagem: o carrinho ficou vazio, o estado virou
+     cancelado, e o pedido novo nunca chegou a existir — sem nenhum aviso.
+     Corrigido em duas partes (`machine.run`):
+       - Qualquer nota já acumulada por uma operação ANTERIOR no mesmo plano
+         agora é devolvida junto da mensagem final (`turn.notes + turn.finished`
+         em vez de só `turn.finished`) — resolve o caso "pergunta + chama
+         atendente", onde a resposta da pergunta sumia.
+       - Especificamente para cancel_order: se não é a última operação do
+         plano, o cancelamento acontece (o cliente é avisado), mas a
+         conversa volta para CONVERSANDO e o resto do plano continua
+         processando — o pedido novo entra de verdade.
+     Testes: test_cancelar_e_pedir_de_novo_no_mesmo_turno_nao_perde_o_novo_pedido
+             test_cancelar_sozinho_continua_cancelando_normalmente
+             test_atendente_junto_com_pergunta_nao_perde_a_resposta
+
+[D8] IMPORTANTE — Troca de tamanho descartava sabor sem avisar qual
+     O defeito deixado em aberto na rodada 2, confirmado 2x. "na verdade
+     quero o pequeno" com um Pote 500ml (2 sabores) chegava como
+     remove_item + add_item (não replace_item) na maioria das vezes — o
+     modelo recriava o item novo mantendo só o PRIMEIRO sabor da lista,
+     sem nunca dizer qual foi descartado. Um cliente que não conferisse o
+     resumo com atenção perdia um sabor sem saber.
+     Corrigido nos dois caminhos possíveis:
+       - `_op_remove_item` agora guarda os sabores do item removido no
+         turno (`Turn.sabores_removidos`); se o add_item seguinte no MESMO
+         turno não couber todos eles, o bot diz explicitamente qual sumiu.
+       - `_replace_product` (o caminho "certo", replace_item) ganhou o
+         mesmo aviso, para quando o modelo de fato usa essa operação.
+     Confirmado ao vivo contra o modelo real nos dois caminhos.
+     Testes: test_trocar_tamanho_via_remove_e_add_avisa_sabor_descartado
+             test_trocar_tamanho_via_replace_item_avisa_sabor_descartado
+
+[D9] IMPORTANTE — set_fulfillment inventado sem nenhum sinal na mensagem
+     O A4/D-fulfillment da rodada 1, que tinha ficado só como reforço de
+     prompt por medo de quebrar os testes existentes. Confirmado de novo
+     nesta rodada, de forma ainda mais clara: "quero os dois sabores de
+     chocolate, e bota mais uma casquinha também" (nada sobre entrega) fez o
+     modelo marcar fulfillment=entrega mesmo assim — e esse valor ficou
+     "grudado" até o cliente repetir a forma de entrega explicitamente.
+     Reexaminado desta vez: quase todos os testes que escrevem o plano à mão
+     já emparelhavam SET_FULFILLMENT com um texto que menciona entrega ou
+     retirada (era só coincidência de estilo de quem escreveu o teste, não
+     por design) — só UM caso não tinha. Isso tornou viável, finalmente,
+     travar isto no executor sem reescrever a suíte inteira: mesma ideia já
+     usada no endereço (C4), com uma lista de sinais de entrega/retirada
+     olhando a mensagem antes de aceitar o valor. Sem sinal, o campo fica
+     como estava (o sistema pergunta na hora de fechar, como sempre fez
+     quando fulfillment é None).
+     Testes: test_fulfillment_nao_entra_sem_sinal_na_mensagem
+             test_fulfillment_ainda_entra_quando_o_cliente_diz
+
+[D10] MENOR — Mensagem extra deslocada depois de responder sobre pedido pago
+     "Seu pedido está aguardando o Pix" vinha às vezes seguido de "O que você
+     vai querer hoje?" — um convite a pedir de novo que não faz sentido para
+     quem já tem um pedido em aberto. Corrigido em `_resume_prompt`: carrinho
+     vazio com um pedido ativo não pede mais nada, porque a resposta sobre o
+     pedido (D3) já disse tudo que importava.
+
+--------------------------------------------------------------------------------
+ DEFEITOS DE INTERPRETAÇÃO — REFORÇADOS NO PROMPT, SEM TRAVA NOVA NO CÓDIGO
+--------------------------------------------------------------------------------
+
+  - "esquece o atendente, pode voltar a me atender você mesmo": o código já
+    tem uma lista de frases que trazem o bot de volta do atendimento humano
+    (`_quer_o_bot_de_volta`) e ela reconhece esta fala — mas às vezes o
+    MODELO também devolvia request_human na mesma mensagem (confundindo o
+    verbo "atender" com o substantivo "atendente"), e esse pedido de
+    atendente reabria o handoff por cima da tentativa de volta. Regra nova no
+    prompt (17); sem trava de código porque a ambiguidade é só de vocabulário
+    do modelo, não de um dado com risco financeiro.
+
+--------------------------------------------------------------------------------
+ VERIFICADO E CONFIRMADO COMO COMPORTAMENTO CORRETO (não é bug)
+--------------------------------------------------------------------------------
+
+  - Cancelar o pedido DENTRO do atendimento humano ("cancela, desisti",
+    mesmo já em handoff) foi apontado por um subagente como risco — mas é
+    comportamento deliberado e já coberto por teste
+    (test_com_pix_pendente_ainda_da_para_cancelar_e_perguntar e o novo
+    `_handoff_turn`): cancelar não move dinheiro (o Pix pendente nunca foi
+    pago), e obrigar quem já está preso esperando atendente a esperar mais só
+    para desistir seria pior. Registrado aqui para não virar "correção" de
+    algo que já está certo.
+
+--------------------------------------------------------------------------------
+ O QUE FUNCIONOU BEM (regressão das rodadas 1 e 2 segurou)
+--------------------------------------------------------------------------------
+
+  Handoff com Pix pendente perdendo a trava ao voltar (D1, rodada 2),
+  resposta curta duplicando item completo (D2, rodada 2), resposta morna não
+  virando Pix mesmo com resumo grande de vários itens, edição nunca virando
+  item novo mesmo com dois produtos iguais e sabores diferentes no carrinho,
+  indisponibilidade nunca inventada (Milkshake, Maracujá) — todos provocados
+  de novo nesta rodada, de jeitos diferentes dos já tentados, e todos
+  seguraram.
+
+--------------------------------------------------------------------------------
+ O QUE CONTINUA EM ABERTO
+--------------------------------------------------------------------------------
+
+  - Quantidade ambígua sem número ("uns potes de 500ml", "quero mais
+    alguns") às vezes não gera pergunta — o sistema assume 1 em vez de
+    perguntar quantos. Risco baixo (nunca cobra a mais por isso, na pior das
+    hipóteses cobra a menos), não tratado nesta rodada.
+  - Pedir uma quantidade explícita de itens novos numa única mensagem
+    ("quero mais 2 potes... chocolate e pistache") às vezes resulta em só 1
+    adicionado, sem aviso da diferença — não foi possível isolar a causa raiz
+    sem uma nova rodada dedicada a esse cenário específico.
+
+--------------------------------------------------------------------------------
+ ESTADO DO PROJETO AO FIM DESTA SESSÃO
+--------------------------------------------------------------------------------
+
+  Backend ..... ruff limpo, 263 testes passando (+8 desde a rodada 2)
+  Evals ....... 25 casos contra o gpt-4o-mini REAL: 25 passando
+
+      cd back && FAKE_MODE=false pytest -m eval
+
+================================================================================

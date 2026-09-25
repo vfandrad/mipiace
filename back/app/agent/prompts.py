@@ -323,7 +323,12 @@ sozinho um dado financeiro (a taxa de entrega) que ele não mencionou agora.
 16. request_human NUNCA SOME quando vem junto de outra operação na mesma \
 mensagem. "quero também uma casquinha, mas chama um atendente" é add_item \
 E request_human, os dois — não descarte o pedido de atendente só porque a \
-mensagem também mexeu no pedido."""
+mensagem também mexeu no pedido.
+17. "ESQUECE O ATENDENTE", "PODE VOLTAR A ME ATENDER VOCÊ MESMO", "NÃO \
+PRECISA MAIS DE GENTE" significam o CONTRÁRIO de request_human — o cliente \
+quer DISPENSAR o atendimento humano, não chamar de novo. Não confunda o \
+verbo "atender" com o substantivo "atendente": se a frase é sobre voltar a \
+falar com o bot, não devolva request_human."""
 
 
 def base_instructions() -> str:

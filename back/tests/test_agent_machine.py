@@ -779,7 +779,7 @@ async def test_com_pix_pendente_ainda_da_para_cancelar_e_perguntar() -> None:
         deps,
         session,
         plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
-        "pode fechar",
+        "pode fechar, vou retirar",
     )
     await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim")
 
@@ -794,6 +794,169 @@ async def test_com_pix_pendente_ainda_da_para_cancelar_e_perguntar() -> None:
     cancelou = await run(deps, session, plano(op(Action.CANCEL_ORDER)), "cancela")
     assert cancelou
     assert session.state is S.CANCELADO
+
+
+@pytest.mark.asyncio
+async def test_cancelar_e_pedir_de_novo_no_mesmo_turno_nao_perde_o_novo_pedido() -> None:
+    """"cancela isso... ah deixa, na verdade quero sim, bota X" não pode virar silêncio.
+
+    Achado em conversa real: o plano do modelo trazia cancel_order + add_item
+    corretamente, mas o executor parava no primeiro `turn.finished` (o
+    cancelamento) e nunca processava o add_item — o carrinho ficava vazio, o
+    estado ficava cancelado, e o cliente não era avisado que o pedido novo
+    simplesmente não entrou.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    replies = await run(
+        deps,
+        session,
+        plano(op(Action.CANCEL_ORDER), op(Action.ADD_ITEM, product_name="Casquinha")),
+        "cancela isso... ah deixa, na verdade quero uma casquinha",
+    )
+
+    assert session.state is S.CONVERSANDO
+    assert len(session.cart.items) == 1
+    assert session.cart.items[0].product_name == "Casquinha"
+    assert any("cancel" in reply.lower() for reply in replies)
+
+
+@pytest.mark.asyncio
+async def test_cancelar_sozinho_continua_cancelando_normalmente() -> None:
+    """A mudança para não perder operações depois de cancelar não pode reabrir o pedido sozinha."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    replies = await run(deps, session, plano(op(Action.CANCEL_ORDER)), "cancela, desisti")
+
+    assert session.state is S.CANCELADO
+    assert session.cart.is_empty
+    assert replies
+
+
+@pytest.mark.asyncio
+async def test_atendente_junto_com_pergunta_nao_perde_a_resposta() -> None:
+    """"quanto vou pagar, e chama um atendente" não pode responder só sobre o atendente.
+
+    Achado em conversa real: `show_total` respondia certo, mas a resposta
+    inteira sumia quando `request_human` vinha depois na mesma mensagem — o
+    executor retornava só o texto do handoff, descartando o que já tinha sido
+    dito.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    replies = await run(
+        deps,
+        session,
+        plano(op(Action.SHOW_TOTAL), op(Action.REQUEST_HUMAN)),
+        "quanto vou pagar, e chama um atendente",
+    )
+
+    assert any("32" in reply for reply in replies), replies
+    assert any("chamei" in reply.lower() for reply in replies), replies
+
+
+@pytest.mark.asyncio
+async def test_fechar_morno_no_meio_do_pedido_nao_avanca_pro_checkout() -> None:
+    """"sei lá, pode ser" respondendo "quer mais alguma coisa?" não é "pode fechar".
+
+    Mesma trava da confirmação final (`_hedged`), só que mais cedo: antes essa
+    frase avançava o fluxo até a pergunta de entrega/retirada mesmo o cliente
+    tendo marcado a própria fala como incerta.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    replies = await run(deps, session, plano(op(Action.CLOSE_ORDER)), "sei lá, pode ser")
+
+    assert session.state is S.CONVERSANDO
+    assert "fulfillment" not in session.slots
+    assert replies
+
+
+@pytest.mark.asyncio
+async def test_trocar_tamanho_via_remove_e_add_avisa_sabor_descartado() -> None:
+    """Troca de tamanho às vezes chega como remove_item + add_item, não replace_item.
+
+    Achado em conversa real, reproduzido 2x: "na verdade quero o pequeno" com
+    um Pote 500ml (2 sabores) no carrinho fazia o modelo tirar o item e
+    recriar um Pote 240ml (1 sabor) mantendo só o primeiro — sem nunca avisar
+    qual sabor sumiu.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session, sabores=("Pistache", "Morango"))
+
+    replies = await run(
+        deps,
+        session,
+        plano(
+            op(Action.REMOVE_ITEM, item_index=1),
+            op(Action.ADD_ITEM, product_name="Pote 240ml", add_flavors=["Pistache"]),
+        ),
+        "na verdade quero o pequeno mesmo, só isso",
+    )
+
+    assert len(session.cart.items) == 1
+    assert session.cart.items[0].product_name == "Pote 240ml"
+    assert any("Morango" in reply for reply in replies), (
+        f"o sabor descartado (Morango) nunca foi mencionado: {replies}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_trocar_tamanho_via_replace_item_avisa_sabor_descartado() -> None:
+    """O mesmo aviso vale quando o modelo usa replace_item (o caminho "certo")."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session, sabores=("Pistache", "Morango"))
+
+    replies = await run(
+        deps,
+        session,
+        plano(op(Action.REPLACE_ITEM, product_name="Pote 240ml")),
+        "na verdade quero o pequeno mesmo",
+    )
+
+    assert len(session.cart.items) == 1
+    assert session.cart.items[0].product_name == "Pote 240ml"
+    assert any("Morango" in reply for reply in replies), replies
+
+
+@pytest.mark.asyncio
+async def test_fulfillment_nao_entra_sem_sinal_na_mensagem() -> None:
+    """Achado em conversa real: o modelo marcou fulfillment=entrega sem o
+    cliente ter dito uma palavra sobre entrega ou retirada — a mensagem era só
+    sobre sabor e um item novo. Isso gruda taxa de R$5 e exige endereço para
+    um pedido que talvez fosse retirada.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="entrega")),
+        "quero os dois sabores de chocolate, e bota mais uma casquinha também",
+    )
+
+    assert session.slots.get("fulfillment") is None
+
+
+@pytest.mark.asyncio
+async def test_fulfillment_ainda_entra_quando_o_cliente_diz() -> None:
+    """A trava é só para invenção — dizer de verdade continua funcionando."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="entrega")),
+        "quero entrega mesmo",
+    )
+
+    assert session.slots.get("fulfillment") == "entrega"
 
 
 @pytest.mark.asyncio

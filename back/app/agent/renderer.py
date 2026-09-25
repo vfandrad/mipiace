@@ -320,6 +320,14 @@ def product_switched(antigo: str, novo: str) -> str:
     return f"Sem problema — troquei o *{antigo}* pelo *{novo}*. 👍"
 
 
+def flavors_dropped_on_resize(nomes: list[str]) -> str:
+    """Trocar de tamanho às vezes deixa sabor de fora — o cliente tem que saber qual."""
+    if len(nomes) == 1:
+        return f"O tamanho novo não cabe todos os sabores — tirei o *{nomes[0]}*. 😉"
+    lista = ", ".join(f"*{nome}*" for nome in nomes)
+    return f"O tamanho novo não cabe todos os sabores — tirei {lista}. 😉"
+
+
 def ask_more_short() -> str:
     """A pergunta sozinha, para quando o carrinho já está na tela."""
     return "Quer mais alguma coisa ou já posso fechar? 😊"

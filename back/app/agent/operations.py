@@ -75,6 +75,11 @@ class Turn:
     changed: bool = False                            # mexeu no pedido?
     answered: bool = False                           # respondeu pergunta?
     finished: list[str] | None = None                # resposta final (Pix, cancelamento)
+    #: Sabores do último item REMOVIDO neste turno — ver `_op_add_item`. Troca
+    #: de tamanho às vezes chega como remove_item + add_item (em vez de
+    #: replace_item), e sem isto o sabor que não coube no tamanho novo era
+    #: descartado sem o cliente nunca ser avisado de qual sumiu.
+    sabores_removidos: list[str] = field(default_factory=list)
 
     def say(self, *texts: str) -> None:
         """Acrescenta falas, sem repetir a mesma no mesmo turno.
@@ -381,7 +386,7 @@ async def apply(
     # operação do item ("quero um pote G, vou retirar"). Lidos só na operação
     # dedicada, eles se perdiam e o bot perguntava de novo lá na frente.
     if op.fulfillment and action is not Action.SET_FULFILLMENT:
-        _set_fulfillment(session, op.fulfillment, turn)
+        _set_fulfillment(session, op.fulfillment, turn, mensagem)
     if op.address is not None and action is not Action.UPDATE_ADDRESS:
         _merge_address(session, op.address, turn, mensagem)
 
@@ -401,7 +406,7 @@ async def apply(
         _op_duplicate(deps, session, op, turn, mensagem)
 
     elif action is Action.SET_FULFILLMENT:
-        _set_fulfillment(session, op.fulfillment, turn)
+        _set_fulfillment(session, op.fulfillment, turn, mensagem)
 
     elif action is Action.UPDATE_ADDRESS:
         _merge_address(session, op.address, turn, mensagem)
@@ -449,7 +454,37 @@ async def apply(
     # outro é a ausência de operação.
 
 
-def _set_fulfillment(session: ConversationSession, escolha: str | None, turn: Turn) -> None:
+#: Palavras que indicam entrega/retirada de verdade. Não são para ENTENDER a
+#: fala do cliente — isso continua sendo trabalho da IA — só para confirmar
+#: que ela tem alguma base antes de fixar um dado com peso financeiro
+#: (a taxa de R$5) que o catálogo não tem como contradizer.
+_SINAIS_ENTREGA = (
+    "entrega", "entregar", "entregam", "manda", "mandar", "leva", "levar",
+    "traz", "trazer", "delivery", "em casa", "minha casa",
+)
+_SINAIS_RETIRADA = (
+    "retirada", "retirar", "retiro", "busco", "buscar", "pegar", "passo",
+    "vou ai", "vou aí", "na loja", "no local",
+)
+
+
+def _fulfillment_dito(escolha: str, mensagem: str) -> bool:
+    """O cliente disse algo sobre como quer receber, ou o modelo inventou?
+
+    fulfillment não tem catálogo para contradizer a IA — mesma classe de
+    problema que o endereço (ver `_disse_isso`). Achado em conversa real: o
+    modelo marcava "entrega" sem o cliente ter escrito uma palavra sobre
+    forma de recebimento, grudando a taxa de R$5 e a exigência de endereço
+    num pedido que talvez fosse retirada.
+    """
+    limpo = normalize(mensagem)
+    sinais = _SINAIS_ENTREGA if escolha == "entrega" else _SINAIS_RETIRADA
+    return any(sinal in limpo for sinal in sinais)
+
+
+def _set_fulfillment(
+    session: ConversationSession, escolha: str | None, turn: Turn, mensagem: str = ""
+) -> None:
     """Entrega ou retirada — e o bot DIZ que anotou.
 
     Anotar em silêncio fazia o cliente repetir: ele dizia "quero entrega", via
@@ -460,6 +495,11 @@ def _set_fulfillment(session: ConversationSession, escolha: str | None, turn: Tu
     elif escolha == "entrega":
         kind = FulfillmentType.ENTREGA
     else:
+        return
+    if mensagem and not _fulfillment_dito(escolha, mensagem):
+        logger.info(
+            "fulfillment=%s descartado, sem sinal na mensagem %r", escolha, mensagem
+        )
         return
     mudou = fulfillment_of(session) is not kind
     set_fulfillment(session, kind)
@@ -611,6 +651,21 @@ def _op_add_item(
     if _is_complete(deps, item):
         turn.say(r.item_added(item))
 
+    if turn.sabores_removidos:
+        # Troca de tamanho ("na verdade quero o pequeno") costuma chegar como
+        # remove_item + add_item, não como replace_item — e o modelo às vezes
+        # só reaproveita UM dos sabores anteriores, sem nunca dizer qual
+        # sumiu. Só avisa quando o produto novo tem grupo de sabor (senão
+        # "tira o pote, bota uma casquinha" soaria como se tivesse perdido
+        # sabor, quando na verdade o cliente só trocou de produto mesmo).
+        grupo = _group_of(deps, item)
+        if grupo is not None:
+            ficaram = {normalize(c.name) for c in item.complements}
+            perdidos = [n for n in turn.sabores_removidos if normalize(n) not in ficaram]
+            if perdidos:
+                turn.say(r.flavors_dropped_on_resize(perdidos))
+        turn.sabores_removidos = []
+
 
 def _op_update_item(
     deps: AgentDeps,
@@ -684,6 +739,13 @@ def _replace_product(
     if group is not None and antigo.complements:
         achados, _ = _find_flavors(group, [c.name for c in antigo.complements])
         _apply_flavors(novo, group, add=achados, remove_names=[], turn=turn)
+        ficaram = {normalize(c.name) for c in novo.complements}
+        perdidos = [c.name for c in antigo.complements if normalize(c.name) not in ficaram]
+        if perdidos:
+            # O tamanho novo cabe menos sabores que o antigo tinha — dizer
+            # qual sumiu é o que falta pro cliente não descobrir sozinho lendo
+            # o resumo com atenção.
+            turn.say(r.flavors_dropped_on_resize(perdidos))
     turn.say(r.product_switched(antigo.product_name, product.name))
     turn.changed = True
 
@@ -741,6 +803,7 @@ def _op_remove_item(
     removido = session.cart.items.pop(index)
     turn.say(r.item_removed(removido.product_name))
     turn.changed = True
+    turn.sabores_removidos = [c.name for c in removido.complements]
 
 
 def _op_quantity(

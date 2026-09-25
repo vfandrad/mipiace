@@ -363,10 +363,35 @@ async def run(
             session.slots.pop(AWAITING_CONFIRM, None)
             return await place_order(deps, session)
 
-    for op in plan.operations:
+    for index, op in enumerate(plan.operations):
+        if op.action is Action.CLOSE_ORDER and _hedged(text):
+            # Mesma trava da confirmação final, só que mais cedo: "sei lá,
+            # pode ser" respondendo "quer mais alguma coisa ou já posso
+            # fechar?" não pode empurrar o pedido para a etapa de fechar
+            # (pedir endereço, forma de entrega) sem um "sim" de verdade.
+            continue
+
         await apply(deps, session, op, turn, text)
         if turn.finished is not None:
-            return turn.finished
+            havia_mais_operacoes = index + 1 < len(plan.operations)
+            if op.action is Action.CANCEL_ORDER and havia_mais_operacoes:
+                # "cancela isso... ah deixa, na verdade quero sim, bota um
+                # pote de X" — cancelar é de verdade, mas não pode engolir
+                # em silêncio o pedido novo que o cliente emendou na MESMA
+                # mensagem. O cancelamento em si já respondeu (turn.finished
+                # some do carrinho); o resto do plano continua sobre uma
+                # conversa livre para recomeçar.
+                turn.say(*turn.finished)
+                turn.finished = None
+                _go(session, S.CONVERSANDO)
+                continue
+            # Prepend turn.notes: uma operação ANTERIOR no mesmo plano pode
+            # já ter confirmado algo (removeu item, respondeu pergunta) antes
+            # de uma operação seguinte terminar o turno (chamar atendente,
+            # cancelar) — sem isto essa confirmação sumia da resposta, e o
+            # cliente não sabia se a primeira parte do pedido realmente
+            # aconteceu.
+            return turn.notes + turn.finished
 
     replies = await _next_step(deps, session, plan, turn)
     if voltou_do_humano and replies:
@@ -482,6 +507,12 @@ def _resume_prompt(
     carrinho" acabou de recebê-lo, e repetir a lista inteira logo abaixo para
     emendar a pergunta é exatamente o tipo de resposta que parece robô.
     """
+    if session.cart.is_empty and session.active_order_id is not None:
+        # Carrinho vazio aqui não é "nada pedido ainda" — é o Pix já emitido.
+        # `pending_order_status` (chamado por quem pergunta sobre o pedido
+        # pago) já disse tudo que importa; emendar "o que você vai querer
+        # hoje?" depois soa como se o pedido pago tivesse sido esquecido.
+        return None
     index = pending_index(deps, session)
     if index is not None:
         item = session.cart.items[index]
