@@ -408,4 +408,44 @@ CASES: tuple[EvalCase, ...] = (
         ),
         verificar=anotou_entrega_e_endereco,
     ),
+
+    # --- O que a segunda rodada de conversas de teste encontrou -----------
+    EvalCase(
+        id="sabor_repetido_nao_apaga_item",
+        mensagem="quero os dois de pistache, os 2 iguais",
+        porque=(
+            "pedir o mesmo sabor duas vezes fez o modelo devolver remove_item "
+            "e apagar o único item do carrinho — sabor repetido tem que ser "
+            "recusado (o executor já sabe fazer isso), nunca motivo para "
+            "apagar o pedido"
+        ),
+        preparar=pote_montado,
+        acao=Action.UPDATE_ITEM,
+        campos={"add_flavors": ["Pistache"]},
+        verificar=continua_com_um_item,
+    ),
+    EvalCase(
+        id="mais_um_pote_sem_especificar",
+        mensagem="bota mais um pote",
+        porque=(
+            "sem tamanho nem sabor, o modelo copiou o último item (tamanho e "
+            "sabores) e já somou R$ 32 ao carrinho sem perguntar nada — "
+            "inventar configuração é o que a arquitetura do agente proíbe"
+        ),
+        preparar=pote_montado,
+        acao=Action.ASK_CLARIFICATION,
+        tambem=(Action.DUPLICATE_ITEM,),
+        campos={"clarification": "Qual tamanho e quais sabores você quer nesse outro?"},
+    ),
+    EvalCase(
+        id="atendente_junto_com_pedido_nao_some",
+        mensagem="quero também uma casquinha, mas na verdade chama um atendente humano pra mim",
+        porque=(
+            "pedir atendente na mesma mensagem que um item fez o modelo "
+            "devolver só add_item — o pedido de atendente sumiu e o cliente "
+            "teve que repetir"
+        ),
+        preparar=pote_montado,
+        acao=Action.REQUEST_HUMAN,
+    ),
 )

@@ -179,21 +179,30 @@ def _tem_isso(catalog: CatalogSnapshot, procurado: str) -> str:
     resposta continuar verdadeira amanhã. A busca por CATEGORIA existe porque
     "tem sabor sem lactose?" não casa com nome nenhum — "Sem lactose" é o nome
     da categoria, e é ela que responde a pergunta.
+
+    A busca por nome (produto e sabor) olha o cardápio INTEIRO, disponível ou
+    não — sem isto, perguntar por algo que existe mas está esgotado hoje
+    (Milkshake indisponível, Maracujá esgotado) respondia "não temos no
+    cardápio", que é diferente de "temos, mas acabou hoje" e engana o cliente
+    sobre o que a loja vende de verdade.
     """
     alvo = normalize(procurado or "").strip()
     if not alvo:
         return "Me diz o que você procura que eu vejo se temos hoje. 😊"
 
-    sabores = {
+    sabores_disponiveis = {
         c.name: c
         for p in catalog.available_products
         for g in p.groups
         for c in g.available_complements
     }
+    sabores_todos = {
+        c.name: c for p in catalog.products for g in p.groups for c in g.complements
+    }
 
     # 1. Categoria ("sem lactose", "com lactose", "vegano"...).
     categorias: dict[str, list[str]] = {}
-    for nome, c in sabores.items():
+    for nome, c in sabores_disponiveis.items():
         if c.category:
             categorias.setdefault(c.category, []).append(nome)
     for categoria, nomes in categorias.items():
@@ -201,18 +210,30 @@ def _tem_isso(catalog: CatalogSnapshot, procurado: str) -> str:
         if chave in alvo or alvo in chave:
             return f"Temos sim! *{categoria}*: " + ", ".join(nomes) + ". 😊"
 
-    # 2. Sabor pelo nome.
-    achados = [nome for nome in sabores if alvo in normalize(nome)]
-    if not achados:
-        # Talvez seja um produto, não um sabor.
-        produtos = [p.name for p in catalog.available_products if alvo in normalize(p.name)]
-        if produtos:
-            return f"Temos sim: *{', '.join(produtos)}*. 😊"
+    # 2. Sabor pelo nome, disponível.
+    achados = [nome for nome in sabores_disponiveis if alvo in normalize(nome)]
+    if achados:
+        if len(achados) == 1:
+            return f"Temos sim: *{achados[0]}*. 😊"
+        return "Temos sim! Hoje: *" + "*, *".join(achados) + "*. 😊"
+
+    # 3. Produto pelo nome, disponível.
+    produtos = [p.name for p in catalog.available_products if alvo in normalize(p.name)]
+    if produtos:
+        return f"Temos sim: *{', '.join(produtos)}*. 😊"
+
+    # 4. Existe no cardápio, mas está esgotado/indisponível hoje — não é o
+    # mesmo que "nunca vendemos isso".
+    esgotado = next((nome for nome in sabores_todos if alvo in normalize(nome)), None)
+    if esgotado:
+        return f"*{esgotado}* a gente tem, mas acabou hoje. 😔\nQuer ver o que tem disponível?"
+    produto_esgotado = next(
+        (p.name for p in catalog.products if alvo in normalize(p.name)), None
+    )
+    if produto_esgotado:
         return (
-            f'Hoje não temos *{procurado}* no cardápio. 🙈\n'
-            "Quer ver o que tem?"
+            f"*{produto_esgotado}* está fora do cardápio hoje. 😔\n"
+            "Quer ver o que tem disponível?"
         )
 
-    if len(achados) == 1:
-        return f"Temos sim: *{achados[0]}*. 😊"
-    return "Temos sim! Hoje: *" + "*, *".join(achados) + "*. 😊"
+    return f'Hoje não temos *{procurado}* no cardápio. 🙈\nQuer ver o que tem?'

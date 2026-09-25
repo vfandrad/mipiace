@@ -104,6 +104,55 @@ async def test_conversa_antiga_sem_marca_nao_fica_presa() -> None:
 
 
 @pytest.mark.asyncio
+async def test_handoff_com_pix_pendente_nao_perde_a_trava_ao_voltar() -> None:
+    """Pedir atendente com um Pix já emitido não pode destravar o carrinho.
+
+    Achado em conversa real: o cliente pediu atendente com o pedido em
+    AGUARDANDO_PAGAMENTO, reclamou mais um pouco, e depois pediu para o bot
+    voltar ("deixa quieto"). Sem lembrar o estado de antes do handoff, o
+    retorno jogava a conversa para CONVERSANDO com o carrinho vazio — e o
+    congelamento que impede um segundo pedido nascer por baixo do primeiro
+    (`_MEXEM_NO_PEDIDO` em machine.py) só vale em AGUARDANDO_PAGAMENTO.
+    """
+    from tests.test_agent_machine import montar_pote  # noqa: PLC0415
+
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
+        "pode fechar, vou retirar",
+    )
+    await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim")
+    assert session.state is S.AGUARDANDO_PAGAMENTO
+    pedido_pago = session.active_order_id
+    assert pedido_pago is not None
+
+    await run(deps, session, plano(op(Action.REQUEST_HUMAN)), "quero falar com atendente")
+    assert session.state is S.ATENDIMENTO_HUMANO
+
+    # "deixa quieto" está na lista de falas que devolvem o bot sem que o
+    # cliente precise repetir uma operação de pedido.
+    respostas = await run(deps, session, AgentPlan(), "deixa quieto, so manda o pix de novo")
+
+    assert session.state is S.AGUARDANDO_PAGAMENTO, (
+        f"a volta do handoff derrubou o pedido pago para {session.state}"
+    )
+    assert session.active_order_id == pedido_pago
+    assert session.cart.is_empty
+
+    # E o congelamento continua valendo: tentar adicionar item não pode
+    # montar um segundo pedido por baixo do primeiro.
+    bloqueado = await run(
+        deps, session, plano(op(Action.ADD_ITEM, product_name="Casquinha")), "poe uma casquinha"
+    )
+    assert session.cart.is_empty
+    assert any("esperando o pagamento" in resposta for resposta in bloqueado)
+    assert respostas  # nunca emudece
+
+
+@pytest.mark.asyncio
 async def test_atendimento_humano_nunca_emudece() -> None:
     """A garantia mais cara do agente: em handoff ele para de conduzir, não de falar.
 

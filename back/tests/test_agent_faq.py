@@ -150,6 +150,47 @@ def test_horario_configurado_e_respondido(cardapio) -> None:
     assert "14h às 22h" in resposta
 
 
+def test_produto_indisponivel_nao_e_confundido_com_inexistente() -> None:
+    """"tem milkshake?" quando existe mas está esgotado não pode soar como "nunca vendemos isso".
+
+    Achado em conversa real: perguntar por um produto indisponível (Milkshake)
+    e por um que nunca esteve no cardápio (sorvete de doce de leite) recebia a
+    MESMA frase — "Hoje não temos X no cardápio" — escondendo que um deles a
+    loja de fato vende, só que acabou.
+    """
+    from uuid import uuid4
+
+    from app.domain.catalog import CatalogProduct, CatalogSnapshot
+
+    catalogo = CatalogSnapshot(
+        products=[
+            CatalogProduct(id=uuid4(), name="Casquinha", base_price=Decimal("9.00")),
+            CatalogProduct(
+                id=uuid4(), name="Milkshake", base_price=Decimal("22.00"), is_available=False
+            ),
+        ]
+    )
+
+    esgotado = answer(
+        topic="disponibilidade",
+        question="voces vendem milkshake?",
+        raw_text="milkshake",
+        catalog=catalogo,
+        settings=get_settings(),
+    )
+    inexistente = answer(
+        topic="disponibilidade",
+        question="tem sorvete de doce de leite?",
+        raw_text="sorvete de doce de leite",
+        catalog=catalogo,
+        settings=get_settings(),
+    )
+
+    assert "não temos" not in esgotado.lower(), esgotado
+    assert "não temos" in inexistente.lower(), inexistente
+    assert esgotado != inexistente
+
+
 def test_pergunta_por_categoria_de_sabor_lista_a_categoria() -> None:
     """"tem sabor sem lactose?" não casa com nome de sabor nenhum.
 

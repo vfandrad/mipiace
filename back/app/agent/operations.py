@@ -346,8 +346,16 @@ def _flavors_into(
             turn.answered = True
         return
     achados, problemas = _find_flavors(group, op.add_flavors)
+    antes = len(turn.notes)
     turn.say(*problemas)
     _apply_flavors(item, group, add=achados, remove_names=op.remove_flavors, turn=turn)
+    if not turn.changed and len(turn.notes) > antes:
+        # Sabor repetido, grupo já cheio, sabor que não existe: _apply_flavors
+        # e _find_flavors já explicaram o problema sem mudar nada no item. Sem
+        # marcar `answered`, o turno caía no fallback genérico de "não
+        # entendi" — que APAGA a explicação real e ainda soma uma falha por
+        # algo que o sistema entendeu perfeitamente.
+        turn.answered = True
 
 
 # ---------------------------------------------------------------------------
@@ -363,9 +371,9 @@ async def apply(
 ) -> None:
     """Aplica UMA operação. Nada aqui responde ao cliente diretamente.
 
-    `mensagem` é o texto cru do cliente. Só o endereço o usa, e por um motivo
-    que vale a passagem do parâmetro: é o único dado do pedido que não tem
-    catálogo contra o qual ser conferido (ver `_merge_address`).
+    `mensagem` é o texto cru do cliente. O endereço usa para conferir se cada
+    campo foi mesmo dito (ver `_merge_address`); os itens usam para a mesma
+    checagem contra um defeito parecido — ver `_duplicates_complete_item`.
     """
     action = op.action
 
@@ -378,19 +386,19 @@ async def apply(
         _merge_address(session, op.address, turn, mensagem)
 
     if action is Action.ADD_ITEM:
-        _op_add_item(deps, session, op, turn)
+        _op_add_item(deps, session, op, turn, mensagem)
 
     elif action in {Action.UPDATE_ITEM, Action.REPLACE_ITEM}:
-        _op_update_item(deps, session, op, turn)
+        _op_update_item(deps, session, op, turn, mensagem)
 
     elif action is Action.REMOVE_ITEM:
         _op_remove_item(deps, session, op, turn)
 
     elif action is Action.UPDATE_QUANTITY:
-        _op_quantity(deps, session, op, turn)
+        _op_quantity(deps, session, op, turn, mensagem)
 
     elif action is Action.DUPLICATE_ITEM:
-        _op_duplicate(deps, session, op, turn)
+        _op_duplicate(deps, session, op, turn, mensagem)
 
     elif action is Action.SET_FULFILLMENT:
         _set_fulfillment(session, op.fulfillment, turn)
@@ -403,15 +411,21 @@ async def apply(
         turn.answered = True
 
     elif action is Action.SHOW_CART:
-        turn.say(
-            r.cart_summary(session.cart, pending=pending_index(deps, session))
-            if not session.cart.is_empty
-            else r.cart_empty()
-        )
+        if session.cart.is_empty and session.active_order_id is not None:
+            turn.say(await pending_order_status(deps, session))
+        else:
+            turn.say(
+                r.cart_summary(session.cart, pending=pending_index(deps, session))
+                if not session.cart.is_empty
+                else r.cart_empty()
+            )
         turn.answered = True
 
     elif action is Action.SHOW_TOTAL:
-        turn.say(_total_reply(deps, session))
+        if session.cart.is_empty and session.active_order_id is not None:
+            turn.say(await pending_order_status(deps, session))
+        else:
+            turn.say(_total_reply(deps, session))
         turn.answered = True
 
     elif action is Action.ANSWER_QUESTION:
@@ -512,8 +526,33 @@ def _merge_address(
     turn.changed = True
 
 
+def _duplicates_complete_item(
+    session: ConversationSession, product: CatalogProduct, flavor_names: Sequence[str]
+) -> bool:
+    """Este produto+sabores já é um item COMPLETO e idêntico no carrinho?"""
+    alvo = {normalize(n) for n in flavor_names}
+    return any(
+        item.product_id == product.id and {normalize(c.name) for c in item.complements} == alvo
+        for item in session.cart.items
+    )
+
+
+def _mentioned_in_message(
+    product: CatalogProduct, flavor_names: Sequence[str], mensagem: str
+) -> bool:
+    if not mensagem:
+        return False
+    if _disse_isso(product.name, mensagem):
+        return True
+    return any(_disse_isso(nome, mensagem) for nome in flavor_names)
+
+
 def _op_add_item(
-    deps: AgentDeps, session: ConversationSession, op: Operation, turn: Turn
+    deps: AgentDeps,
+    session: ConversationSession,
+    op: Operation,
+    turn: Turn,
+    mensagem: str = "",
 ) -> None:
     """Item NOVO no pedido — com uma exceção, que evita item fantasma.
 
@@ -551,6 +590,21 @@ def _op_add_item(
             turn.say(r.item_added(pendente))
         return
 
+    # Uma resposta curta ("sim", um pedido de atendente) às vezes faz o
+    # modelo devolver add_item RECRIANDO um item que já está completo no
+    # carrinho, como se estivesse "confirmando" o que já tinha sido pedido —
+    # dobrando o subtotal sem o cliente ter dito nada sobre o item. Só barra
+    # quando a mensagem não cita nem o produto nem nenhum dos sabores: quem
+    # de fato pede outro igual, cedo ou tarde, nomeia o que quer.
+    if _duplicates_complete_item(session, product, op.add_flavors) and not _mentioned_in_message(
+        product, op.add_flavors, mensagem
+    ):
+        logger.info(
+            "add_item ignorado: %s %s já está completo no carrinho e não foi citado em %r",
+            product.name, op.add_flavors, mensagem,
+        )
+        return
+
     item = _new_item(session, product, op.quantity or 1)
     turn.changed = True
     _flavors_into(deps, item, op, turn)
@@ -559,7 +613,11 @@ def _op_add_item(
 
 
 def _op_update_item(
-    deps: AgentDeps, session: ConversationSession, op: Operation, turn: Turn
+    deps: AgentDeps,
+    session: ConversationSession,
+    op: Operation,
+    turn: Turn,
+    mensagem: str = "",
 ) -> None:
     """Mexe num item que já existe — nunca cria um novo."""
     # Trocar o produto (replace) tem prioridade sobre mexer em sabor.
@@ -581,7 +639,7 @@ def _op_update_item(
         if index is None:
             if session.cart.is_empty:
                 # "na verdade quero o médio" sem nada no pedido: é um item novo.
-                _op_add_item(deps, session, op, turn)
+                _op_add_item(deps, session, op, turn, mensagem)
                 return
             turn.say(r.ask_which_item(session.cart))
             turn.answered = True
@@ -686,7 +744,11 @@ def _op_remove_item(
 
 
 def _op_quantity(
-    deps: AgentDeps, session: ConversationSession, op: Operation, turn: Turn
+    deps: AgentDeps,
+    session: ConversationSession,
+    op: Operation,
+    turn: Turn,
+    mensagem: str = "",
 ) -> None:
     if op.quantity is None:
         return
@@ -697,7 +759,7 @@ def _op_quantity(
         # mudar a quantidade do que já está lá — senão o cliente leva dois
         # potes de R$ 50 achando que pediu dois casquinhos.
         if op.product_name and deps.catalog.product_by_name(op.product_name):
-            _op_add_item(deps, session, op, turn)
+            _op_add_item(deps, session, op, turn, mensagem)
             return
         turn.say(r.ask_which_item(session.cart))
         turn.answered = True
@@ -710,7 +772,11 @@ def _op_quantity(
 
 
 def _op_duplicate(
-    deps: AgentDeps, session: ConversationSession, op: Operation, turn: Turn
+    deps: AgentDeps,
+    session: ConversationSession,
+    op: Operation,
+    turn: Turn,
+    mensagem: str = "",
 ) -> None:
     # "põe também 2 cascões" chega do modelo como duplicate_item com o nome de
     # OUTRO produto. Duplicar aí repetiria o pote de R$ 50 que já estava no
@@ -720,7 +786,7 @@ def _op_duplicate(
         index = _target(deps, session, Operation(action=op.action, item_index=op.item_index))
         atual = session.cart.items[index] if index is not None else None
         if alvo is not None and (atual is None or alvo.id != atual.product_id):
-            _op_add_item(deps, session, op, turn)
+            _op_add_item(deps, session, op, turn, mensagem)
             return
 
     if session.cart.is_empty:
@@ -745,6 +811,26 @@ def _op_duplicate(
 def menu(deps: AgentDeps, session: ConversationSession) -> str:
     session.slots[LAST_OFFER] = [p.name for p in deps.catalog.available_products]
     return r.menu(deps.catalog)
+
+
+async def pending_order_status(deps: AgentDeps, session: ConversationSession) -> str:
+    """"qual sabor eu escolhi mesmo?", "quanto vou pagar?" depois do Pix emitido.
+
+    `place_order` esvazia o carrinho ao gerar o Pix — sem isto, qualquer
+    pergunta sobre o pedido que o cliente ACABOU de fazer caía na resposta de
+    carrinho vazio ("o que você vai querer hoje?"), como se o pedido tivesse
+    sumido. O pedido não sumiu: só saiu do carrinho para `active_order_id`.
+    """
+    if session.active_order_id is None:
+        return r.cart_empty()
+    try:
+        summary = await deps.order_summary(deps.db, session.active_order_id)
+    except Exception:
+        logger.exception("falha ao buscar o pedido %s para responder o cliente", session.active_order_id)
+        summary = None
+    if summary is None:
+        return r.order_awaiting_payment()
+    return r.pending_order_status(summary)
 
 
 def _total_reply(deps: AgentDeps, session: ConversationSession) -> str:
@@ -782,9 +868,22 @@ def _answer_question(
 # Atendimento humano
 # ---------------------------------------------------------------------------
 
+#: Estados que, se ativos antes do handoff, valem a pena recuperar ao voltar.
+#: Perder AGUARDANDO_PAGAMENTO ao retomar era o bug: o congelamento do
+#: carrinho com Pix pendente (`_MEXEM_NO_PEDIDO` em machine.py) só vale
+#: enquanto o estado for esse — se o retorno do handoff jogasse todo mundo
+#: para CONVERSANDO, o cliente conseguia abrir um SEGUNDO pedido por baixo do
+#: primeiro, ainda não pago, só por ter passado pelo atendimento humano.
+_RETOMAVEL_DO_HANDOFF: frozenset[S] = frozenset(
+    {S.CONFIRMANDO_PEDIDO, S.AGUARDANDO_PAGAMENTO}
+)
+
+
 def to_human(session: ConversationSession) -> list[str]:
     if not can_transition(session.state, S.ATENDIMENTO_HUMANO):
         _go(session, S.CONVERSANDO)
+    if session.state is not S.ATENDIMENTO_HUMANO:
+        session.slots["pre_handoff_state"] = session.state.value
     _go(session, S.ATENDIMENTO_HUMANO)
     session.handoff = True
     session.touch_handoff()
@@ -801,10 +900,14 @@ def human_on_the_line(session: ConversationSession) -> bool:
 def resume_from_human(session: ConversationSession) -> None:
     session.handoff = False
     session.slots.pop("handoff_since", None)
-    session.slots.pop("handoff_avisado", None)
+    session.slots.pop("handoff_avisado_em", None)
     session.fail_count = 0
+    pre_handoff = session.slots.pop("pre_handoff_state", None)
     if session.state is S.ATENDIMENTO_HUMANO:
-        _go(session, S.CONVERSANDO)
+        destino = next(
+            (s for s in _RETOMAVEL_DO_HANDOFF if s.value == pre_handoff), S.CONVERSANDO
+        )
+        _go(session, destino)
 
 
 #: O que o cliente diz quando quer o bot de volta. É uma lista curta e ela não

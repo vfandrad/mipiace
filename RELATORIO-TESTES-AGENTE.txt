@@ -288,3 +288,166 @@ COMO FOI FEITO
   A suíte padrão (pytest) não os inclui e não custa nada.
 
 ================================================================================
+ RODADA 2 — 6 CLIENTES SIMULADOS, 3 SUBAGENTES EM PARALELO
+ 25 de setembro de 2026
+================================================================================
+
+COMO FOI FEITO
+
+  Três subagentes, cada um com duas conversas independentes (6 no total),
+  fizeram o papel de cliente contra o modelo REAL (gpt-4o-mini) e o executor
+  real, com liberdade para adaptar a próxima mensagem à resposta do bot — sem
+  roteiro fixo. Cada dupla de conversas mirou pontos específicos do relatório
+  da rodada 1 que tinham ficado em aberto (A1 a A9) e os quatro críticos já
+  corrigidos, para conferir se a correção segurou.
+
+  O harness desta vez roda inteiro em memória, sem banco: mesmo catálogo de
+  teste de `tests/test_agent_machine.py` (persistido entre turnos, não
+  reconstruído a cada chamada) e total do pedido calculado de verdade via
+  `app.services.pricing.calculate_cart` — os dois defeitos que fabricaram
+  falsos críticos na rodada 1 não podiam se repetir.
+
+  Cada acusação dos subagentes foi conferida contra o código antes de virar
+  correção, como manda a lição registrada acima.
+
+--------------------------------------------------------------------------------
+ DEFEITOS ENCONTRADOS E CORRIGIDOS NO CÓDIGO
+--------------------------------------------------------------------------------
+
+[D1] CRÍTICO — Pedir atendente com o Pix pendente perdia a trava ao voltar
+     Achado em duas conversas (uma via timeout automático, outra via "deixa
+     quieto"). `to_human()`/`resume_from_human()` não guardavam o estado de
+     antes do handoff: ao reassumir, a conversa sempre voltava para
+     CONVERSANDO, mesmo saindo de AGUARDANDO_PAGAMENTO. Isso destravava o
+     congelamento do carrinho com Pix pendente (a correção C2 da rodada 1) por
+     um caminho novo — um cliente conseguia fechar um SEGUNDO pedido, com um
+     SEGUNDO Pix, sem o primeiro nunca ter sido referenciado de novo.
+     Corrigido guardando o estado pré-handoff em slots e restaurando
+     AGUARDANDO_PAGAMENTO/CONFIRMANDO_PEDIDO ao voltar (`operations.to_human`,
+     `operations.resume_from_human`, transições novas em `states.py`). De
+     passagem, corrigida também uma chave de slot obsoleta
+     (`handoff_avisado` → `handoff_avisado_em`) que fazia o aviso "estou
+     aguardando alguém" nunca ser limpo ao sair do atendimento humano.
+     Teste: test_handoff_com_pix_pendente_nao_perde_a_trava_ao_voltar
+
+[D2] CRÍTICO — Resposta curta sem nada do pedido dobrava o carrinho
+     Achado de forma reproduzível em DUAS conversas, com gatilhos diferentes
+     ("sim" respondendo "quer mais alguma coisa?"; um pedido de atendente no
+     meio do pedido). O modelo devolvia add_item RECRIANDO itens que já
+     estavam completos no carrinho, como se estivesse "confirmando" o pedido
+     lendo a situação de volta — o subtotal dobrava sem o cliente ter dito
+     nada sobre os itens.
+     Corrigido no executor: um add_item que duplicaria um item já completo só
+     é aceito se a mensagem do cliente citar o produto ou algum dos sabores
+     (`operations._duplicates_complete_item`, `_mentioned_in_message`, reusa a
+     mesma checagem frouxa `_disse_isso` já usada para endereço). Quem pede
+     "mais uma casquinha" nomeando o produto continua funcionando normal.
+     Testes: test_resposta_curta_nao_recria_item_ja_completo
+             test_resposta_curta_mas_que_cita_o_produto_ainda_adiciona
+
+[D3] IMPORTANTE — Pergunta sobre o pedido já pago caía em "carrinho vazio"
+     Achado 3x na mesma conversa. `place_order` esvazia o carrinho ao emitir
+     o Pix; perguntar "qual sabor eu escolhi mesmo?" ou "quanto vou pagar?"
+     depois disso sempre respondia "seu pedido está vazio, o que você vai
+     querer hoje?" — como se o pedido tivesse sumido, mesmo com o Pix ainda
+     por pagar.
+     Corrigido: show_cart, show_total e a saudação genérica (quando o modelo
+     devolve no_action com o carrinho vazio) agora consultam o pedido já
+     registrado via `deps.order_summary` quando há `active_order_id`, e
+     respondem com os itens e o total de verdade em vez do carrinho vazio.
+     Teste: test_pergunta_sobre_pedido_pago_nao_ve_carrinho_vazio
+
+[D4] IMPORTANTE — Confirmação informal não fechava com o resumo na tela
+     "fechou mano, pode mandar" e "tá certo isso, manda" saíam do modelo como
+     close_order, não confirm_order — e com o resumo já esperando resposta,
+     close_order só reexibia o mesmo resumo. O cliente precisava confirmar de
+     um jeito mais formal para o Pix sair.
+     Corrigido: com o resumo na tela (AWAITING_CONFIRM), close_order vale como
+     confirmação — a trava da resposta morna (`_hedged`) continua valendo do
+     mesmo jeito para os dois casos.
+     Testes: test_fechar_informal_com_resumo_na_tela_confirma
+             test_fechar_informal_morno_ainda_nao_confirma
+
+[D5] MENOR — Produto indisponível respondido como se nunca tivesse existido
+     "vocês vendem milkshake?" (existe, está indisponível hoje) e "tem sorvete
+     de doce de leite?" (nunca existiu) recebiam a MESMA frase — "hoje não
+     temos X no cardápio" — escondendo que um deles a loja vende de verdade,
+     só que acabou.
+     Corrigido em `faq._tem_isso`: a busca por nome agora olha o cardápio
+     inteiro, e um produto/sabor que existe mas está esgotado ganha uma
+     resposta diferente da de algo que nunca esteve no cardápio.
+     Teste: test_produto_indisponivel_nao_e_confundido_com_inexistente
+
+[D6] MENOR — Mensagem informativa (sabor repetido, grupo cheio) descartada
+     pelo fallback genérico
+     Achado lendo o código ao investigar D2/o relato de "sabor repetido nunca
+     é explicado": quando `_apply_flavors` só EXPLICA um problema (sabor já
+     escolhido, grupo já cheio) sem mudar nada no item, a resposta nunca
+     marcava `turn.answered`. Se o item já estava completo nesse momento (sem
+     pergunta pendente para reaproveitar a mensagem), o turno caía no
+     fallback genérico de "não entendi" — que APAGA a explicação real e ainda
+     soma uma falha por algo que o sistema tinha entendido perfeitamente.
+     Corrigido em `operations._flavors_into`.
+
+--------------------------------------------------------------------------------
+ DEFEITOS DE INTERPRETAÇÃO — REFORÇADOS NO PROMPT, SEM TRAVA NO CÓDIGO
+--------------------------------------------------------------------------------
+
+  Estes três não ganharam trava determinística: ou a checagem exigiria uma
+  lista de palavras-chave para decidir intenção (o que o desenho do projeto
+  evita — ver `mipiace-arquitetura-do-agente`), ou quebraria testes que hoje
+  documentam o executor confiando na operação da IA para este campo
+  (fulfillment). Foram endereçados com regras novas no prompt (13 a 16 em
+  `prompts.py`) e casos no eval ao vivo, que hoje passam:
+
+  - Sabor repetido no mesmo item fazia o modelo devolver remove_item e apagar
+    o carrinho inteiro, em vez de só recusar o sabor repetido.
+    Eval: sabor_repetido_nao_apaga_item
+  - "mais um pote" sem tamanho nem sabor fazia o modelo copiar o último item
+    e somar o valor sem perguntar nada.
+    Eval: mais_um_pote_sem_especificar
+  - Pedir atendente na mesma mensagem que uma operação de pedido fazia o
+    pedido de atendente sumir.
+    Eval: atendente_junto_com_pedido_nao_some
+  - set_fulfillment decidido sem nenhum sinal na mensagem (achado num caso
+    ainda mais grave que o A4 original: nenhuma palavra sobre entrega ou
+    retirada na fala do cliente). Só reforço de prompt (regra 15); sem caso
+    de eval específico porque o framework de eval ao vivo só confere se a
+    ação PRINCIPAL esperada apareceu, não se uma ação indevida ficou de fora.
+
+--------------------------------------------------------------------------------
+ O QUE CONTINUA EM ABERTO (não tratado nesta rodada)
+--------------------------------------------------------------------------------
+
+  - Troca de tamanho (500ml → 240ml) escolhe sozinha qual dos dois sabores
+    manter, sem perguntar nem avisar explicitamente qual foi descartado.
+  - Taxa de entrega aparece num resumo antes de o cliente ter dito se quer
+    entrega ou retirada (só cosmético — o fechamento final sempre soma a taxa
+    certa).
+  - Itens idênticos não se agrupam em quantidade (duas linhas em vez de uma
+    com quantidade 2).
+
+--------------------------------------------------------------------------------
+ O QUE FUNCIONOU BEM (confirma que a rodada 1 segurou)
+--------------------------------------------------------------------------------
+
+  Os quatro críticos da rodada 1 foram provocados de novo, de propósito, nas
+  seis conversas — e os quatro seguraram: atendimento humano nunca emudeceu,
+  resposta morna ("acho que sim, pode ser") nunca gerou Pix, endereço nunca
+  foi inventado a partir de um "sim", e tentar editar o carrinho com Pix
+  pendente continuou bloqueado (o D1 desta rodada é um caminho NOVO para
+  perder essa mesma trava, via handoff — não uma regressão da correção
+  original). Edição continuou sendo edição, nunca item novo, em toda conversa
+  onde foi testada, inclusive com dois potes iguais no carrinho ao mesmo
+  tempo.
+
+--------------------------------------------------------------------------------
+ ESTADO DO PROJETO AO FIM DESTA SESSÃO
+--------------------------------------------------------------------------------
+
+  Backend ..... ruff limpo, 255 testes passando (+10 desde a rodada 1)
+  Evals ....... 25 casos contra o gpt-4o-mini REAL: 25 passando (+3)
+
+      cd back && FAKE_MODE=false pytest -m eval
+
+================================================================================

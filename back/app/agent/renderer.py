@@ -490,6 +490,25 @@ def order_awaiting_payment() -> str:
     )
 
 
+def pending_order_status(summary: Any) -> str:
+    """Resposta a "qual sabor eu escolhi mesmo?" com o pedido já fora do carrinho.
+
+    `place_order` esvazia o carrinho ao emitir o Pix; é o resumo do pedido já
+    registrado que sobra para responder por ele — sem isto o cliente ouvia que
+    o pedido dele "está vazio", como se tivesse sumido.
+    """
+    linhas = [f"Seu pedido *{summary.code}*:"]
+    for item in summary.items:
+        extras = f" ({', '.join(item.complements)})" if item.complements else ""
+        linhas.append(f"{item.quantity}x {item.product_name}{extras} — {money(item.line_total)}")
+    linhas.append(f"\nTotal: *{money(summary.total)}*")
+    if summary.payment_status == "pago":
+        linhas.append("Já está pago e confirmado. ✅")
+    else:
+        linhas.append("Ainda aguardando o pagamento do Pix. 💳")
+    return "\n".join(linhas)
+
+
 def payment_confirmed(order_code: str) -> str:
     return (
         f"Pagamento confirmado! ✅ Pedido *{order_code}* já foi para a produção.\n"

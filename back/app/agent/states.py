@@ -48,6 +48,8 @@ TRANSITIONS: dict[S, set[S]] = {
     S.ATENDIMENTO_HUMANO: {
         S.CONVERSANDO,           # lojista devolve, ou ninguém respondeu a tempo
         S.CANCELADO,
+        S.CONFIRMANDO_PEDIDO,    # retomou do handoff com o resumo ainda na tela
+        S.AGUARDANDO_PAGAMENTO,  # retomou do handoff com o Pix já emitido e pendente
     },
     S.CANCELADO: {
         S.CONVERSANDO,           # novo pedido depois de cancelar

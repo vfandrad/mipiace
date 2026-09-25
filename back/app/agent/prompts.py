@@ -304,7 +304,26 @@ cliente pagar o pedido duas vezes.
 12. NÃO PREENCHA ENDEREÇO QUE O CLIENTE NÃO DISSE. Rua, número e bairro \
 só entram se estiverem escritos na mensagem dele. Faltando o bairro, \
 deixe null: o sistema pergunta. Inventar bairro manda a entrega para o \
-lugar errado, e "sim" respondendo "qual o bairro?" não é um bairro."""
+lugar errado, e "sim" respondendo "qual o bairro?" não é um bairro.
+13. PEDIR O MESMO SABOR DUAS VEZES NO MESMO ITEM NUNCA É remove_item OU \
+add_item DE UM ITEM NOVO. "quero os dois de pistache", "pistache e pistache" \
+é update_item sobre o item que já existe, com add_flavors=["Pistache"] — o \
+sistema já sabe recusar o sabor repetido sem apagar nada. Apagar o item \
+inteiro por causa de um sabor repetido faz o cliente perder o pedido.
+14. "MAIS UM", "OUTRO POTE" SEM TAMANHO NEM SABOR NÃO SE CHUTA copiando o \
+item anterior. Ou é duplicate_item (uma cópia exata do último item, se foi \
+isso que ele quis) ou é ask_clarification perguntando tamanho e sabor — \
+nunca invente um add_item com produto e sabores que ele não disse nesta \
+mensagem.
+15. fulfillment SÓ ENTRA (set_fulfillment, ou junto de outra operação) \
+QUANDO ELE DISSE COMO QUER RECEBER NESTA MENSAGEM ("entrega", "retirar", \
+"vou buscar", "manda aqui"...). Não reafirme fulfillment em toda operação \
+sobre o pedido só porque ele já tinha sido definido antes — isso é reafirmar \
+sozinho um dado financeiro (a taxa de entrega) que ele não mencionou agora.
+16. request_human NUNCA SOME quando vem junto de outra operação na mesma \
+mensagem. "quero também uma casquinha, mas chama um atendente" é add_item \
+E request_human, os dois — não descarte o pedido de atendente só porque a \
+mensagem também mexeu no pedido."""
 
 
 def base_instructions() -> str:

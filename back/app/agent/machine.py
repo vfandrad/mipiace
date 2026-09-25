@@ -52,6 +52,7 @@ from app.agent.operations import (
     menu,
     open_group,
     pending_index,
+    pending_order_status,
     product_of,
     resume_from_human,
 )
@@ -342,7 +343,17 @@ async def run(
 
     # A confirmação é a única operação que mexe em dinheiro: ela sai da fila e
     # só vale se houver um resumo na tela esperando resposta.
-    if plan.has(Action.CONFIRM_ORDER) and session.slots.get(AWAITING_CONFIRM):
+    #
+    # close_order conta como confirmação NESTE ponto específico: com o resumo
+    # já na tela, "fechou mano, pode mandar" e "tá certo isso, manda" saem do
+    # modelo como close_order, não confirm_order — e sem isto o bot só
+    # reexibia o mesmo resumo, obrigando o cliente a repetir a confirmação de
+    # um jeito mais formal. A trava da resposta morna (`_hedged`) continua
+    # valendo do mesmo jeito para os dois casos.
+    quer_confirmar = session.slots.get(AWAITING_CONFIRM) and (
+        plan.has(Action.CONFIRM_ORDER) or plan.has(Action.CLOSE_ORDER)
+    )
+    if quer_confirmar:
         if _hedged(text):
             # "pode ser", "acho que sim": o modelo classifica isso como
             # confirmação, mas não é um sim. Cobrança não se faz com
@@ -425,9 +436,13 @@ async def _next_step(
         return turn.notes + [r.ask_more_or_close(session.cart)]
 
     # 5. Cumprimento, agradecimento, conversa fiada: abre o atendimento em vez
-    #    de dizer "não entendi" a quem só disse oi.
+    #    de dizer "não entendi" a quem só disse oi. Com um Pix já emitido e
+    #    ainda pendente, "carrinho vazio, o que você vai querer?" soa como se
+    #    o pedido tivesse sumido — fala do pedido em aberto em vez do cardápio.
     if plan.has(Action.NO_ACTION) and session.cart.is_empty:
         session.fail_count = 0
+        if session.active_order_id is not None:
+            return turn.notes + [await pending_order_status(deps, session)]
         return turn.notes + [menu(deps, session)]
 
     # 6. Nada aconteceu mesmo: reparo progressivo, sem cardápio na cara dele.

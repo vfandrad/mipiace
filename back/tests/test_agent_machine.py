@@ -506,6 +506,50 @@ async def test_confirmar_depois_do_resumo_gera_o_pix() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fechar_informal_com_resumo_na_tela_confirma() -> None:
+    """"fechou mano, pode mandar" veio como close_order, não confirm_order.
+
+    Achado em conversa real: com o resumo já na tela esperando resposta, o
+    modelo às vezes classifica uma confirmação bem informal como close_order
+    — e sem isto o bot só reexibia o mesmo resumo, obrigando o cliente a
+    confirmar de um jeito mais formal antes de o Pix sair.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
+        "pode fechar, vou retirar",
+    )
+    assert session.state is S.CONFIRMANDO_PEDIDO
+
+    replies = await run(deps, session, plano(op(Action.CLOSE_ORDER)), "fechou mano, pode mandar")
+
+    assert session.state is S.AGUARDANDO_PAGAMENTO
+    assert "PIX-COPIA-E-COLA" in replies[0]
+
+
+@pytest.mark.asyncio
+async def test_fechar_informal_morno_ainda_nao_confirma() -> None:
+    """A trava da resposta morna vale para close_order tanto quanto para confirm_order."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
+        "pode fechar, vou retirar",
+    )
+
+    replies = await run(deps, session, plano(op(Action.CLOSE_ORDER)), "acho que sim, pode ser")
+
+    assert session.state is S.CONFIRMANDO_PEDIDO
+    assert session.active_order_id is None
+    assert replies
+
+
+@pytest.mark.asyncio
 async def test_retirada_nao_pede_endereco() -> None:
     deps, session = build_deps(), build_session()
     await montar_pote(deps, session)
@@ -750,6 +794,103 @@ async def test_com_pix_pendente_ainda_da_para_cancelar_e_perguntar() -> None:
     cancelou = await run(deps, session, plano(op(Action.CANCEL_ORDER)), "cancela")
     assert cancelou
     assert session.state is S.CANCELADO
+
+
+@pytest.mark.asyncio
+async def test_pergunta_sobre_pedido_pago_nao_ve_carrinho_vazio() -> None:
+    """"qual sabor eu escolhi mesmo?" depois do Pix não pode soar como pedido sumido.
+
+    `place_order` esvazia o carrinho ao emitir o Pix. Achado em conversa
+    real: sem consultar o pedido já registrado, show_cart respondia "seu
+    pedido está vazio, o que você vai querer hoje?" para quem tinha acabado
+    de fechar e pagar.
+    """
+    from types import SimpleNamespace
+
+    async def _summary(db, order_id):
+        item = SimpleNamespace(
+            product_name="Pote 500ml",
+            quantity=1,
+            complements=["Pistache", "Morango"],
+            line_total=Decimal("32.00"),
+        )
+        return SimpleNamespace(
+            code="MP-0007", items=[item], total=Decimal("32.00"), payment_status="pendente"
+        )
+
+    deps, session = build_deps(), build_session()
+    deps.order_summary = _summary
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
+        "pode fechar, vou retirar",
+    )
+    await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim")
+    assert session.cart.is_empty
+
+    replies = await run(
+        deps, session, plano(op(Action.SHOW_CART)), "qual sabor eu escolhi mesmo?"
+    )
+
+    assert replies
+    assert "vazio" not in replies[0].lower()
+    assert "Pistache" in replies[0]
+    assert "MP-0007" in replies[0]
+
+
+@pytest.mark.asyncio
+async def test_resposta_curta_nao_recria_item_ja_completo() -> None:
+    """"sim" fez o modelo reemitir itens já completos, dobrando o carrinho.
+
+    Achado em duas conversas de teste reais: uma resposta curta sem nada
+    sobre o pedido veio acompanhada de add_item recriando exatamente o que já
+    estava no carrinho, e o subtotal dobrou sem o cliente ter pedido nada
+    disso. O executor agora recusa um add_item que duplicaria um item já
+    completo quando a mensagem não cita nem o produto nem os sabores.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)  # Pote 500ml, Pistache+Morango, completo
+    await run(deps, session, plano(op(Action.ADD_ITEM, product_name="Casquinha")), "e uma casquinha")
+    assert len(session.cart.items) == 2
+
+    replies = await run(
+        deps,
+        session,
+        plano(
+            op(Action.ADD_ITEM, product_name="Pote 500ml", add_flavors=["Pistache", "Morango"]),
+            op(Action.ADD_ITEM, product_name="Casquinha"),
+        ),
+        "sim",
+    )
+
+    assert len(session.cart.items) == 2, (
+        f"'sim' recriou item(ns) já completo(s): {[i.product_name for i in session.cart.items]}"
+    )
+    assert replies
+
+
+@pytest.mark.asyncio
+async def test_resposta_curta_mas_que_cita_o_produto_ainda_adiciona() -> None:
+    """A trava é só para quando a mensagem não dá nenhum sinal — citar o produto ainda funciona."""
+    deps, session = build_deps(), build_session()
+    await run(
+        deps,
+        session,
+        plano(op(Action.ADD_ITEM, product_name="Casquinha")),
+        "quero uma casquinha",
+    )
+    assert len(session.cart.items) == 1
+
+    await run(
+        deps,
+        session,
+        plano(op(Action.ADD_ITEM, product_name="Casquinha")),
+        "bota mais uma casquinha",
+    )
+
+    assert len(session.cart.items) == 2
 
 
 @pytest.mark.asyncio
