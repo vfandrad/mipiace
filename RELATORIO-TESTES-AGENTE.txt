@@ -601,3 +601,109 @@ COMO FOI FEITO
       cd back && FAKE_MODE=false pytest -m eval
 
 ================================================================================
+ RODADA 4 — 6 CLIENTES SIMULADOS, 3 SUBAGENTES EM PARALELO
+ 25 de setembro de 2026 (mesmo dia, sessão seguinte)
+================================================================================
+
+COMO FOI FEITO
+
+  Mesmo desenho das rodadas anteriores. Desta vez com dois objetivos: (1)
+  confirmar que D7, D8 e D9 (rodada 3) seguram sob regressão adversarial com
+  frases diferentes das já testadas, e (2) explorar terreno novo. Os três
+  defeitos da rodada 3 foram confirmados SÓLIDOS nas duas conversas que os
+  visaram diretamente, inclusive um teste de falso-positivo (crescer de
+  tamanho sem perder sabor não dispara aviso indevido de "tirei o X").
+
+--------------------------------------------------------------------------------
+ DEFEITOS ENCONTRADOS E CORRIGIDOS NO CÓDIGO
+--------------------------------------------------------------------------------
+
+[D11] CRÍTICO — Perguntar algo dentro do atendimento humano tirava o cliente
+      do handoff sozinho
+      Achado de forma independente por dois subagentes em conversas
+      diferentes. show_cart, show_total e show_menu estavam na lista de
+      operações que significam "o cliente quer voltar a falar com o bot" —
+      mas perguntar "o que eu pedi mesmo, alguém aí?" enquanto espera um
+      atendente é só curiosidade, não um pedido pra dispensar a pessoa que
+      foi chamada. O bot reassumia a conversa sozinho, sem o cliente ter
+      pedido — se houvesse um atendente humano de verdade no meio, o bot
+      se sobreporia a ele sem aviso.
+      Corrigido em `_handoff_turn` (machine.py): só operações que MEXEM no
+      pedido (adicionar, editar, fechar, confirmar) tiram do handoff
+      automaticamente. Perguntas ficam de fora dessa lista.
+      Teste: test_pergunta_sobre_carrinho_nao_tira_do_handoff_sozinha
+
+[D12] CRÍTICO — "pode continuar comigo mesmo, sem esperar atendente" às
+      vezes não saía do handoff de verdade
+      Achado de forma independente por dois subagentes, com frases
+      diferentes. O código já tem uma lista de frases que reconhecem que o
+      cliente quer o bot de volta (`_quer_o_bot_de_volta`) e ela pegava essa
+      fala certinho — mas o MODELO, na mesma mensagem, às vezes devolvia
+      request_human de novo (confundindo o verbo "atender" com o substantivo
+      "atendente"). Como o turno seguia normalmente depois de reconhecer a
+      volta, esse request_human duplicado jogava a conversa de volta pro
+      atendimento humano no mesmo turno em que o cliente pediu pra sair dele.
+      Corrigido: quando a fala do cliente bate com `_quer_o_bot_de_volta`
+      (sinal determinístico, não depende do modelo), qualquer request_human
+      que o modelo tenha devolvido na MESMA mensagem é descartado antes do
+      resto do turno rodar.
+      Teste: test_pedir_pra_dispensar_atendente_nao_e_anulado_por_request_human_do_plano
+
+--------------------------------------------------------------------------------
+ DEFEITOS DE INTERPRETAÇÃO — REFORÇADOS NO PROMPT, SEM TRAVA NOVA NO CÓDIGO
+--------------------------------------------------------------------------------
+
+  - "troca uma das casquinhas por um pote pequeno" (produtos DIFERENTES, não
+    sabor/tamanho do mesmo item) às vezes só adicionava o produto novo e
+    esquecia de tirar uma unidade do antigo — cliente pagaria pelas duas
+    casquinhas MAIS o pote novo. Regra nova no prompt (18) + caso no eval
+    (trocar_uma_unidade_por_produto_diferente, passando contra o modelo real).
+  - Pergunta informativa somem quando misturada com edição de item ou pedido
+    de atendente na mesma mensagem (achado 2x na mesma conversa). Regra nova
+    no prompt (19), reforçando a regra 2 já existente.
+  - Quantidade no plural sem número ("uns potes", "umas casquinhas") sendo
+    assumida como 1 sem perguntar — reproduzido pela 3ª vez em rodadas
+    diferentes. Reforço na regra 7 do prompt, com exemplo explícito.
+
+--------------------------------------------------------------------------------
+ O QUE FUNCIONOU BEM (regressão das rodadas 1, 2 e 3 segurou)
+--------------------------------------------------------------------------------
+
+  D7 (cancelar + pedir de novo no mesmo turno), D8 (avisar sabor descartado
+  na troca de tamanho, incluindo o teste de falso-positivo ao crescer sem
+  perder nada) e D9 (fulfillment não inventado, testado com 5 turnos neutros
+  seguidos) foram provocados de novo com frases diferentes das já usadas e
+  seguraram. Resposta morna também segurou num ponto novo: "tanto faz, vamo
+  ver" respondendo à pergunta de entrega/retirada (não só à confirmação
+  final) não travou nenhuma das duas opções.
+
+--------------------------------------------------------------------------------
+ O QUE CONTINUA EM ABERTO
+--------------------------------------------------------------------------------
+
+  - Depois de uma troca de tamanho que deixa o item incompleto (faltando 1
+    sabor), responder só com o nome do sabor faltante às vezes SUBSTITUI o
+    sabor que já estava lá em vez de completar o item — perdendo um sabor
+    confirmado em silêncio. Achado nesta rodada, ainda não investigado a
+    fundo (não foi possível reproduzir os campos exatos da operação sem uma
+    instrumentação extra do harness).
+  - "Trocar tamanho" do produto às vezes não é reconhecido como operação
+    distinta quando vem junto de um pedido de atendente na mesma mensagem —
+    o modelo tenta ler como "adicionar 3º sabor" e recusa.
+  - Quantidade explícita de um item com sabor novo ("quero 3 potes de
+    pistache e chocolate") às vezes é lida como ajuste de quantidade de
+    itens de sabor DIFERENTE já no carrinho, sem criar o item pedido —
+    achado uma vez, não reproduzido de novo para confirmar o padrão.
+  - duplicate_item repetido cria linhas separadas em vez de uma linha com
+    quantidade maior (defeito menor, já documentado desde a rodada 1).
+
+--------------------------------------------------------------------------------
+ ESTADO DO PROJETO AO FIM DESTA SESSÃO
+--------------------------------------------------------------------------------
+
+  Backend ..... ruff limpo, 266 testes passando (+3 desde a rodada 3)
+  Evals ....... 26 casos contra o gpt-4o-mini REAL: 26 passando (+1)
+
+      cd back && FAKE_MODE=false pytest -m eval
+
+================================================================================

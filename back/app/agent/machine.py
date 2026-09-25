@@ -112,7 +112,12 @@ def _handoff_turn(
     if plan.has(Action.CANCEL_ORDER):
         return cancel(session)
 
-    # Qualquer operação de pedido significa "quero seguir por aqui mesmo".
+    # Qualquer operação que MEXE no pedido significa "quero seguir por aqui
+    # mesmo". show_cart/show_total/show_menu ficaram de fora de propósito:
+    # perguntar "o que eu pedi mesmo?" enquanto espera um atendente é só
+    # curiosidade, não um pedido para dispensar a pessoa que foi chamada — um
+    # cliente simulado perguntou isso e o bot tirou ele do atendimento humano
+    # sozinho, sem o cliente ter pedido.
     quer_o_bot = any(
         action
         in {
@@ -126,14 +131,23 @@ def _handoff_turn(
             Action.UPDATE_ADDRESS,
             Action.CLOSE_ORDER,
             Action.CONFIRM_ORDER,
-            Action.SHOW_MENU,
-            Action.SHOW_CART,
-            Action.SHOW_TOTAL,
         }
         for action in plan.actions
     )
-    if quer_o_bot or _quer_o_bot_de_volta(text):
+    quer_voltar_pela_fala = _quer_o_bot_de_volta(text)
+    if quer_o_bot or quer_voltar_pela_fala:
         resume_from_human(session)
+        if quer_voltar_pela_fala:
+            # "pode continuar comigo mesmo, sem esperar atendente" é um sinal
+            # determinístico (a fala, não o modelo) de que o cliente quer
+            # DISPENSAR o humano. O modelo às vezes devolve request_human na
+            # MESMA mensagem (confunde "atender" com "atendente") — sem isto,
+            # o turno seguia normalmente e esse request_human jogava a
+            # conversa de volta para o atendimento humano no mesmo turno em
+            # que o cliente pediu para sair dele.
+            plan.operations = [
+                op for op in plan.operations if op.action is not Action.REQUEST_HUMAN
+            ]
         return None  # o turno segue normalmente; quem chama põe o aviso
 
     # Avisa que está esperando — mas uma vez a cada tanto, não a cada mensagem.

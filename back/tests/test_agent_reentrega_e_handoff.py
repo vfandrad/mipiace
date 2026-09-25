@@ -80,6 +80,52 @@ async def test_bot_nao_conduz_o_pedido_enquanto_a_loja_atende() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pergunta_sobre_carrinho_nao_tira_do_handoff_sozinha() -> None:
+    """"o que eu pedi mesmo?" enquanto espera atendente não pode encerrar o handoff.
+
+    Achado em conversa real: show_cart/show_total sendo tratados como "o
+    cliente quer voltar a falar com o bot" fazia o handoff cair sozinho — se
+    havia um atendente humano de verdade na conversa, o bot reassumia por
+    cima dele sem o cliente ter pedido.
+    """
+    deps, session = build_deps(), build_session()
+    await run(deps, session, plano(op(Action.REQUEST_HUMAN)), "quero um atendente")
+    assert human_on_the_line(session) is True
+
+    replies = await run(deps, session, plano(op(Action.SHOW_CART)), "o que eu pedi mesmo?")
+
+    assert replies
+    assert session.handoff is True
+    assert session.state is S.ATENDIMENTO_HUMANO
+
+
+@pytest.mark.asyncio
+async def test_pedir_pra_dispensar_atendente_nao_e_anulado_por_request_human_do_plano() -> None:
+    """"pode continuar comigo mesmo, sem esperar atendente" tem que valer de verdade.
+
+    Achado em conversa real, 2x independente: o modelo às vezes devolve
+    request_human na MESMA mensagem em que o cliente pede para dispensar o
+    atendente (confunde "atender" com "atendente") — e isso jogava a
+    conversa de volta para o atendimento humano no mesmo turno em que o
+    cliente pediu para sair dele.
+    """
+    deps, session = build_deps(), build_session()
+    await run(deps, session, plano(op(Action.REQUEST_HUMAN)), "quero um atendente")
+    assert human_on_the_line(session) is True
+
+    replies = await run(
+        deps,
+        session,
+        plano(op(Action.REQUEST_HUMAN)),
+        "pode continuar comigo mesmo, sem esperar atendente",
+    )
+
+    assert replies
+    assert session.handoff is False
+    assert session.state is S.CONVERSANDO
+
+
+@pytest.mark.asyncio
 async def test_bot_reassume_quando_ninguem_atende(monkeypatch) -> None:
     deps, session = build_deps(), build_session()
     await run(deps, session, plano(op(Action.REQUEST_HUMAN)), "atendente")

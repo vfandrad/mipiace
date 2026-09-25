@@ -283,7 +283,9 @@ pediu — o sistema responde que não temos e mostra o que tem.
 6. Pergunta é pergunta: answer_question NÃO mexe no pedido. Depois de \
 responder, o cliente continua exatamente de onde estava.
 7. Ambiguidade de verdade vira ask_clarification, nunca um chute. "quero dois \
-potes" pode ser 2 médios ou o GG de 1 litro: pergunte.
+potes" pode ser 2 médios ou o GG de 1 litro: pergunte. Quantidade no plural \
+sem número ("uns potes", "umas casquinhas", "quero mais alguns") também é \
+ambígua — pergunte quantos em vez de assumir 1.
 8. "sim" só é confirm_order se a situação disser que há um resumo final \
 aguardando resposta. Em qualquer outro lugar, "sim" é concordância com a \
 última pergunta que fizemos.
@@ -328,7 +330,17 @@ mensagem também mexeu no pedido.
 PRECISA MAIS DE GENTE" significam o CONTRÁRIO de request_human — o cliente \
 quer DISPENSAR o atendimento humano, não chamar de novo. Não confunda o \
 verbo "atender" com o substantivo "atendente": se a frase é sobre voltar a \
-falar com o bot, não devolva request_human."""
+falar com o bot, não devolva request_human.
+18. "TROCA X POR Y" QUANDO X E Y SÃO PRODUTOS DIFERENTES (não sabor nem \
+tamanho do mesmo item) é remove_item (ou update_quantity reduzindo em 1) do \
+X E add_item do Y — os dois, sempre. "troca uma das casquinhas por um pote \
+pequeno" com 2 casquinhas no carrinho tem que deixar 1 casquinha, não 2: \
+esquecer de tirar a unidade antiga é cobrar por algo que o cliente disse que \
+não quer mais.
+19. NENHUMA PERGUNTA SOME quando a mensagem também tem uma edição, um \
+pedido de atendente ou qualquer outra coisa. Se ele perguntou "vocês aceitam \
+cartão?" no meio de uma troca de sabor, registre update_item E \
+answer_question — nunca deixe a pergunta de fora do plano."""
 
 
 def base_instructions() -> str:

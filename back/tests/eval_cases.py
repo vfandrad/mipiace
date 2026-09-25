@@ -101,6 +101,19 @@ async def dois_itens(deps: Any, session: Any) -> None:
     )
 
 
+async def duas_casquinhas(deps: Any, session: Any) -> None:
+    """2x Casquinha, único item do carrinho."""
+    from app.agent.machine import run  # noqa: PLC0415
+    from tests.test_agent_machine import op, plano  # noqa: PLC0415
+
+    await run(
+        deps,
+        session,
+        plano(op(Action.ADD_ITEM, product_name="Casquinha", quantity=2)),
+        "quero 2 casquinhas",
+    )
+
+
 async def esperando_o_bairro(deps: Any, session: Any) -> None:
     """Pedido pronto, entrega escolhida, endereço só sem o bairro.
 
@@ -202,6 +215,16 @@ def anotou_entrega_e_endereco(deps: Any, session: Any, replies: list[str]) -> No
     assert session.slots.get("fulfillment") == "entrega", session.slots
     endereco = session.slots.get("address") or {}
     assert endereco.get("numero") == "123", endereco
+
+
+def trocou_uma_unidade_por_produto_novo(deps: Any, session: Any, replies: list[str]) -> None:
+    """"troca uma casquinha por um pote" tem que tirar UMA casquinha, não deixar as duas."""
+    quantidades = {i.product_name: i.quantity for i in session.cart.items}
+    assert quantidades.get("Casquinha") == 1, (
+        f"a casquinha antiga não saiu do pedido: {quantidades} — o cliente pagaria "
+        "pelas duas casquinhas mais o pote novo"
+    )
+    assert "Pote 240ml" in quantidades, f"o pote novo não entrou: {quantidades}"
 
 
 def escolheu_retirada(deps: Any, session: Any, replies: list[str]) -> None:
@@ -447,5 +470,23 @@ CASES: tuple[EvalCase, ...] = (
         ),
         preparar=pote_montado,
         acao=Action.REQUEST_HUMAN,
+    ),
+
+    # --- O que a terceira rodada de testes encontrou -----------------------
+    EvalCase(
+        id="trocar_uma_unidade_por_produto_diferente",
+        mensagem="troca uma das casquinhas por um pote de 240ml de pistache",
+        porque=(
+            '"troca X por Y" com produtos DIFERENTES (não sabor/tamanho do '
+            "mesmo item) às vezes só adicionava o Y e esquecia de tirar uma "
+            "unidade do X — o cliente pagava pelas duas casquinhas mais o "
+            "pote novo, em vez de uma casquinha a menos"
+        ),
+        preparar=duas_casquinhas,
+        acao=Action.REMOVE_ITEM,
+        tambem=(Action.UPDATE_QUANTITY,),
+        campos={"quantity": 1, "product_name": "Casquinha"},
+        extras=(Operation(action=Action.ADD_ITEM, product_name="Pote 240ml", add_flavors=["Pistache"]),),
+        verificar=trocou_uma_unidade_por_produto_novo,
     ),
 )
