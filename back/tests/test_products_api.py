@@ -144,6 +144,32 @@ def test_produto_inexistente_devolve_404(client, api_key, monkeypatch):
     assert resposta.json()["detail"] == "Produto não encontrado."
 
 
+def test_apagar_produto_ja_usado_em_pedido_devolve_409(client, api_key, monkeypatch):
+    """`ON DELETE RESTRICT` (order_items.product_id) não pode virar um 500 cru.
+
+    Achado em auditoria: apagar um produto ou sabor que já foi vendido faz o
+    Postgres recusar a exclusão (pra não perder o histórico do pedido) — sem
+    um handler pra isso, o painel travava com um erro de banco em vez de uma
+    mensagem que o lojista entende.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    async def _get_product(session, product_id):
+        return _product()
+
+    async def _delete_item(session, item):
+        raise IntegrityError("DELETE FROM products", {}, Exception("restrict"))
+
+    monkeypatch.setattr(catalog_service, "get_product", _get_product)
+    monkeypatch.setattr(catalog_service, "delete_item", _delete_item)
+
+    resposta = client.delete(
+        f"/api/products/{PRODUCT_ID}", headers={"X-API-Key": api_key}
+    )
+    assert resposta.status_code == 409
+    assert "pedido" in resposta.json()["detail"].lower()
+
+
 def test_grupo_obrigatorio_precisa_de_min_choices(client, api_key, monkeypatch):
     """Regra que protege o agente: grupo obrigatório com min=0 é incoerente."""
 

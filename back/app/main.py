@@ -11,8 +11,10 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import ADMIN_DEPS
 from app.api.routes import (
@@ -79,6 +81,27 @@ def create_app() -> FastAPI:
         simulator.router,
     ):
         app.include_router(router, dependencies=ADMIN_DEPS)
+
+    @app.exception_handler(IntegrityError)
+    async def _integrity_error(request: Request, exc: IntegrityError) -> JSONResponse:
+        """Restrição do banco barrou a operação — normalmente apagar algo com pedido.
+
+        `product_id`/`complement_id` em `order_items`/`order_item_complements`
+        são `ON DELETE RESTRICT` de propósito: apagar um sabor ou produto que
+        já foi vendido perderia o histórico daquele pedido. Sem este handler,
+        o painel travava com um erro de banco cru (500) em vez de uma
+        mensagem que o lojista entende.
+        """
+        logger.warning("Restrição do banco barrou a operação: %s", exc)
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "detail": (
+                    "Não dá pra apagar: esse item já foi usado em algum pedido. "
+                    "Desative em vez de apagar."
+                )
+            },
+        )
 
     return app
 
