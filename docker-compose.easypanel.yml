@@ -58,12 +58,15 @@ services:
       start_period: 10s
     restart: unless-stopped
     # Sem isto, um vazamento de memória ou pico de conexões num container
-    # consegue derrubar os outros três serviços que dividem a mesma VPS.
+    # consegue derrubar os outros serviços que dividem a mesma VPS. Os valores
+    # somados passam do que a VPS tem (1 CPU / ~4GB) de propósito — são tetos
+    # por container, não reservas; o ponto é impedir que UM deles sozinho
+    # tome a máquina inteira, não fatiar a capacidade entre eles.
     deploy:
       resources:
         limits:
-          cpus: "2"
-          memory: 2G
+          cpus: "0.5"
+          memory: 1G
 
   backend:
     build:
@@ -124,8 +127,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2"
-          memory: 1G
+          cpus: "0.4"
+          memory: 512M
 
   frontend:
     build:
@@ -155,8 +158,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1"
-          memory: 512M
+          cpus: "0.2"
+          memory: 256M
 
   # ---------------------------------------------------------------------------
   # WhatsApp. Não precisa de domínio público: o backend fala com ela pela rede
@@ -180,7 +183,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
+          cpus: "0.2"
           memory: 256M
 
   evolution-redis:
@@ -192,8 +195,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: 256M
+          cpus: "0.1"
+          memory: 128M
 
   evolution-api:
     image: evoapicloud/evolution-api:latest
@@ -226,7 +229,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1"
+          cpus: "0.3"
           memory: 512M
 
 volumes:
