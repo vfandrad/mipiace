@@ -52,6 +52,10 @@ class FakeSession:
     def add(self, obj: Any) -> None:
         self.added.append(obj)
 
+    async def execute(self, statement: Any, params: Any = None) -> Any:
+        """Usado só pelo /health (`SELECT 1`) — "sucesso" sem tocar banco nenhum."""
+        return None
+
 
 @pytest.fixture
 def fake_session() -> FakeSession:

@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
@@ -67,6 +68,23 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "X-API-Key", "Authorization"],
     )
+
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next: Any) -> Response:
+        """Headers básicos que toda API atrás de HTTPS deveria mandar.
+
+        Não substituem nada (a API não serve HTML, então CSP não se aplica
+        aqui) — só fecham brechas baratas: navegador tentando adivinhar
+        Content-Type, e a resposta sendo aceita por HTTP puro se alguém
+        contornar o redirect do proxy.
+        """
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
+        return response
 
     # Públicas: health e webhooks (Mercado Pago e Evolution validam o remetente).
     app.include_router(health.router)

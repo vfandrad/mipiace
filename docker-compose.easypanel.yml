@@ -57,6 +57,13 @@ services:
       retries: 10
       start_period: 10s
     restart: unless-stopped
+    # Sem isto, um vazamento de memória ou pico de conexões num container
+    # consegue derrubar os outros três serviços que dividem a mesma VPS.
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
 
   backend:
     build:
@@ -114,6 +121,11 @@ services:
         aliases:
           - mi-piace_mi-piace_backend
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
 
   frontend:
     build:
@@ -140,6 +152,11 @@ services:
         aliases:
           - mi-piace_mi-piace_frontend
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
 
   # ---------------------------------------------------------------------------
   # WhatsApp. Não precisa de domínio público: o backend fala com ela pela rede
@@ -160,6 +177,11 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
   evolution-redis:
     image: redis:7-alpine
@@ -167,6 +189,11 @@ services:
     volumes:
       - evolution_redis_data:/data
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
   evolution-api:
     image: evoapicloud/evolution-api:latest
@@ -196,6 +223,11 @@ services:
         aliases:
           - mi-piace_mi-piace_evolution-api
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
 
 volumes:
   pgdata:

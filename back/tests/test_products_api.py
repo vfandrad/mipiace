@@ -190,6 +190,38 @@ def test_health_nao_exige_chave(client):
     resposta = client.get("/health")
     assert resposta.status_code == 200
     assert resposta.json()["status"] == "ok"
+    assert resposta.json()["database"] == "ok"
+
+
+def test_health_falha_quando_banco_esta_fora(monkeypatch):
+    """"ok" só quando a request realmente alcança o banco — não é um eco de config.
+
+    Achado em auditoria: antes disso, /health respondia "ok" mesmo com o
+    banco fora do ar — foi exatamente o que mascarou o incidente do schema
+    desatualizado (Docker marcava o container "healthy" o tempo todo).
+    """
+    from fastapi.testclient import TestClient
+
+    from app.db.session import get_session
+    from app.main import app
+
+    class _SessaoQuebrada:
+        async def execute(self, statement, params=None):
+            raise RuntimeError("conexão recusada")
+
+    async def _override():
+        yield _SessaoQuebrada()
+
+    app.dependency_overrides[get_session] = _override
+    try:
+        with TestClient(app) as test_client:
+            resposta = test_client.get("/health")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resposta.status_code == 503
+    assert resposta.json()["database"] == "erro"
+    assert resposta.json()["status"] == "degradado"
 
 
 # ---------------------------------------------------------------------------

@@ -257,22 +257,30 @@ docker compose --env-file .env.prod logs -f backend | grep webhooks/evolution
 O Supabase Studio não é publicado. Para usar, mesmo túnel SSH da seção 4
 (`ssh -L 54323:localhost:54323 mipiace@SEU_IP`) e abra `http://localhost:54323`.
 
-**Backup.** O que não pode ser perdido é o volume `pgdata`. Um cron diário:
+**Backup.** O que não pode ser perdido é o volume `pgdata`. Use o
+`backup_db.sh` do repositório — ele já resolve o detalhe de que a imagem
+`supabase/postgres` precisa de `--no-owner --no-acl` no `pg_dump`, senão a
+restauração falha com "must be able to SET ROLE supabase_admin":
 
 ```bash
-mkdir -p ~/mipiace/backups
+cp backup_db.sh /root/backup_db.sh
+chmod +x /root/backup_db.sh
 crontab -e
 ```
 
 ```cron
-0 4 * * * cd ~/mipiace && docker compose --env-file .env.prod exec -T db pg_dump -U postgres postgres | gzip > backups/$(date +\%Y\%m\%d).sql.gz && find backups -name '*.sql.gz' -mtime +14 -delete
+0 3 * * * /root/backup_db.sh >> /root/backup_db.log 2>&1
 ```
+
+O nome do container do banco muda conforme o deploy (confira com `docker ps`);
+o script assume `mi-piace_mi-piace-db-1` (padrão do Easypanel) e aceita
+`DB_CONTAINER=outro-nome /root/backup_db.sh` para qualquer outro.
 
 Restaurar:
 
 ```bash
-gunzip < backups/20260921.sql.gz \
-  | docker compose --env-file .env.prod exec -T db psql -U postgres postgres
+gunzip -c /root/backups/mipiace-db-AAAA-MM-DD_HHMMSS.sql.gz \
+  | docker exec -i mi-piace_mi-piace-db-1 psql -U postgres -d postgres
 ```
 
 > Um backup que nunca foi restaurado não é um backup. Teste uma vez.
@@ -297,15 +305,28 @@ PROFILE=whatsapp ./deploy.sh
 
 **Voltar atrás:** `git revert HEAD && PROFILE=whatsapp ./deploy.sh`.
 
-> Não há sistema de migração (Alembic). Se a mudança alterou
-> `back/db/schema.sql`, o banco existente **não** se atualiza sozinho — a
-> alteração tem que ser aplicada à mão com `psql`.
+> Não há Alembic. Se a mudança alterou `back/db/schema.sql`, o banco existente
+> **não** se atualiza sozinho. Em vez de rodar SQL à mão e confiar na memória
+> para saber o que já foi aplicado, copie o arquivo novo para
+> `back/db/migrations/` (nome com a data, como os dois que já existem) e, no
+> servidor:
+>
+> ```bash
+> ./back/db/apply_migrations.sh
+> ```
+>
+> Ele roda cada migração pendente uma vez e registra o nome dela na tabela
+> `schema_migrations` — não tem como aplicar duas vezes por engano nem
+> esquecer uma. Ajuste `DB_CONTAINER` se o nome do container do banco não for
+> `mi-piace_mi-piace-db-1` (confira com `docker ps`). Faça backup antes
+> (`backup_db.sh`), como sempre.
 
 ### Alterações de schema já publicadas
 
-Rode uma vez, no banco que já existe, antes de subir a versão correspondente.
-São idempotentes na prática: se já rodaram, o `psql` reclama que o objeto não
-existe mais e nada acontece.
+As migrações abaixo já estão em `back/db/migrations/` e marcadas como
+aplicadas para quem sobe um banco novo a partir do `schema.sql` atual. Ficam
+aqui só de histórico/contexto — quem já tinha um banco de antes rodou-as uma
+vez via `apply_migrations.sh`.
 
 **Categoria de sabor virou categoria de complemento** (o sistema deixou de
 presumir que todo complemento é sabor, para atender outros tipos de loja):

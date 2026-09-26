@@ -336,4 +336,20 @@ FROM orders o
 WHERE o.payment_status = 'pago' AND o.status <> 'cancelado'
 GROUP BY 1;
 
+-- ============================================================================
+-- Controle de migrações
+-- ============================================================================
+-- Não é Alembic — só uma tabela que registra qual arquivo de
+-- back/db/migrations já rodou, para back/db/apply_migrations.sh não tentar
+-- aplicar de novo (ou esquecer de aplicar) uma migração num banco existente.
+-- Um banco NOVO nasce direto com o schema atual, então as migrações já
+-- incorporadas aqui entram pré-marcadas como aplicadas.
+CREATE TABLE schema_migrations (
+    filename    text PRIMARY KEY,
+    applied_at  timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO schema_migrations (filename) VALUES
+    ('2026-09-renomeia-categoria-sabor.sql'),
+    ('2026-09-grupo-compartilhado.sql');
+
 COMMIT;

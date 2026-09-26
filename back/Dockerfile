@@ -11,8 +11,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Camada de dependências separada: mudar código não reinstala tudo.
-COPY requirements.txt ./
-RUN pip install --upgrade pip && pip install -r requirements.txt
+# requirements.lock.txt (não requirements.txt) de propósito: a imagem precisa
+# de versão exata e reproduzível, não da faixa aberta que a máquina de dev usa
+# (ver o comentário em requirements.txt — dev roda um Python mais novo que
+# ainda não tem wheel pronta para as versões fixadas aqui).
+COPY requirements.lock.txt ./
+RUN pip install --upgrade pip && pip install -r requirements.lock.txt
 
 COPY app ./app
 COPY db ./db
