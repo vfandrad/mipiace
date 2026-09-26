@@ -79,7 +79,9 @@ def answer(
     if assunto == "preco":
         return _precos(catalog, texto)
 
-    if assunto in {"restricao", "disponibilidade"}:
+    if assunto in {"restricao", "disponibilidade"} and _parece_produto_ou_sabor(
+        raw_text or question
+    ):
         return _tem_isso(catalog, raw_text or question)
 
     if assunto == "prazo":
@@ -170,6 +172,24 @@ def _precos(catalog: CatalogSnapshot, texto: str) -> str:
     linhas = ["Os preços de hoje:"]
     linhas += [f"• *{p.name}* — {r.money(p.base_price)}" for p in produtos]
     return "\n".join(linhas)
+
+
+def _parece_produto_ou_sabor(texto: str) -> bool:
+    """"tem pistache?", "vende açaí?" parecem nome de produto ou sabor.
+
+    "qual o tamanho mais pedido?", "dá pra escolher qualquer sabor?" não são
+    — são perguntas abertas que o modelo, sem opção melhor, rotulou como
+    "disponibilidade". Tratando a frase inteira como nome de produto,
+    `_tem_isso` respondia "não temos QUAL O TAMANHO MAIS PEDIDO no cardápio",
+    o que não faz sentido nenhum para quem só queria uma recomendação.
+    Frouxo de propósito: só barra o que claramente não é um nome (frase
+    longa ou com "?"), sem tentar entender a pergunta em si — isso cai no
+    "não sei responder" genérico, honesto em vez de nonsense.
+    """
+    limpo = (texto or "").strip()
+    if not limpo or "?" in limpo:
+        return False
+    return len(limpo.split()) <= 6
 
 
 def _tem_isso(catalog: CatalogSnapshot, procurado: str) -> str:

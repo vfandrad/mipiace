@@ -191,6 +191,25 @@ def test_produto_indisponivel_nao_e_confundido_com_inexistente() -> None:
     assert esgotado != inexistente
 
 
+def test_pergunta_aberta_classificada_como_disponibilidade_nao_vira_nonsense(cardapio) -> None:
+    """"qual o tamanho mais pedido?" não pode virar "não temos QUAL O TAMANHO... no cardápio".
+
+    Achado em conversa real: o modelo, sem tópico melhor, rotulou perguntas
+    abertas ("qual o mais pedido?", "dá pra escolher qualquer sabor?") como
+    disponibilidade e pôs a pergunta inteira em raw_text — tratada como nome
+    de produto, virava uma resposta sem sentido nenhum.
+    """
+    resposta = answer(
+        topic="disponibilidade",
+        question="qual o tamanho mais pedido?",
+        raw_text="qual o tamanho mais pedido?",
+        catalog=cardapio,
+        settings=get_settings(),
+    )
+    assert "não sei responder" in resposta.lower()
+    assert "tamanho mais pedido" not in resposta.lower()
+
+
 def test_pergunta_por_categoria_de_sabor_lista_a_categoria() -> None:
     """"tem sabor sem lactose?" não casa com nome de sabor nenhum.
 
