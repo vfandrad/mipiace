@@ -900,15 +900,10 @@ def _total_reply(deps: AgentDeps, session: ConversationSession) -> str:
     if session.cart.is_empty:
         return r.cart_empty()
     kind = fulfillment_of(session)
-    taxa = (
-        Decimal("0")
-        if kind is FulfillmentType.RETIRADA
-        else deps.settings.delivery_fee
-    )
     return r.total_reply(
         session.cart,
-        taxa,
-        is_pickup=kind is FulfillmentType.RETIRADA,
+        deps.settings.delivery_fee,
+        is_pickup=None if kind is None else kind is FulfillmentType.RETIRADA,
         pending=pending_index(deps, session),
     )
 

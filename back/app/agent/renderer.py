@@ -349,11 +349,22 @@ def ask_more_or_close(cart: Cart, *, pending: int | None = None) -> str:
 
 
 def total_reply(
-    cart: Cart, delivery_fee: Decimal, *, is_pickup: bool, pending: int | None = None
+    cart: Cart, delivery_fee: Decimal, *, is_pickup: bool | None, pending: int | None = None
 ) -> str:
-    """Quanto deu — com a taxa calculada pelo backend, nunca pela IA."""
-    total = cart.total(Decimal("0") if is_pickup else delivery_fee)
+    """Quanto deu — com a taxa calculada pelo backend, nunca pela IA.
+
+    `is_pickup=None` é "ainda não perguntamos". Cobrar a taxa de entrega por
+    padrão nesse caso inflava o total de quem ia retirar na loja antes de o
+    cliente ter dito o que queria — melhor mostrar o subtotal e perguntar.
+    """
     linhas = [cart_summary(cart, pending=pending), ""]
+    if is_pickup is None:
+        linhas.append(
+            f"Isso é sem taxa. Com entrega, some {money(delivery_fee)}. "
+            "Vai ser entrega ou retirada? 🛵🏠"
+        )
+        return "\n".join(linhas)
+    total = cart.total(Decimal("0") if is_pickup else delivery_fee)
     if is_pickup:
         linhas.append("Retirada na loja — sem taxa.")
     elif delivery_fee > 0:

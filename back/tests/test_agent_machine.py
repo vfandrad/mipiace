@@ -916,6 +916,27 @@ async def test_atendente_junto_com_pergunta_nao_perde_a_resposta() -> None:
 
 
 @pytest.mark.asyncio
+async def test_quanto_fica_antes_de_escolher_entrega_nao_inventa_taxa() -> None:
+    """"quanto fica?" antes de perguntar entrega/retirada não pode cobrar taxa.
+
+    Achado testando conversas difíceis: sem entrega/retirada decidido, o
+    total respondia como se fosse entrega (R$ 5 a mais) sem o cliente ter
+    dito nada sobre isso — quem ia retirar via um total inflado antes mesmo
+    de ser perguntado.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    replies = await run(deps, session, plano(op(Action.SHOW_TOTAL)), "quanto fica?")
+
+    resposta = " ".join(replies)
+    assert "32" in resposta, replies
+    assert "entrega ou retirada" in resposta.lower(), replies
+    assert "Taxa de entrega" not in resposta, replies
+    assert "*Total:" not in resposta, replies
+
+
+@pytest.mark.asyncio
 async def test_fechar_morno_no_meio_do_pedido_nao_avanca_pro_checkout() -> None:
     """"sei lá, pode ser" respondendo "quer mais alguma coisa?" não é "pode fechar".
 
