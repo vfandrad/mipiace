@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from app.agent.pacing import MAX_TYPING_MS, MIN_TYPING_MS, Throttle, typing_delay_ms
+from app.agente import MAX_TYPING_MS, MIN_TYPING_MS, Throttle, typing_delay_ms
 from app.configuracao import get_settings
 
 

@@ -3,7 +3,7 @@
 Este é o teste que prova que o agente funciona de ponta a ponta sem n8n, sem
 WhatsApp, sem chave de API e sem Postgres: `FakeLLMClient` interpreta,
 `ConsoleAdapter` entrega, e a camada de banco é substituída por um repositório
-em memória com a mesma superfície de `app.agent.session`.
+em memória com a mesma superfície de `app.agente`.
 """
 
 from __future__ import annotations
@@ -14,12 +14,15 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.agent import runner
-from app.agent.checkout import AgentDeps
-from app.agent.llm import Turn
-from app.agent.llm_fake import FakeLLMClient
-from app.agent.session import ConversationSession
-from app.agent.whatsapp import ConsoleAdapter, InboundMessage
+from app import agente as runner
+from app.agente import (
+    AgentDeps,
+    ConsoleAdapter,
+    ConversationSession,
+    FakeLLMClient,
+    Fala,
+    InboundMessage,
+)
 from app.configuracao import get_settings
 from app.dominio import (
     CatalogComplement,
@@ -85,7 +88,7 @@ def build_catalog() -> CatalogSnapshot:
 
 
 # ---------------------------------------------------------------------------
-# Banco em memória com a mesma superfície de app.agent.session
+# Banco em memória com a mesma superfície de app.agente
 # ---------------------------------------------------------------------------
 
 class FakeStore:
@@ -111,7 +114,7 @@ class FakeStore:
 
     async def recent_turns(self, db, conversation_id: UUID, limit: int = 8):
         turns = [
-            Turn(
+            Fala(
                 role="cliente"
                 if m["direction"] is MessageDirection.ENTRADA
                 else "agente",

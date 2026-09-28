@@ -16,15 +16,18 @@ from uuid import uuid4
 
 import pytest
 
-from app.agent.checkout import AgentDeps
-from app.agent.machine import run
-from app.agent.plan import Action, Address, AgentPlan, Operation
-from app.agent.session import ConversationSession
-from app.agent.states import (
+from app.agente import (
     TRANSITIONS,
+    Action,
+    Address,
+    AgentDeps,
+    AgentPlan,
+    ConversationSession,
     InvalidTransition,
+    Operation,
     assert_transition,
     can_transition,
+    run,
 )
 from app.configuracao import get_settings
 from app.dominio import (
@@ -715,7 +718,7 @@ def test_resposta_morna_nunca_gera_pix(resposta: str) -> None:
     `_hedged` só olhava o começo da frase, então "acho que sim, pode ser" —
     duas respostas mornas emendadas — passava direto e emitia o Pix.
     """
-    from app.agent.machine import _hedged  # noqa: PLC0415
+    from app.agente import _hedged  # noqa: PLC0415
 
     assert _hedged(resposta), f"{resposta!r} deveria ser tratada como morna"
 
@@ -726,7 +729,7 @@ def test_resposta_morna_nunca_gera_pix(resposta: str) -> None:
 )
 def test_sim_claro_continua_confirmando(resposta: str) -> None:
     """A trava não pode engolir a confirmação de verdade."""
-    from app.agent.machine import _hedged  # noqa: PLC0415
+    from app.agente import _hedged  # noqa: PLC0415
 
     assert not _hedged(resposta), f"{resposta!r} é um sim claro"
 

@@ -12,7 +12,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.agent.faq import answer
+from app.agente import answer
 from app.configuracao import get_settings
 from tests.test_agent_phrases import build_cardapio
 

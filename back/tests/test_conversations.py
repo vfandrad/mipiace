@@ -96,6 +96,6 @@ async def test_devolver_ao_bot_fora_de_atendimento_humano_nao_mexe_no_estado() -
 
 def test_transicao_de_volta_e_permitida_pela_maquina() -> None:
     """O estado para onde o toggle devolve precisa ser alcançável de verdade."""
-    from app.agent.states import can_transition
+    from app.agente import can_transition
 
     assert can_transition(S.ATENDIMENTO_HUMANO, S.CONVERSANDO)

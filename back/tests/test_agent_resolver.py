@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.agent.resolver import (
+from app.agente import (
     MatchStatus,
     resolve_complement,
     resolve_product,

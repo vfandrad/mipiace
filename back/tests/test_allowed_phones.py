@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.agent.whatsapp import phone_allowed
+from app.agente import phone_allowed
 from app.configuracao import get_settings
 
 DONO = "5569993061196"
@@ -52,7 +52,7 @@ def test_numero_curto_demais_nao_passa_por_sufixo(travado):
 
 @pytest.mark.asyncio
 async def test_adapter_recusa_enviar_para_fora_da_lista(travado, monkeypatch):
-    from app.agent.whatsapp import EvolutionAdapter
+    from app.agente import EvolutionAdapter
 
     monkeypatch.setattr(travado, "evolution_api_key", "chave-de-teste")
     enviados: list[str] = []

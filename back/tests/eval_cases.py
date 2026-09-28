@@ -36,7 +36,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.agent.plan import Action, Address, Operation
+from app.agente import Action, Address, Operation
 from app.dominio import ConversationState as S
 
 Preparar = Callable[[Any, Any], Awaitable[None]]
@@ -89,7 +89,7 @@ async def pote_montado(deps: Any, session: Any) -> None:
 
 async def dois_itens(deps: Any, session: Any) -> None:
     """Pote 500ml (item 1) e Pote 240ml (item 2), ambos completos."""
-    from app.agent.machine import run  # noqa: PLC0415
+    from app.agente import run  # noqa: PLC0415
     from tests.test_agent_machine import montar_pote, op, plano  # noqa: PLC0415
 
     await montar_pote(deps, session)
@@ -103,7 +103,7 @@ async def dois_itens(deps: Any, session: Any) -> None:
 
 async def duas_casquinhas(deps: Any, session: Any) -> None:
     """2x Casquinha, único item do carrinho."""
-    from app.agent.machine import run  # noqa: PLC0415
+    from app.agente import run  # noqa: PLC0415
     from tests.test_agent_machine import op, plano  # noqa: PLC0415
 
     await run(
@@ -120,7 +120,7 @@ async def esperando_o_bairro(deps: Any, session: Any) -> None:
     É o ponto exato em que o bot pergunta "qual o bairro?" — e onde o modelo
     já inventou um ("Jardim América") ao receber um simples "sim".
     """
-    from app.agent.machine import run  # noqa: PLC0415
+    from app.agente import run  # noqa: PLC0415
     from tests.test_agent_machine import op, plano  # noqa: PLC0415
 
     await pote_montado(deps, session)
@@ -140,7 +140,7 @@ async def esperando_o_bairro(deps: Any, session: Any) -> None:
 
 async def resumo_na_tela(deps: Any, session: Any) -> None:
     """Pedido fechado em retirada, com o resumo final esperando o "sim"."""
-    from app.agent.machine import run  # noqa: PLC0415
+    from app.agente import run  # noqa: PLC0415
     from tests.test_agent_machine import op, plano  # noqa: PLC0415
 
     await pote_montado(deps, session)

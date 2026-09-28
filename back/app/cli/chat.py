@@ -16,9 +16,13 @@ import asyncio
 import logging
 import sys
 
-from app.agent.runner import handle_inbound, settings_snapshot
-from app.agent.session import load_or_create, reset_session
-from app.agent.whatsapp import InboundMessage
+from app.agente import (
+    InboundMessage,
+    handle_inbound,
+    load_or_create,
+    reset_session,
+    settings_snapshot,
+)
 from app.configuracao import get_settings
 from app.textos import em_reais
 

@@ -10,8 +10,8 @@ import asyncio
 
 import pytest
 
-from app.agent import inbox
-from app.agent.whatsapp import InboundMessage
+from app import agente as inbox
+from app.agente import InboundMessage
 from app.configuracao import get_settings
 
 

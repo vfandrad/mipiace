@@ -15,11 +15,7 @@ from typing import Any
 
 import pytest
 
-from app.agent.machine import run
-from app.agent.operations import human_on_the_line
-from app.agent.plan import Action, AgentPlan
-from app.agent.runner import handle_inbound
-from app.agent.whatsapp import InboundMessage
+from app.agente import Action, AgentPlan, InboundMessage, handle_inbound, human_on_the_line, run
 from app.configuracao import get_settings
 from app.dominio import ConversationState as S
 from tests.test_agent_machine import build_deps, build_session, op, plano
@@ -63,7 +59,7 @@ async def test_mensagem_reentregue_nao_roda_o_agente_de_novo() -> None:
 @pytest.mark.asyncio
 async def test_mensagem_sem_id_do_provedor_segue_o_fluxo() -> None:
     """Simulador e CLI não têm id; não podem ser confundidos com reentrega."""
-    from app.agent.session import already_seen
+    from app.agente import already_seen
 
     assert await already_seen(_JaVista(), None) is False
 

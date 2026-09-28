@@ -20,8 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.agent.machine import run
-from app.agent.plan import AgentPlan
+from app.agente import AgentPlan, run
 from tests.eval_cases import CASES, EvalCase
 from tests.test_agent_machine import build_deps, build_session
 

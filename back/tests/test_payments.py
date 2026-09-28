@@ -21,8 +21,8 @@ from uuid import uuid4
 
 import pytest
 
-from app import servicos as payments_service
 from app import api as webhooks
+from app import servicos as payments_service
 from app.dominio import OrderStatus, PaymentStatus
 from app.servicos import (
     FakePaymentProvider,

@@ -21,19 +21,22 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import agente as inbox
 from app import servicos as catalog
 from app import servicos as conversations_service
 from app import servicos as metrics_service
 from app import servicos as orders_service
 from app import servicos as payments_service
-from app.agent import inbox
-from app.agent.runner import (
+from app.agente import (
+    EvolutionAdapter,
+    InboundMessage,
     handle_inbound,
     handle_outbound_echo,
+    load_or_create,
     notify_payment_approved,
+    phone_allowed,
+    reset_session,
 )
-from app.agent.session import load_or_create, reset_session
-from app.agent.whatsapp import EvolutionAdapter, InboundMessage, phone_allowed
 from app.banco import get_session, get_sessionmaker
 from app.configuracao import Settings, get_logger, get_settings, require_api_key
 from app.dominio import OrderStatus
