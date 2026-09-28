@@ -50,7 +50,7 @@ rodar — nunca tente contornar o bloqueio.
 
 - A LLM nunca inventa produto, preço, taxa ou disponibilidade — ela traduz a
   mensagem em operação estruturada; o backend calcula dinheiro e valida.
-  Ver `back/app/agent/checkout.py`, `back/app/agent/operations.py`.
+  Ver as seções de fechamento e de operações em `back/app/agente.py`.
 - Nenhuma taxa (entrega, etc.) é assumida por padrão quando o cliente não
   decidiu ainda — mostrar um total como se a escolha já tivesse sido feita é
   o mesmo tipo de erro que inventar um valor.

@@ -1,0 +1,99 @@
+======================================================================
+CENARIO: Cliente Reclama & Customiza | OK: True
+======================================================================
+
+CLIENTE: oi, vocês ainda tão abertos?
+AGENTE : Oi! 🍨 Aqui é a *Mi Piace Gelateria*.
+ESTADO : conversando
+
+CLIENTE: quero um pote de sorvete mas sem açúcar e sem lactose e vegano
+AGENTE : Desculpa, não peguei essa. 😅 Me explica de outro jeito?
+ESTADO : conversando
+
+CLIENTE: qual é a cor do sorvete de chocolate de vocês?
+AGENTE : Ainda não consegui entender direito. 🙈 Me diz com outras palavras?
+ESTADO : conversando
+
+CLIENTE: isso é muito caro, quanto dá desconto?
+AGENTE : Quer que eu chame alguém do time pra te ajudar? Se preferir, a gente continua por aqui mesmo. 🙂
+ESTADO : conversando
+
+CLIENTE: então deixa pra lá, quero um pote da cor rosa
+AGENTE : Desculpa, não peguei essa. 😅 Me explica de outro jeito?
+ESTADO : conversando
+
+CLIENTE: vocês entregam?
+AGENTE : Ainda não consegui entender direito. 🙈 Me diz com outras palavras?
+ESTADO : conversando
+
+
+======================================================================
+CENARIO: Cliente Desinformado | OK: True
+======================================================================
+
+CLIENTE: olá
+AGENTE : Oi! 🍨 Aqui é a *Mi Piace Gelateria*.
+ESTADO : conversando
+
+CLIENTE: vocês vendem pizza?
+AGENTE : Desculpa, não peguei essa. 😅 Me explica de outro jeito?
+ESTADO : conversando
+
+CLIENTE: qual é o CNPJ de vocês?
+AGENTE : Ainda não consegui entender direito. 🙈 Me diz com outras palavras?
+ESTADO : conversando
+
+CLIENTE: quero 3 unidades da 'coisa gelada'
+AGENTE : Quer que eu chame alguém do time pra te ajudar? Se preferir, a gente continua por aqui mesmo. 🙂
+ESTADO : conversando
+
+CLIENTE: tem abacaxi com brócolis?
+AGENTE : Desculpa, não peguei essa. 😅 Me explica de outro jeito?
+ESTADO : conversando
+
+CLIENTE: qual é o horário de vocês?
+AGENTE : Ainda não consegui entender direito. 🙈 Me diz com outras palavras?
+ESTADO : conversando
+
+CLIENTE: me recomenda algo
+AGENTE : Quer que eu chame alguém do time pra te ajudar? Se preferir, a gente continua por aqui mesmo. 🙂
+ESTADO : conversando
+
+
+======================================================================
+CENARIO: Cliente Indeciso | OK: True
+======================================================================
+
+CLIENTE: oi, bora pedir um sorvete
+AGENTE : Oi! 🍨 Aqui é a *Mi Piace Gelateria*.
+ESTADO : conversando
+
+CLIENTE: quero um pote médio com morango
+AGENTE : Desculpa, não peguei essa. 😅 Me explica de outro jeito?
+ESTADO : conversando
+
+CLIENTE: na verdade quero sem morango
+AGENTE : Ainda não consegui entender direito. 🙈 Me diz com outras palavras?
+ESTADO : conversando
+
+CLIENTE: quero um pote grande em vez de médio
+AGENTE : Quer que eu chame alguém do time pra te ajudar? Se preferir, a gente continua por aqui mesmo. 🙂
+ESTADO : conversando
+
+CLIENTE: pode ser 2 potes grandes?
+AGENTE : Desculpa, não peguei essa. 😅 Me explica de outro jeito?
+ESTADO : conversando
+
+CLIENTE: esquece, quero 1 pote pequeno de chocolate
+AGENTE : Ainda não consegui entender direito. 🙈 Me diz com outras palavras?
+ESTADO : conversando
+
+CLIENTE: quanto fica no total?
+AGENTE : Quer que eu chame alguém do time pra te ajudar? Se preferir, a gente continua por aqui mesmo. 🙂
+ESTADO : conversando
+
+CLIENTE: quer saber, cancela tudo
+AGENTE : Desculpa, não peguei essa. 😅 Me explica de outro jeito?
+ESTADO : conversando
+
+

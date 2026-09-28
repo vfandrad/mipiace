@@ -65,7 +65,7 @@ para o cliente.
   │                              │  conduz o turno        │  fala agora      │
   │                              └───────────┬────────────┘                  │
   │                                          ▼                               │
-  │                         renderer.py (o texto) ──► WhatsApp               │
+  │                         textos.py (o texto)  ──► WhatsApp               │
   │                                                                          │
   │   Postgres  ◄── conversas, pedidos, catálogo, pagamentos                 │
   └──────────────────────────────────────────────────────────────────────────┘
@@ -90,108 +90,76 @@ Tudo que parece estranho no código costuma ser consequência disso.
 ```
 back/                  o backend (Python, FastAPI)
   app/
-    agent/             o agente de WhatsApp — o coração do produto
-    api/               as rotas HTTP que o painel consome
-    core/              configuração, log, autenticação
-    db/                conexão e os modelos SQLAlchemy
-    domain/            os objetos de negócio puros (carrinho, catálogo)
-    schemas/           os contratos de entrada e saída da API (Pydantic)
-    services/          o que fala com o banco e com os provedores externos
-    cli/               um chat no terminal, para testar sem WhatsApp
+    agente.py          o agente de WhatsApp — o coração do produto
+    textos.py          TUDO que o cliente lê no WhatsApp
+    api.py             as rotas HTTP que o painel consome
+    esquemas.py        o contrato de dados entre backend e painel
+    servicos.py        o que fala com o banco e com o Mercado Pago
+    banco.py           as tabelas, a conexão e a criação inicial
+    dominio.py         carrinho, cardápio e enums — objetos puros
+    configuracao.py    configuração, log e a chave de API
+    main.py            monta o app; no fim, a conversa pelo terminal
   db/                  schema.sql, seed.sql e as migrações
   tests/               a suíte inteira, incluindo os evals do agente
 front/                 o painel (React + Vite + TypeScript)
   src/
-    pages/             uma por tela
-    components/        pedaços de tela, agrupados pela tela que os usa
-    hooks/             o estado de servidor (TanStack Query)
-    lib/               cliente HTTP, formatação, tabela de status
-    types/             os tipos que espelham o backend
+    pagina-*.tsx       uma por tela, com os componentes dela dentro
+    ui.tsx             as pecinhas de interface (shadcn)
+    comuns.tsx         moldura, cabeçalho, estados de carregando/erro
+    dados.ts           os hooks que buscam e gravam (react-query)
+    api.ts             o único lugar que faz fetch
+    formato.ts         dinheiro, data, status, conversões
+    tipos.ts           os tipos que espelham o backend
 supabase/              um .sql que a imagem do Postgres espera no boot
 ```
 
-Duas convenções que ajudam a se achar:
+Três convenções que ajudam a se achar:
 
-- **`domain/` não importa nada de `services/` nem de `db/`.** São objetos puros:
-  dá para usá-los num teste sem banco nenhum.
-- **As rotas não tocam no SQLAlchemy.** Elas chamam `services/` e são elas que
-  decidem a transação (`await session.commit()`).
+- **A seta aponta para um lado só.** `agente.py` e `api.py` chamam
+  `servicos.py`; `servicos.py` não chama nenhum dos dois. Abaixo de todos,
+  `dominio.py` e `configuracao.py` não chamam ninguém.
+- **As rotas não tocam no SQLAlchemy.** Elas chamam `servicos.py` e são elas
+  que decidem a transação (`await session.commit()`).
+- **Nomes em português, menos onde é contrato.** Ficaram em inglês os nomes
+  que algo de fora lê: colunas do banco, campos do JSON da API, variáveis de
+  ambiente e os campos que a LLM preenche. Traduzir esses quebraria o banco,
+  o painel, o deploy ou o comportamento do modelo.
 
 ---
 
 ## 4. Arquivo por arquivo
 
-### `back/app/agent/` — o agente
+### `back/app/` — nove arquivos
 
-| Arquivo | Responsabilidade |
-|---|---|
-| `runner.py` | Orquestra **um turno**: carrega a conversa, chama a IA, chama o executor, grava, envia. É o único ponto que o mundo externo precisa chamar. |
-| `plan.py` | **O contrato entre a IA e o sistema.** Define `Action` (as operações possíveis) e `Operation`/`AgentPlan`. Leia este arquivo primeiro. |
-| `prompts.py` | O que a IA recebe: instruções, o cardápio do dia e a situação do pedido. A descrição de cada ação mora aqui. |
-| `llm.py` | O contrato do cliente de LLM e a escolha de qual usar (`FAKE_MODE`). |
-| `llm_openai.py` | Fala com a OpenAI via *function calling*. Qualquer falha vira plano vazio — nunca derruba a conversa. |
-| `llm_fake.py` | IA falsa, por regra. Serve ao `FAKE_MODE=true` e a parte dos testes. **Não é o agente**: ela entende menos que o modelo real. |
-| `operations.py` | **O que cada operação faz com o pedido.** Adicionar, trocar, remover, endereço, cancelar. Valida tudo contra o catálogo. |
-| `machine.py` | **O turno.** Depois de aplicar as operações, decide o que o bot fala: qual a próxima pergunta, o fallback, o atendimento humano. |
-| `states.py` | A tabela de transições. Pequena de propósito (ver §6). |
-| `session.py` | A conversa no banco: carregar, salvar, histórico, idempotência de mensagem. |
-| `checkout.py` | O fechamento: endereço, resumo final, criar o pedido, pedir o Pix. É a parte com efeito colateral. |
-| `resolver.py` | **O grounding.** Casa o texto do cliente com o catálogo real; se não casar, o agente repergunta em vez de inventar. |
-| `renderer.py` | Tudo que o bot fala. Funções puras: texto entra, texto sai. |
-| `faq.py` | Respostas para o que não é pedido (pagamento, taxa, horário, endereço). |
-| `whatsapp.py` | Os canais: Evolution API (real) e console (simulador, CLI, testes). |
-| `inbox.py` | Junta os balões seguidos do mesmo cliente num turno só. |
-| `pacing.py` | O ritmo de envio — o que impede o número de ser bloqueado. |
+| Arquivo | Linhas | O que tem dentro |
+|---|---|---|
+| `agente.py` | ~4.400 | O agente inteiro, em seções, na ordem das dependências: o plano que a LLM devolve, os estados e transições, o resolvedor que casa o texto do cliente com o cardápio, o FAQ, o ritmo de envio, o prompt, os clientes de LLM (real e falso), o WhatsApp, o agrupador de balões, a sessão, o fechamento com Pix, as operações, a máquina de um turno e a orquestração. Quem chama de fora usa só o fim: `handle_inbound`, `handle_outbound_echo`, `notify_payment_approved`. |
+| `textos.py` | ~600 | Toda frase que o cliente lê. Funções puras: entra dado, sai texto. **É o arquivo que se abre para mudar o que o bot fala** — nenhuma lógica mora aqui. |
+| `api.py` | ~900 | As 38 rotas HTTP e as dependências delas. Sete routers com nome próprio (`rotas_produtos`, `rotas_pedidos`, `rotas_saude`…), que o `main.py` liga. |
+| `esquemas.py` | ~480 | Os schemas Pydantic de entrada e saída. **Os nomes dos campos aqui são as chaves do JSON** que o painel lê. Ficam separados das rotas porque os serviços também os montam. |
+| `servicos.py` | ~1.630 | Catálogo, pedidos, pagamentos, clientes, conversas, métricas, preços e o provedor de Pix — nessa ordem, que é a ordem das dependências. |
+| `banco.py` | ~720 | As 14 tabelas (SQLAlchemy), a conexão e o `init_db`. **O nome do atributo é o nome da coluna**: não há nome explícito em `mapped_column`. |
+| `dominio.py` | ~280 | Carrinho, cardápio e enums. Não importa nada do projeto — dá para usar num teste sem banco. A conta do pedido mora aqui, e é uma só. |
+| `configuracao.py` | ~260 | `Settings` (todo segredo vem do ambiente), o log e a checagem da chave de API. Os nomes dos campos viram as variáveis de ambiente. |
+| `main.py` | ~280 | Monta o FastAPI, o CORS, os cabeçalhos de segurança e o tratamento de erro; liga os sete routers. No fim, a conversa pelo terminal (`python -m app.main`). |
 
-### `back/app/` — o resto
+### `front/src/` — quatorze arquivos
 
-| Arquivo | Responsabilidade |
-|---|---|
-| `main.py` | Monta a aplicação e as rotas. |
-| `core/config.py` | **Toda a configuração.** É aqui que uma segunda empresa é configurada. |
-| `core/security.py` | O `X-API-Key` das rotas administrativas. |
-| `api/routes/webhooks.py` | As duas portas de entrada: WhatsApp e Mercado Pago. |
-| `api/routes/products.py` | O CRUD do cardápio — a única tela que escreve no catálogo. |
-| `api/routes/orders.py` | Lista e move pedidos (o Kanban). |
-| `api/routes/conversations.py` | Lê conversas e liga/desliga o atendimento humano. |
-| `api/routes/metrics.py` | Os números do dashboard. |
-| `api/routes/simulator.py` | Conversar sem WhatsApp. Só responde com `FAKE_MODE=true`. |
-| `domain/cart.py` | O carrinho **e a conta**. Arredondamento mora aqui, e é único. |
-| `domain/catalog.py` | O cardápio como o agente enxerga (imutável). |
-| `domain/enums.py` | Os estados e status, espelhando os ENUM do banco. |
-| `services/catalog.py` | O CRUD do cardápio e o snapshot que o agente lê. |
-| `services/orders.py` | Fecha o carrinho em pedido: congela preço, emite o código. |
-| `services/payments.py` | O ciclo do Pix e a idempotência do webhook. |
-| `services/pix_provider.py` | Mercado Pago de verdade, e um provedor falso. |
-| `services/pricing.py` | O que a conta precisa de `settings`: taxa de entrega e o resumo. |
-| `services/metrics.py` | SQL das métricas. |
-| `services/conversations.py` | O que o painel lê das conversas. |
-| `services/customers.py` | Cliente e endereço. |
-| `db/models.py` | Os modelos SQLAlchemy. **`schema.sql` é a fonte da verdade**, não isto. |
-| `db/session.py` | Conexão e pool. |
-| `banco.py` | `python -m app.banco --seed` para criar o banco sem Docker. |
-| `main.py` (seção final) | `python -m app.main` — conversa pelo terminal. |
-
-### `front/src/`
-
-| Arquivo | Responsabilidade |
-|---|---|
-| `pages/Producao.tsx` | O Kanban. |
-| `pages/Produtos.tsx` | O CRUD do cardápio: busca, seleção em massa, diálogos. |
-| `pages/Conversas.tsx` | A lista de conversas e o chat. |
-| `pages/Dashboard.tsx` | KPIs e gráficos. |
-| `components/layout/Page.tsx` | A moldura de toda tela (cabeçalho + `main`) e o bloco de título. |
-| `components/layout/StoreMark.tsx` | O logo ou o nome da loja, vindo do ambiente. |
-| `components/produtos/ProductCard.tsx` | Um produto e seus grupos de opções. |
-| `components/produtos/GroupCard.tsx` | Um grupo e seus itens. |
-| `components/produtos/EditItemSheet.tsx` | Edição de produto, grupo ou item. |
-| `components/common/SortableList.tsx` | Arrastar para reordenar (dnd-kit). |
-| `components/common/QueryState.tsx` | Carregando, erro e vazio — num lugar só. |
-| `hooks/use-*.ts` | Um por área. Falam com `lib/api.ts` e cuidam do cache. |
-| `lib/api.ts` | **O único lugar que chama `fetch`.** Base, chave, tratamento de erro. |
-| `lib/status.ts` | Rótulos e classes de cor dos status. Leia o comentário do topo. |
-| `lib/format.ts` | Dinheiro, data, telefone — em pt-BR. |
-| `lib/transforms.ts` | Normaliza o pedido e monta os pontos dos gráficos. |
+| Arquivo | Linhas | O que tem dentro |
+|---|---|---|
+| `pagina-produtos.tsx` | ~1.560 | A tela de Produtos e os nove diálogos e cartões dela. É a única tela que grava dados: o CRUD do cardápio, que muda todo dia. |
+| `pagina-dashboard.tsx` | ~555 | Os números do dia e os gráficos. Só leitura. |
+| `pagina-conversas.tsx` | ~400 | O histórico das conversas e o botão que chama um atendente humano. |
+| `pagina-producao.tsx` | ~366 | O Kanban dos pedidos: só muda o status. |
+| `ui.tsx` | ~694 | Botão, card, diálogo, tabela… vieram do shadcn/ui e quase nunca mudam. |
+| `comuns.tsx` | ~419 | Moldura da página, cabeçalho com as abas, estados de carregando/erro/vazio, botão de recarregar e a lista que se arrasta. |
+| `dados.ts` | ~501 | Os hooks de react-query. As telas não chamam a API direto: chamam um hook daqui. |
+| `api.ts` | ~381 | O único lugar do painel que faz `fetch`. Põe a chave no header e traduz erro em mensagem legível. |
+| `formato.ts` | ~310 | Dinheiro, data, telefone, rótulos e cores de status, e o que converte a resposta da API. |
+| `tipos.ts` | ~306 | Os tipos que espelham `back/app/esquemas.py`, campo por campo. |
+| `App.tsx` | ~55 | As rotas do painel e a página 404. |
+| `main.tsx` | 8 | O ponto de entrada. |
+| `api.test.ts`, `formato.test.ts`, `pagina-producao.test.tsx` | ~400 | Os 40 testes do painel. |
 
 ---
 
@@ -226,7 +194,7 @@ então mexe no pedido.
 **7. O turno decide a resposta.** `machine.py` olha onde o pedido está e faz
 **uma** pergunta — a do ponto em que ele parou.
 
-**8. Sai.** `renderer.py` escreve o texto; `pacing.py` segura o envio para o
+**8. Sai.** `textos.py` escreve o texto; o ritmo de envio segura a entrega para o
 bot não responder em 200 ms nem disparar três mensagens no mesmo segundo.
 
 ### Como ele evita os erros que custam caro
@@ -461,20 +429,20 @@ existem separados.
 
 | O que você quer | Onde mexer |
 |---|---|
-| Uma resposta nova do bot | `agent/renderer.py` (só texto) |
-| Uma operação nova do pedido | `agent/plan.py` (a `Action`), `agent/prompts.py` (a descrição para a IA), `agent/operations.py` (o que ela faz) — **e um caso em `tests/eval_cases.py`** |
-| Responder uma pergunta nova | `agent/faq.py` e o tópico em `plan.QUESTION_TOPICS` |
+| Uma resposta nova do bot | `textos.py` (só texto) |
+| Uma operação nova do pedido | `agente.py`: a `Action` no plano, a descrição dela no prompt, e o que ela faz nas operações — **e um caso em `tests/eval_cases.py`** |
+| Responder uma pergunta nova | a seção de FAQ do `agente.py` e o tópico em `QUESTION_TOPICS` |
 | Um campo novo no produto | `db/schema.sql` + migração, `db/models.py`, `schemas/product.py`, `services/catalog.py` e a tela |
 | Uma configuração nova | `core/config.py` **e** `back/.env.example` (há um teste que exige os dois) |
-| Uma tela nova | `front/src/pages/`, usando `Page`/`PageTitle`, e a rota em `App.tsx` |
-| Um endpoint novo | `api/routes/`, o schema em `schemas/`, e a função em `front/src/lib/api.ts` |
+| Uma tela nova | um `front/src/pagina-*.tsx`, usando `Page`/`PageTitle` de `comuns.tsx`, e a rota em `App.tsx` |
+| Um endpoint novo | `back/app/api.py`, o schema em `esquemas.py`, e a função em `front/src/api.ts` |
 
 Três regras da casa:
 
 1. **Nenhuma classe do Tailwind pode ser montada por concatenação.** O scanner
    não enxerga string montada em tempo de execução e a classe não vai para o
    CSS. Já aconteceu, e o Kanban ficou sem cor em produção — ver o comentário
-   no topo de `front/src/lib/status.ts`.
+   no topo de `front/src/formato.ts`.
 2. **Nenhum nome de loja no código.** Ver §13.
 3. **Não rode formatador automático** (`ruff format`, `prettier`). O código é
    formatado à mão, com comentários alinhados em coluna, e o formatador desfaz

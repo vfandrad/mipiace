@@ -404,7 +404,7 @@ marcado com muito mais agressividade que o residencial da sua conexão. Se o
 número for banido depois da migração, é o primeiro suspeito — e o remédio é
 configurar um proxy residencial na instância da Evolution.
 
-O que o sistema já faz sozinho (`back/app/agent/pacing.py`): nunca envia
+O que o sistema já faz sozinho (a seção de ritmo de envio em `back/app/agente.py`): nunca envia
 mensagem para quem não escreveu primeiro, demora para responder como um humano
 demoraria (digitação sorteada em torno de 45 ppm, com o "digitando..." visível)
 e respeita um teto de 12 mensagens por minuto. Na instância:

@@ -199,7 +199,7 @@ services:
   # `docker compose up`:
   #   EVOLUTION_WEBHOOK_ENABLED=true
   # O parser do evento "messages.upsert" está em
-  # back/app/agent/whatsapp.py; a rota em
+  # a seção de WhatsApp em back/app/agente.py; a rota em
   # back/app/api/routes/webhooks.py (POST /webhooks/evolution?token=...).
   # ---------------------------------------------------------------------------
   evolution-db:
