@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
+from app import servicos as conversations_service
 from app.dominio import ConversationState as S
-from app.services import conversations as conversations_service
 
 
 class _FakeConversation:

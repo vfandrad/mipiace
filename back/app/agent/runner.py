@@ -30,8 +30,7 @@ from app.agent.states import assert_transition
 from app.agent.whatsapp import InboundMessage, get_channel_adapter
 from app.configuracao import get_settings
 from app.dominio import CatalogSnapshot, ConversationState, MessageDirection, OrderChannel
-from app.services.catalog import get_catalog_snapshot
-from app.services.orders import get_order_summary
+from app.servicos import get_catalog_snapshot, get_order_summary
 
 logger = logging.getLogger(__name__)
 

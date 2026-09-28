@@ -11,6 +11,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Response, status
 
+from app import servicos as catalog
 from app.api.deps import SessionDep, bad_request, not_found
 from app.schemas.product import (
     ComplementCategoryCreate,
@@ -31,7 +32,6 @@ from app.schemas.product import (
     ProductUpdate,
     ReorderRequest,
 )
-from app.services import catalog
 
 router = APIRouter(prefix="/api", tags=["catálogo"])
 

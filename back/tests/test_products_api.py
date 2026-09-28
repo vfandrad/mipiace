@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.services import catalog as catalog_service
+from app import servicos as catalog_service
 
 PRODUCT_ID = uuid4()
 GROUP_ID = uuid4()       # a lista compartilhada ("Sabores")

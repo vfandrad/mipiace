@@ -10,6 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query
 
+from app import servicos as conversations_service
 from app.api.deps import SessionDep, not_found
 from app.schemas.conversation import (
     ConversationMessageRead,
@@ -17,7 +18,6 @@ from app.schemas.conversation import (
     HandoffResult,
     HandoffUpdate,
 )
-from app.services import conversations as conversations_service
 
 router = APIRouter(prefix="/api/conversations", tags=["conversas"])
 

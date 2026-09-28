@@ -22,6 +22,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
+from app import servicos as payments_service
 from app.agent import inbox
 from app.agent.runner import (
     handle_inbound,
@@ -32,8 +33,7 @@ from app.agent.whatsapp import EvolutionAdapter, phone_allowed
 from app.api.deps import SessionDep
 from app.banco import get_sessionmaker
 from app.configuracao import get_logger, get_settings
-from app.services import payments as payments_service
-from app.services.pix_provider import get_payment_provider
+from app.servicos import get_payment_provider
 
 logger = get_logger(__name__)
 

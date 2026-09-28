@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
+from app import servicos as metrics_service
 from app.api.deps import SessionDep
 from app.schemas.metrics import (
     DailySales,
@@ -12,7 +13,6 @@ from app.schemas.metrics import (
     MetricsSummary,
     ProductSales,
 )
-from app.services import metrics as metrics_service
 
 router = APIRouter(prefix="/api/metrics", tags=["métricas"])
 

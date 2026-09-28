@@ -23,8 +23,7 @@ from app.agent.states import advance
 from app.configuracao import Settings, get_settings
 from app.dominio import CatalogSnapshot, FulfillmentType, OrderChannel
 from app.dominio import ConversationState as S
-from app.services.orders import create_order_from_cart, get_order_summary
-from app.services.payments import create_pix_for_order
+from app.servicos import create_order_from_cart, create_pix_for_order, get_order_summary
 
 logger = logging.getLogger(__name__)
 

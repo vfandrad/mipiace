@@ -21,10 +21,10 @@ from uuid import uuid4
 
 import pytest
 
+from app import servicos as payments_service
 from app.api.routes import webhooks
 from app.dominio import OrderStatus, PaymentStatus
-from app.services import payments as payments_service
-from app.services.pix_provider import (
+from app.servicos import (
     FakePaymentProvider,
     PaymentStatusResult,
     map_status,

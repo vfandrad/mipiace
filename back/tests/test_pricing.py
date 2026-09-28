@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 
+from app import servicos as pricing
 from app.dominio import (
     Cart,
     CartComplement,
@@ -20,7 +21,6 @@ from app.dominio import (
     arredondar_dinheiro,
     item_unit_price,
 )
-from app.services import pricing
 
 
 def _complement(name: str, extra: str) -> CartComplement:

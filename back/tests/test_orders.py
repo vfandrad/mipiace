@@ -8,8 +8,8 @@ from uuid import uuid4
 
 import pytest
 
+from app import servicos as orders_service
 from app.dominio import Cart, CartItem, FulfillmentType, OrderChannel, OrderStatus
-from app.services import orders as orders_service
 
 S = OrderStatus
 
@@ -120,9 +120,7 @@ def test_entrega_sem_endereco_completo_e_recusada(monkeypatch):
     async def _fake_customer(session, *, phone, name=None):
         return type("C", (), {"id": uuid4()})()
 
-    monkeypatch.setattr(
-        orders_service.customers_service, "get_or_create_customer", _fake_customer
-    )
+    monkeypatch.setattr(orders_service, "get_or_create_customer", _fake_customer)
 
     with pytest.raises(orders_service.MissingAddressError):
         asyncio.run(

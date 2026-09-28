@@ -6,10 +6,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query
 
+from app import servicos as orders_service
 from app.api.deps import SessionDep, conflict, not_found
 from app.dominio import OrderStatus
 from app.schemas.order import OrderRead, OrderStatusUpdate, OrderSummary
-from app.services import orders as orders_service
 
 router = APIRouter(prefix="/api", tags=["pedidos"])
 
