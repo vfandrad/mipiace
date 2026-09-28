@@ -16,11 +16,11 @@ import asyncio
 import logging
 import sys
 
-from app.agent.renderer import money
 from app.agent.runner import handle_inbound, settings_snapshot
 from app.agent.session import load_or_create, reset_session
 from app.agent.whatsapp import InboundMessage
 from app.configuracao import get_settings
+from app.textos import em_reais
 
 CHANNEL = "simulador"
 DEFAULT_PHONE = "5511999990000"
@@ -52,7 +52,7 @@ async def _show_state(sessionmaker, phone: str) -> None:
     cart = conversation.cart
     _print_info(
         f"[estado={conversation.state.value} itens={len(cart.items)} "
-        f"subtotal={money(cart.subtotal)} falhas={conversation.fail_count} "
+        f"subtotal={em_reais(cart.subtotal)} falhas={conversation.fail_count} "
         f"handoff={conversation.handoff}]"
     )
     for item in cart.items:

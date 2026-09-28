@@ -11,7 +11,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from app.agent import renderer as r
+from app import textos as r
 from app.agent.checkout import AgentDeps, build_deps
 from app.agent.llm import get_llm_client
 from app.agent.machine import describe_situation
@@ -208,7 +208,7 @@ async def notify_payment_approved(session: Any, order_id: UUID) -> None:
         return
 
     code = await _order_code(session, order_id)
-    text = r.payment_confirmed(code)
+    text = r.pagamento_confirmado(code)
 
     if conversation.state is ConversationState.AGUARDANDO_PAGAMENTO:
         assert_transition(conversation.state, ConversationState.CONCLUIDO)

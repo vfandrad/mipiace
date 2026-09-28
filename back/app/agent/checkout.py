@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from app.agent import renderer as r
+from app import textos as r
 from app.agent.session import ConversationSession, get_saved_address
 from app.agent.states import advance
 from app.configuracao import Settings, get_settings
@@ -105,7 +105,7 @@ def set_fulfillment(session: ConversationSession, kind: FulfillmentType) -> None
 
 
 def final_summary(deps: AgentDeps, session: ConversationSession) -> str:
-    return r.final_summary(
+    return r.resumo_final(
         session.cart,
         delivery_fee=deps.settings.delivery_fee,
         address=address_of(session),
@@ -153,7 +153,7 @@ async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str
         charge = await deps.create_pix(deps.db, order_id)
     except Exception:
         logger.exception("falha ao criar pedido/Pix para %s", session.phone)
-        return [r.pix_failed()]
+        return [r.pix_falhou()]
 
     session.active_order_id = order_id
     session.cart.items.clear()
@@ -166,7 +166,7 @@ async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str
     session.fail_count = 0
     advance(session, S.AGUARDANDO_PAGAMENTO)
     return [
-        r.pix_message(
+        r.mensagem_do_pix(
             order_code=order_code,
             total=order_total,
             qr_code=charge.qr_code,

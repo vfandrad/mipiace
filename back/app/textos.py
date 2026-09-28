@@ -37,7 +37,7 @@ def _emoji() -> str:
     return f"{emoji} " if emoji else ""
 
 
-def money(value: Decimal | int | float | str) -> str:
+def em_reais(value: Decimal | int | float | str) -> str:
     """R$ 1.234,56 — ponto de milhar e vírgula decimal, como no Brasil."""
     amount = Decimal(str(value)).quantize(Decimal("0.01"))
     inteiro, centavos = f"{amount:,.2f}".split(".")
@@ -45,18 +45,18 @@ def money(value: Decimal | int | float | str) -> str:
 
 
 def _com_preco(name: str, price: Decimal) -> str:
-    return name if price <= 0 else f"{name} (+{money(price)})"
+    return name if price <= 0 else f"{name} (+{em_reais(price)})"
 
 
 # ---------------------------------------------------------------------------
 # Abertura
 # ---------------------------------------------------------------------------
 
-def greeting() -> str:
+def saudacao() -> str:
     return f"Oi! {_emoji()}Aqui é a *{_loja()}*."
 
 
-def ask_what_they_want() -> str:
+def perguntar_o_que_quer() -> str:
     return "O que você vai querer hoje? 😊"
 
 
@@ -64,7 +64,7 @@ def ask_what_they_want() -> str:
 # Cardápio — uma mensagem só, organizada
 # ---------------------------------------------------------------------------
 
-def _flavors_of(product: CatalogProduct) -> list[Any]:
+def _sabores_do_produto(product: CatalogProduct) -> list[Any]:
     """Sabores disponíveis de um tamanho, sem repetir, na ordem do cardápio."""
     vistos: dict[str, Any] = {}
     for group in product.groups:
@@ -84,7 +84,7 @@ def _em_grupos(itens: Sequence[str], tamanho: int) -> list[list[str]]:
     return [list(itens[i : i + tamanho]) for i in range(0, len(itens), tamanho)]
 
 
-def _flavor_block(flavors: Sequence[Any], titulo: str = "Sabores de hoje") -> list[str]:
+def _bloco_de_sabores(flavors: Sequence[Any], titulo: str = "Sabores de hoje") -> list[str]:
     """Sabores agrupados por categoria, em linhas curtas e escaneáveis.
 
     Agrupados por "Sem lactose" / "Com lactose" (quando existe mais de uma
@@ -111,13 +111,13 @@ def _flavor_block(flavors: Sequence[Any], titulo: str = "Sabores de hoje") -> li
     return linhas
 
 
-def menu(catalog: CatalogSnapshot) -> str:
+def cardapio(catalog: CatalogSnapshot) -> str:
     """O cardápio inteiro numa mensagem: tamanhos, preços e sabores."""
     products = catalog.available_products
     if not products:
         return "Hoje estamos sem itens disponíveis. 😔"
 
-    por_produto = {p.name: _flavors_of(p) for p in products}
+    por_produto = {p.name: _sabores_do_produto(p) for p in products}
     conjuntos = {frozenset(f.name for f in v) for v in por_produto.values() if v}
     sabores_iguais = len(conjuntos) == 1
 
@@ -127,7 +127,7 @@ def menu(catalog: CatalogSnapshot) -> str:
     # responder assim mesmo; ela só não é mais a interface.
     linhas = [f"{_emoji()}*{_loja()}* — cardápio de hoje", ""]
     for product in products:
-        linhas.append(f"• *{product.name}* — {money(product.base_price)}")
+        linhas.append(f"• *{product.name}* — {em_reais(product.base_price)}")
         if product.description:
             linhas.append(f"   _{product.description}_")
         if not sabores_iguais and por_produto[product.name]:
@@ -141,7 +141,7 @@ def menu(catalog: CatalogSnapshot) -> str:
         comuns = next((v for v in por_produto.values() if v), [])
         if comuns:
             linhas.append("")
-            linhas.extend(_flavor_block(comuns))
+            linhas.extend(_bloco_de_sabores(comuns))
 
     linhas.append("")
     linhas.append("É só me dizer o que você quer que eu monto pra você. 😊")
@@ -152,19 +152,19 @@ def menu(catalog: CatalogSnapshot) -> str:
 # Escolha do item
 # ---------------------------------------------------------------------------
 
-def product_ambiguous(candidates: Sequence[CatalogProduct]) -> str:
+def produto_ambiguo(candidates: Sequence[CatalogProduct]) -> str:
     """Ambiguidade de verdade: perguntar é melhor que chutar caro."""
-    nomes = [f"*{c.name}* ({money(c.base_price)})" for c in candidates]
+    nomes = [f"*{c.name}* ({em_reais(c.base_price)})" for c in candidates]
     if len(nomes) == 2:
         return f"Você quer o {nomes[0]} ou o {nomes[1]}?"
     return "Qual desses você quer?\n" + "\n".join(f"• {n}" for n in nomes)
 
 
-def product_unavailable(name: str) -> str:
+def produto_esgotado(name: str) -> str:
     return f"O *{name}* acabou hoje. 😔 Posso te sugerir outro?"
 
 
-def product_not_found(query: str) -> str:
+def produto_inexistente(query: str) -> str:
     """O cliente entendeu-se perfeitamente; é a casa que não tem aquilo.
 
     É diferente de não entender, e a resposta também tem que ser: "não
@@ -173,14 +173,14 @@ def product_not_found(query: str) -> str:
     return f'Não trabalhamos com "{query}" 🙈 Mas olha o que tem hoje:'
 
 
-def ask_which_item(cart: Cart) -> str:
+def perguntar_qual_item(cart: Cart) -> str:
     linhas = ["Qual deles?"]
     for index, item in enumerate(cart.items, start=1):
         linhas.append(f"{index}. {item.quantity}x {item.product_name}")
     return "\n".join(linhas)
 
 
-def ask_clarification() -> str:
+def pedir_para_repetir() -> str:
     return "Só pra eu não errar: como exatamente você quer?"
 
 
@@ -188,7 +188,7 @@ def ask_clarification() -> str:
 # Sabores
 # ---------------------------------------------------------------------------
 
-def ask_flavors(
+def perguntar_sabores(
     product: CatalogProduct,
     group: CatalogGroup,
     chosen: Sequence[str] = (),
@@ -221,11 +221,11 @@ def ask_flavors(
         )
 
     linhas = [cabeca, ""]
-    linhas.extend(_flavor_block(disponiveis, titulo="Opções"))
+    linhas.extend(_bloco_de_sabores(disponiveis, titulo="Opções"))
     return "\n".join(linhas)
 
 
-def resume_flavors(
+def retomar_sabores(
     product: CatalogProduct, group: CatalogGroup, chosen: Sequence[str] = ()
 ) -> str:
     """Retomada curta depois de uma pergunta — sem repetir a lista inteira."""
@@ -240,34 +240,34 @@ def resume_flavors(
     )
 
 
-def missing_before_closing(product: CatalogProduct) -> str:
+def falta_para_fechar(product: CatalogProduct) -> str:
     """Ele pediu para fechar e falta escolher sabor — diga isso, não repita a pergunta."""
     return (
         f"Fecho já — só falta escolher os sabores do seu *{product.name}*. 😊"
     )
 
 
-def flavor_removed(name: str) -> str:
+def sabor_removido(name: str) -> str:
     return f"Tirei o *{name}*."
 
 
-def flavor_already_chosen(name: str) -> str:
+def sabor_repetido(name: str) -> str:
     return f"O *{name}* já está nesse item — não dá pra repetir a mesma opção. 😊"
 
 
-def complement_not_found(query: str, group: CatalogGroup) -> str:
+def complemento_inexistente(query: str, group: CatalogGroup) -> str:
     return f'Não achei "{query}" nos sabores de hoje. 🙈'
 
 
-def complement_unavailable(name: str) -> str:
+def complemento_esgotado(name: str) -> str:
     return f"*{name}* acabou hoje. 😔 Escolhe outro pra mim?"
 
 
-def group_full(group: CatalogGroup) -> str:
+def grupo_cheio(group: CatalogGroup) -> str:
     return f"Esse item já está completo com {group.max_choices} opções. 😉"
 
 
-def item_has_no_flavors(name: str) -> str:
+def item_sem_sabores(name: str) -> str:
     return f"O *{name}* não leva escolha de sabor. 😊"
 
 
@@ -275,8 +275,8 @@ def item_has_no_flavors(name: str) -> str:
 # Carrinho
 # ---------------------------------------------------------------------------
 
-def _item_line(index: int, item: CartItem, *, montando: bool = False) -> str:
-    line = f"{index}. {item.quantity}x *{item.product_name}* — {money(item.line_total)}"
+def _linha_do_item(index: int, item: CartItem, *, montando: bool = False) -> str:
+    line = f"{index}. {item.quantity}x *{item.product_name}* — {em_reais(item.line_total)}"
     if montando:
         line += "  _(montando)_"
     if item.complements:
@@ -286,7 +286,7 @@ def _item_line(index: int, item: CartItem, *, montando: bool = False) -> str:
     return line
 
 
-def cart_summary(cart: Cart, *, pending: int | None = None) -> str:
+def resumo_do_pedido(cart: Cart, *, pending: int | None = None) -> str:
     """O pedido como o cliente vê — inclusive o item que ainda falta fechar.
 
     `pending` é o índice (base 0) do item em montagem. Ele aparece na lista
@@ -295,41 +295,41 @@ def cart_summary(cart: Cart, *, pending: int | None = None) -> str:
     dizia "tira o médio" olhando para uma lista que o sistema não tinha.
     """
     if cart.is_empty:
-        return cart_empty()
+        return pedido_vazio()
     linhas = ["*Seu pedido*"]
     for index, item in enumerate(cart.items, start=1):
-        linhas.append(_item_line(index, item, montando=pending == index - 1))
-    linhas.append(f"\nSubtotal: *{money(cart.subtotal)}*")
+        linhas.append(_linha_do_item(index, item, montando=pending == index - 1))
+    linhas.append(f"\nSubtotal: *{em_reais(cart.subtotal)}*")
     return "\n".join(linhas)
 
 
-def cart_empty() -> str:
+def pedido_vazio() -> str:
     return "Seu pedido está vazio por enquanto. 🛒"
 
 
-def item_added(item: CartItem) -> str:
+def item_adicionado(item: CartItem) -> str:
     sabores = f" ({', '.join(c.name for c in item.complements)})" if item.complements else ""
     return f"Anotado: {item.quantity}x *{item.product_name}*{sabores} ✅"
 
 
-def item_updated(item: CartItem) -> str:
+def item_alterado(item: CartItem) -> str:
     sabores = ", ".join(c.name for c in item.complements)
     return f"Ficou assim: *{item.product_name}* — {sabores}. ✅"
 
 
-def item_removed(name: str) -> str:
+def item_removido(name: str) -> str:
     return f"Tirei o *{name}* do pedido. 👍"
 
 
-def quantity_updated(item: CartItem) -> str:
+def quantidade_alterada(item: CartItem) -> str:
     return f"Ajustei para {item.quantity}x *{item.product_name}*. 👍"
 
 
-def product_switched(antigo: str, novo: str) -> str:
+def produto_trocado(antigo: str, novo: str) -> str:
     return f"Sem problema — troquei o *{antigo}* pelo *{novo}*. 👍"
 
 
-def flavors_dropped_on_resize(nomes: list[str]) -> str:
+def sabores_perdidos_na_troca(nomes: list[str]) -> str:
     """Trocar de tamanho às vezes deixa sabor de fora — o cliente tem que saber qual."""
     if len(nomes) == 1:
         return f"O tamanho novo não cabe todos os sabores — tirei o *{nomes[0]}*. 😉"
@@ -337,17 +337,17 @@ def flavors_dropped_on_resize(nomes: list[str]) -> str:
     return f"O tamanho novo não cabe todos os sabores — tirei {lista}. 😉"
 
 
-def ask_more_short() -> str:
+def perguntar_se_quer_mais_curto() -> str:
     """A pergunta sozinha, para quando o carrinho já está na tela."""
     return "Quer mais alguma coisa ou já posso fechar? 😊"
 
 
-def ask_more_or_close(cart: Cart, *, pending: int | None = None) -> str:
-    resumo = cart_summary(cart, pending=pending)
+def perguntar_se_quer_mais(cart: Cart, *, pending: int | None = None) -> str:
+    resumo = resumo_do_pedido(cart, pending=pending)
     return f"{resumo}\n\nQuer mais alguma coisa ou já posso fechar?"
 
 
-def total_reply(
+def resposta_do_total(
     cart: Cart, delivery_fee: Decimal, *, is_pickup: bool | None, pending: int | None = None
 ) -> str:
     """Quanto deu — com a taxa calculada pelo backend, nunca pela IA.
@@ -356,10 +356,10 @@ def total_reply(
     padrão nesse caso inflava o total de quem ia retirar na loja antes de o
     cliente ter dito o que queria — melhor mostrar o subtotal e perguntar.
     """
-    linhas = [cart_summary(cart, pending=pending), ""]
+    linhas = [resumo_do_pedido(cart, pending=pending), ""]
     if is_pickup is None:
         linhas.append(
-            f"Isso é sem taxa. Com entrega, some {money(delivery_fee)}. "
+            f"Isso é sem taxa. Com entrega, some {em_reais(delivery_fee)}. "
             "Vai ser entrega ou retirada? 🛵🏠"
         )
         return "\n".join(linhas)
@@ -367,8 +367,8 @@ def total_reply(
     if is_pickup:
         linhas.append("Retirada na loja — sem taxa.")
     elif delivery_fee > 0:
-        linhas.append(f"Taxa de entrega: {money(delivery_fee)}")
-    linhas.append(f"*Total: {money(total)}*")
+        linhas.append(f"Taxa de entrega: {em_reais(delivery_fee)}")
+    linhas.append(f"*Total: {em_reais(total)}*")
     return "\n".join(linhas)
 
 
@@ -376,14 +376,14 @@ def total_reply(
 # Entrega e endereço
 # ---------------------------------------------------------------------------
 
-_FIELD_LABELS = {
+_NOMES_DOS_CAMPOS = {
     "rua": "o nome da rua",
     "numero": "o número",
     "bairro": "o bairro",
 }
 
 
-def fulfillment_set(kind: Any) -> str:
+def entrega_anotada(kind: Any) -> str:
     """O bot diz que anotou a forma de entrega.
 
     Anotar calado fazia o cliente repetir: ele dizia "quero entrega", recebia
@@ -394,17 +394,17 @@ def fulfillment_set(kind: Any) -> str:
     return "Anotado: *entrega*. 🛵"
 
 
-def address_saved(address: dict[str, Any], *, novo_para_entrega: bool = False) -> str:
+def endereco_salvo(address: dict[str, Any], *, novo_para_entrega: bool = False) -> str:
     inicio = "Perfeito, vou entregar em" if novo_para_entrega else "Endereço anotado"
-    return "\n".join([f"{inicio}:", format_address(address)])
+    return "\n".join([f"{inicio}:", formatar_endereco(address)])
 
 
-def ask_fulfillment() -> str:
+def perguntar_entrega_ou_retirada() -> str:
     """Perguntado antes do endereço: pedir a rua de quem vai buscar irrita."""
     return "Você prefere que a gente entregue ou vai retirar na loja? 🛵🏠"
 
 
-def ask_address(missing: Iterable[str]) -> str:
+def perguntar_endereco(missing: Iterable[str]) -> str:
     campos = list(missing)
     if not campos:
         return "Pode me confirmar o endereço da entrega?"
@@ -413,14 +413,14 @@ def ask_address(missing: Iterable[str]) -> str:
             "Me passa o endereço da entrega, por favor. 🛵\n"
             "_Exemplo: Rua das Flores, 123, Centro_"
         )
-    labels = [_FIELD_LABELS.get(f, f) for f in campos]
+    labels = [_NOMES_DOS_CAMPOS.get(f, f) for f in campos]
     if len(labels) == 1:
         return f"Só falta {labels[0]}. Pode me mandar?"
     return f"Só faltam {' e '.join(labels)}. Pode me mandar?"
 
 
 
-def format_address(address: dict[str, Any] | None) -> str:
+def formatar_endereco(address: dict[str, Any] | None) -> str:
     if not address:
         return "—"
     partes = [f"{address.get('rua', '')}, {address.get('numero', '')}"]
@@ -438,7 +438,7 @@ def format_address(address: dict[str, Any] | None) -> str:
 # Confirmação, Pix e pós-pagamento
 # ---------------------------------------------------------------------------
 
-def final_summary(
+def resumo_final(
     cart: Cart,
     *,
     delivery_fee: Decimal,
@@ -448,33 +448,33 @@ def final_summary(
     """Resumo antes do Pix — a barreira antes de qualquer cobrança."""
     linhas = ["*Confere pra mim?* 📝", ""]
     for index, item in enumerate(cart.items, start=1):
-        linhas.append(_item_line(index, item))
+        linhas.append(_linha_do_item(index, item))
     linhas.append("")
-    linhas.append(f"Subtotal: {money(cart.subtotal)}")
+    linhas.append(f"Subtotal: {em_reais(cart.subtotal)}")
     if is_pickup:
         linhas.append("Retirada na loja — sem taxa de entrega")
         total = cart.total(Decimal("0"))
     else:
-        linhas.append(f"Taxa de entrega: {money(delivery_fee)}")
-        linhas.append(f"Entregar em: {format_address(address)}")
+        linhas.append(f"Taxa de entrega: {em_reais(delivery_fee)}")
+        linhas.append(f"Entregar em: {formatar_endereco(address)}")
         total = cart.total(delivery_fee)
-    linhas.append(f"*Total: {money(total)}*")
+    linhas.append(f"*Total: {em_reais(total)}*")
     linhas.append("")
     linhas.append("Tá certo assim? Se estiver, eu já mando o Pix. 😊")
     return "\n".join(linhas)
 
 
-def confirm_once_more() -> str:
+def confirmar_de_novo() -> str:
     """Resposta morna na hora de cobrar: pergunta uma vez mais, sem cobrar."""
     return "Só pra eu ter certeza antes de gerar o Pix: pode confirmar o pedido? 😊"
 
 
-def ask_confirm_short() -> str:
+def perguntar_confirmacao_curta() -> str:
     """Relembra a confirmação sem reimprimir dez linhas de resumo."""
     return "Me confirma que está certo que eu mando o Pix. 😊"
 
 
-def pix_message(
+def mensagem_do_pix(
     *,
     order_code: str,
     total: Decimal,
@@ -483,7 +483,7 @@ def pix_message(
 ) -> str:
     linhas = [
         f"Pedido *{order_code}* registrado! 🎉",
-        f"Valor: *{money(total)}*",
+        f"Valor: *{em_reais(total)}*",
         "",
         "Pague com o Pix copia e cola abaixo:",
     ]
@@ -497,7 +497,7 @@ def pix_message(
     return "\n".join(linhas)
 
 
-def pix_failed() -> str:
+def pix_falhou() -> str:
     """Provedor de pagamento fora do ar na hora de gerar a cobrança."""
     return (
         "Tive um problema para gerar a cobrança agora. 😔 "
@@ -505,7 +505,7 @@ def pix_failed() -> str:
     )
 
 
-def order_awaiting_payment() -> str:
+def pedido_aguardando_pagamento() -> str:
     """O cliente tenta mexer no pedido com o Pix já emitido.
 
     Antes o carrinho aceitava a mudança e o bot mostrava um pedido novo de
@@ -518,7 +518,7 @@ def order_awaiting_payment() -> str:
     )
 
 
-def pending_order_status(summary: Any) -> str:
+def situacao_do_pedido(summary: Any) -> str:
     """Resposta a "qual sabor eu escolhi mesmo?" com o pedido já fora do carrinho.
 
     `place_order` esvazia o carrinho ao emitir o Pix; é o resumo do pedido já
@@ -528,8 +528,8 @@ def pending_order_status(summary: Any) -> str:
     linhas = [f"Seu pedido *{summary.code}*:"]
     for item in summary.items:
         extras = f" ({', '.join(item.complements)})" if item.complements else ""
-        linhas.append(f"{item.quantity}x {item.product_name}{extras} — {money(item.line_total)}")
-    linhas.append(f"\nTotal: *{money(summary.total)}*")
+        linhas.append(f"{item.quantity}x {item.product_name}{extras} — {em_reais(item.line_total)}")
+    linhas.append(f"\nTotal: *{em_reais(summary.total)}*")
     if summary.payment_status == "pago":
         linhas.append("Já está pago e confirmado. ✅")
     else:
@@ -537,7 +537,7 @@ def pending_order_status(summary: Any) -> str:
     return "\n".join(linhas)
 
 
-def payment_confirmed(order_code: str) -> str:
+def pagamento_confirmado(order_code: str) -> str:
     return (
         f"Pagamento confirmado! ✅ Pedido *{order_code}* já foi para a produção.\n"
         f"Obrigado pela preferência — já já chega até você. {_emoji()}".rstrip()
@@ -550,16 +550,16 @@ def payment_confirmed(order_code: str) -> str:
 # Reparo e atendimento humano
 # ---------------------------------------------------------------------------
 
-def didnt_get_it() -> str:
+def nao_entendi() -> str:
     """Primeira tentativa: pede de outro jeito, sem despejar o cardápio."""
     return "Desculpa, não peguei essa. 😅 Me explica de outro jeito?"
 
 
-def didnt_get_it_again() -> str:
+def nao_entendi_de_novo() -> str:
     return "Ainda não consegui entender direito. 🙈 Me diz com outras palavras?"
 
 
-def offer_human() -> str:
+def oferecer_atendente() -> str:
     """Oferece gente — sem calar o bot, que continua atendendo."""
     return (
         "Quer que eu chame alguém do time pra te ajudar? "
@@ -567,14 +567,14 @@ def offer_human() -> str:
     )
 
 
-def handoff() -> str:
+def chamou_atendente() -> str:
     return (
         f"Já chamei uma pessoa do time da {_loja()} pra falar com você. 👋\n"
         "Enquanto isso, se quiser, eu sigo com seu pedido por aqui."
     )
 
 
-def still_waiting_human() -> str:
+def ainda_esperando_atendente() -> str:
     """O cliente insistiu e ninguém da loja apareceu ainda.
 
     O silêncio total era o defeito mais caro do agente: quem pedia atendente
@@ -586,7 +586,7 @@ def still_waiting_human() -> str:
     )
 
 
-def still_waiting_human_short() -> str:
+def ainda_esperando_atendente_curto() -> str:
     """Resposta curta enquanto o atendente não chega.
 
     Existe porque a alternativa era silêncio: o aviso longo saía uma vez e
@@ -596,9 +596,9 @@ def still_waiting_human_short() -> str:
     return "Ainda por aqui com você — assim que alguém do time aparecer, eu aviso. 🙏"
 
 
-def back_from_human() -> str:
+def voltou_do_atendente() -> str:
     return "Combinado, sigo com você por aqui! 😊"
 
 
-def cancelled() -> str:
+def pedido_cancelado() -> str:
     return "Tudo bem, cancelei o pedido. 🙂 Quando quiser é só chamar!"

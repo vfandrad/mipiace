@@ -31,7 +31,7 @@ import logging
 import re
 from datetime import datetime, timezone
 
-from app.agent import renderer as r
+from app import textos as r
 from app.agent.checkout import (
     AgentDeps,
     address_of,
@@ -172,8 +172,8 @@ def _handoff_turn(
 
     if desde >= _MINUTOS_ENTRE_AVISOS:
         session.slots["handoff_avisado_em"] = agora.isoformat()
-        return [r.still_waiting_human()]
-    return [r.still_waiting_human_short()]
+        return [r.ainda_esperando_atendente()]
+    return [r.ainda_esperando_atendente_curto()]
 
 
 #: Operações que mexem no pedido. Enquanto houver Pix pendente elas ficam
@@ -344,7 +344,7 @@ async def run(
         #
         # A garantia é da máquina de estados: pagamento pendente congela o
         # pedido. Perguntar, cancelar e chamar gente continuam funcionando.
-        return [r.order_awaiting_payment()]
+        return [r.pedido_aguardando_pagamento()]
 
     if plan.customer_name and "customer_name" not in session.slots:
         session.slots["customer_name"] = plan.customer_name
@@ -371,7 +371,7 @@ async def run(
             # "pode ser", "acho que sim": o modelo classifica isso como
             # confirmação, mas não é um sim. Cobrança não se faz com
             # quase-certeza — o cliente responde uma vez mais, e aí sim.
-            return [r.confirm_once_more()]
+            return [r.confirmar_de_novo()]
         if pending_index(deps, session) is None:
             session.slots.pop(AWAITING_CONFIRM, None)
             return await place_order(deps, session)
@@ -408,10 +408,10 @@ async def run(
 
     replies = await _next_step(deps, session, plan, turn, primeira_vez=primeira_vez)
     if voltou_do_humano and replies:
-        replies = [r.back_from_human()] + replies
+        replies = [r.voltou_do_atendente()] + replies
     if primeira_vez and replies:
         # Bom dia uma vez só, no começo da conversa — como gente faz.
-        replies = [r.greeting()] + replies
+        replies = [r.saudacao()] + replies
     return [reply for reply in replies if reply]
 
 
@@ -453,7 +453,7 @@ async def _next_step(
             session.fail_count = 0
             session.slots[LAST_OFFER] = [c.name for c in group.available_complements]
             escolhidos = [c.name for c in item.complements if c.group_id == group.id]
-            pergunta = r.ask_flavors(
+            pergunta = r.perguntar_sabores(
                 product,
                 group,
                 escolhidos,
@@ -462,7 +462,7 @@ async def _next_step(
             # Ele já pediu para fechar: explica o que está segurando, senão a
             # mesma pergunta repetida parece o bot ignorando o "pode fechar".
             if session.slots.get(CLOSING):
-                return turn.notes + [r.missing_before_closing(product), pergunta]
+                return turn.notes + [r.falta_para_fechar(product), pergunta]
             return turn.notes + [pergunta]
 
     # 3. Fechando o pedido.
@@ -479,15 +479,15 @@ async def _next_step(
         session.fail_count = 0
         session.slots.pop(AWAITING_CONFIRM, None)
         if session.cart.is_empty:
-            return turn.notes + [r.ask_what_they_want()]
+            return turn.notes + [r.perguntar_o_que_quer()]
         # Escolheu entrega mas ainda não disse o endereço: pergunta agora,
         # não só lá na frente ao fechar. É o mesmo ponto cego do sabor
         # pendente (passo 2) — falta um dado, então é dele que se fala.
         if fulfillment_of(session) is FulfillmentType.ENTREGA:
             faltando = missing_address_fields(address_of(session))
             if faltando:
-                return turn.notes + [r.ask_address(faltando)]
-        return turn.notes + [r.ask_more_or_close(session.cart)]
+                return turn.notes + [r.perguntar_endereco(faltando)]
+        return turn.notes + [r.perguntar_se_quer_mais(session.cart)]
 
     # 5. Cumprimento, agradecimento, conversa fiada: abre o atendimento em vez
     #    de dizer "não entendi" a quem só disse oi. O cardápio inteiro só sai
@@ -502,7 +502,7 @@ async def _next_step(
             return turn.notes + [await pending_order_status(deps, session)]
         if primeira_vez:
             return turn.notes + [menu(deps, session)]
-        return turn.notes + [r.ask_what_they_want()]
+        return turn.notes + [r.perguntar_o_que_quer()]
 
     # 6. Nada aconteceu mesmo: reparo progressivo, sem cardápio na cara dele.
     return _fallback(deps, session, plan)
@@ -512,7 +512,7 @@ async def _checkout_step(deps: AgentDeps, session: ConversationSession) -> list[
     """Entrega ou retirada → endereço → resumo. Nada disso cobra nada."""
     kind = fulfillment_of(session)
     if kind is None:
-        return [r.ask_fulfillment()]
+        return [r.perguntar_entrega_ou_retirada()]
 
     if kind is FulfillmentType.ENTREGA:
         endereco = address_of(session)
@@ -522,7 +522,7 @@ async def _checkout_step(deps: AgentDeps, session: ConversationSession) -> list[
                 session.slots["address"] = salvo
         faltando = missing_address_fields(address_of(session))
         if faltando:
-            return [r.ask_address(faltando)]
+            return [r.perguntar_endereco(faltando)]
 
     _go(session, S.CONFIRMANDO_PEDIDO)
     session.slots[AWAITING_CONFIRM] = True
@@ -554,18 +554,18 @@ def _resume_prompt(
         product = product_of(deps, item)
         if product is not None and group is not None:
             escolhidos = [c.name for c in item.complements if c.group_id == group.id]
-            return r.resume_flavors(product, group, escolhidos)
+            return r.retomar_sabores(product, group, escolhidos)
     if session.slots.get(AWAITING_CONFIRM):
-        return r.ask_confirm_short()
+        return r.perguntar_confirmacao_curta()
     if session.slots.get(CLOSING) and fulfillment_of(session) is None:
-        return r.ask_fulfillment()
+        return r.perguntar_entrega_ou_retirada()
     if not session.cart.is_empty:
         return (
-            r.ask_more_short()
+            r.perguntar_se_quer_mais_curto()
             if carrinho_na_tela
-            else r.ask_more_or_close(session.cart)
+            else r.perguntar_se_quer_mais(session.cart)
         )
-    return r.ask_what_they_want()
+    return r.perguntar_o_que_quer()
 
 
 def _fallback(
@@ -580,9 +580,9 @@ def _fallback(
     retomada = _resume_prompt(deps, session)
 
     if session.fail_count == 1:
-        return [r.didnt_get_it(), *([retomada] if retomada else [])]
+        return [r.nao_entendi(), *([retomada] if retomada else [])]
     if session.fail_count == 2:
-        return [r.didnt_get_it_again(), *([retomada] if retomada else [])]
+        return [r.nao_entendi_de_novo(), *([retomada] if retomada else [])]
 
     session.fail_count = 0
-    return [r.offer_human(), *([retomada] if retomada else [])]
+    return [r.oferecer_atendente(), *([retomada] if retomada else [])]

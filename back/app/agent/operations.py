@@ -34,8 +34,8 @@ from difflib import get_close_matches
 from typing import Any
 from uuid import UUID
 
+from app import textos as r
 from app.agent import faq
-from app.agent import renderer as r
 from app.agent.checkout import (
     AgentDeps,
     address_of,
@@ -249,7 +249,7 @@ def _find_product(deps: AgentDeps, op: Operation) -> tuple[CatalogProduct | None
         product = deps.catalog.product_by_name(nome)
         if product is not None:
             if not product.is_available:
-                return None, r.product_unavailable(product.name)
+                return None, r.produto_esgotado(product.name)
             return product, None
 
     texto = (op.raw_text or op.product_name or "").strip()
@@ -260,11 +260,11 @@ def _find_product(deps: AgentDeps, op: Operation) -> tuple[CatalogProduct | None
     if match.ok:
         return match.product, None
     if match.status is MatchStatus.AMBIGUOUS:
-        return None, r.product_ambiguous(match.candidates)
+        return None, r.produto_ambiguo(match.candidates)
     if match.status is MatchStatus.UNAVAILABLE:
         nome_ = match.candidates[0].name if match.candidates else texto
-        return None, r.product_unavailable(nome_)
-    return None, r.product_not_found(texto)
+        return None, r.produto_esgotado(nome_)
+    return None, r.produto_inexistente(texto)
 
 
 def _find_flavors(
@@ -278,10 +278,10 @@ def _find_flavors(
             (c for c in group.complements if normalize(c.name) == alvo), None
         )
         if escolha is None:
-            problemas.append(r.complement_not_found(nome, group))
+            problemas.append(r.complemento_inexistente(nome, group))
             continue
         if not escolha.is_available:
-            problemas.append(r.complement_unavailable(escolha.name))
+            problemas.append(r.complemento_esgotado(escolha.name))
             continue
         achados.append(escolha)
     return achados, problemas
@@ -312,14 +312,14 @@ def _apply_flavors(
         for atual in list(atuais):
             if normalize(atual.name) == alvo:
                 atuais.remove(atual)
-                turn.say(r.flavor_removed(atual.name))
+                turn.say(r.sabor_removido(atual.name))
                 turn.changed = True
                 mexeu = True
                 break
 
     for escolha in add:
         if len(atuais) >= group.max_choices:
-            turn.say(r.group_full(group))
+            turn.say(r.grupo_cheio(group))
             break
         if any(c.id == escolha.id for c in atuais):
             # Sabor não se repete no mesmo pote. O modelo costuma REPETIR os
@@ -340,7 +340,7 @@ def _apply_flavors(
         mexeu = True
 
     if repetidos and not mexeu:
-        turn.say(r.flavor_already_chosen(repetidos[0]))
+        turn.say(r.sabor_repetido(repetidos[0]))
 
 
 def _flavors_into(
@@ -352,7 +352,7 @@ def _flavors_into(
     group = _group_of(deps, item)
     if group is None:
         if op.add_flavors:
-            turn.say(r.item_has_no_flavors(item.product_name))
+            turn.say(r.item_sem_sabores(item.product_name))
             turn.answered = True
         return
     achados, problemas = _find_flavors(group, op.add_flavors)
@@ -425,9 +425,9 @@ async def apply(
             turn.say(await pending_order_status(deps, session))
         else:
             turn.say(
-                r.cart_summary(session.cart, pending=pending_index(deps, session))
+                r.resumo_do_pedido(session.cart, pending=pending_index(deps, session))
                 if not session.cart.is_empty
-                else r.cart_empty()
+                else r.pedido_vazio()
             )
         turn.answered = True
 
@@ -452,7 +452,7 @@ async def apply(
         turn.finished = to_human(session)
 
     elif action is Action.ASK_CLARIFICATION:
-        turn.say(op.clarification or r.ask_clarification())
+        turn.say(op.clarification or r.pedir_para_repetir())
         turn.answered = True
 
     # CONFIRM_ORDER e NO_ACTION são tratados em `run`: um mexe em dinheiro, o
@@ -509,7 +509,7 @@ def _set_fulfillment(
     mudou = fulfillment_of(session) is not kind
     set_fulfillment(session, kind)
     if mudou:
-        turn.say(r.fulfillment_set(kind))
+        turn.say(r.entrega_anotada(kind))
     turn.changed = True
 
 
@@ -567,7 +567,7 @@ def _merge_address(
     ja_era_entrega = fulfillment_of(session) is FulfillmentType.ENTREGA
     set_fulfillment(session, FulfillmentType.ENTREGA)
     if not missing_address_fields(endereco):
-        turn.say(r.address_saved(endereco, novo_para_entrega=not ja_era_entrega))
+        turn.say(r.endereco_salvo(endereco, novo_para_entrega=not ja_era_entrega))
     turn.changed = True
 
 
@@ -619,7 +619,7 @@ def _op_add_item(
         if pendente is not None and (op.add_flavors or op.remove_flavors):
             _flavors_into(deps, pendente, op, turn)
             if _is_complete(deps, pendente):
-                turn.say(r.item_added(pendente))
+                turn.say(r.item_adicionado(pendente))
             return
         if problema:
             turn.say(problema)
@@ -632,7 +632,7 @@ def _op_add_item(
             turn.changed = True
         _flavors_into(deps, pendente, op, turn)
         if _is_complete(deps, pendente):
-            turn.say(r.item_added(pendente))
+            turn.say(r.item_adicionado(pendente))
         return
 
     # Uma resposta curta ("sim", um pedido de atendente) às vezes faz o
@@ -654,7 +654,7 @@ def _op_add_item(
     turn.changed = True
     _flavors_into(deps, item, op, turn)
     if _is_complete(deps, item):
-        turn.say(r.item_added(item))
+        turn.say(r.item_adicionado(item))
 
     if turn.sabores_removidos:
         # Troca de tamanho ("na verdade quero o pequeno") costuma chegar como
@@ -668,7 +668,7 @@ def _op_add_item(
             ficaram = {normalize(c.name) for c in item.complements}
             perdidos = [n for n in turn.sabores_removidos if normalize(n) not in ficaram]
             if perdidos:
-                turn.say(r.flavors_dropped_on_resize(perdidos))
+                turn.say(r.sabores_perdidos_na_troca(perdidos))
         turn.sabores_removidos = []
 
 
@@ -701,7 +701,7 @@ def _op_update_item(
                 # "na verdade quero o médio" sem nada no pedido: é um item novo.
                 _op_add_item(deps, session, op, turn, mensagem)
                 return
-            turn.say(r.ask_which_item(session.cart))
+            turn.say(r.perguntar_qual_item(session.cart))
             turn.answered = True
             return
         antigo = session.cart.items[index]
@@ -713,7 +713,7 @@ def _op_update_item(
 
     index = _target(deps, session, op)
     if index is None:
-        turn.say(r.ask_which_item(session.cart))
+        turn.say(r.perguntar_qual_item(session.cart))
         turn.answered = True
         return
 
@@ -721,7 +721,7 @@ def _op_update_item(
     estava_completo = _is_complete(deps, item)
     _flavors_into(deps, item, op, turn)
     if turn.changed and estava_completo and _is_complete(deps, item):
-        turn.say(r.item_updated(item))
+        turn.say(r.item_alterado(item))
 
 
 def _replace_product(
@@ -750,8 +750,8 @@ def _replace_product(
             # O tamanho novo cabe menos sabores que o antigo tinha — dizer
             # qual sumiu é o que falta pro cliente não descobrir sozinho lendo
             # o resumo com atenção.
-            turn.say(r.flavors_dropped_on_resize(perdidos))
-    turn.say(r.product_switched(antigo.product_name, product.name))
+            turn.say(r.sabores_perdidos_na_troca(perdidos))
+    turn.say(r.produto_trocado(antigo.product_name, product.name))
     turn.changed = True
 
 
@@ -759,7 +759,7 @@ def _op_remove_item(
     deps: AgentDeps, session: ConversationSession, op: Operation, turn: Turn
 ) -> None:
     if session.cart.is_empty:
-        turn.say(r.cart_empty())
+        turn.say(r.pedido_vazio())
         turn.answered = True
         return
 
@@ -789,7 +789,7 @@ def _op_remove_item(
         return  # sabor que não está em lugar nenhum: não se apaga o item por isso
 
     if index is None:
-        turn.say(r.ask_which_item(session.cart))
+        turn.say(r.perguntar_qual_item(session.cart))
         turn.answered = True
         return
 
@@ -801,12 +801,12 @@ def _op_remove_item(
     # tamanho do estrago.
     if op.quantity and 0 < op.quantity < item.quantity:
         item.quantity -= op.quantity
-        turn.say(r.quantity_updated(item))
+        turn.say(r.quantidade_alterada(item))
         turn.changed = True
         return
 
     removido = session.cart.items.pop(index)
-    turn.say(r.item_removed(removido.product_name))
+    turn.say(r.item_removido(removido.product_name))
     turn.changed = True
     turn.sabores_removidos = [c.name for c in removido.complements]
 
@@ -829,13 +829,13 @@ def _op_quantity(
         if op.product_name and deps.catalog.product_by_name(op.product_name):
             _op_add_item(deps, session, op, turn, mensagem)
             return
-        turn.say(r.ask_which_item(session.cart))
+        turn.say(r.perguntar_qual_item(session.cart))
         turn.answered = True
         return
 
     item = session.cart.items[index]
     item.quantity = max(1, op.quantity)
-    turn.say(r.quantity_updated(item))
+    turn.say(r.quantidade_alterada(item))
     turn.changed = True
 
 
@@ -858,7 +858,7 @@ def _op_duplicate(
             return
 
     if session.cart.is_empty:
-        turn.say(r.cart_empty())
+        turn.say(r.pedido_vazio())
         turn.answered = True
         return
 
@@ -868,7 +868,7 @@ def _op_duplicate(
     copia = session.cart.items[index].model_copy(deep=True)
     copia.quantity = op.quantity or 1
     session.cart.items.append(copia)
-    turn.say(r.item_added(copia))
+    turn.say(r.item_adicionado(copia))
     turn.changed = True
 
 
@@ -878,7 +878,7 @@ def _op_duplicate(
 
 def menu(deps: AgentDeps, session: ConversationSession) -> str:
     session.slots[LAST_OFFER] = [p.name for p in deps.catalog.available_products]
-    return r.menu(deps.catalog)
+    return r.cardapio(deps.catalog)
 
 
 async def pending_order_status(deps: AgentDeps, session: ConversationSession) -> str:
@@ -890,22 +890,22 @@ async def pending_order_status(deps: AgentDeps, session: ConversationSession) ->
     sumido. O pedido não sumiu: só saiu do carrinho para `active_order_id`.
     """
     if session.active_order_id is None:
-        return r.cart_empty()
+        return r.pedido_vazio()
     try:
         summary = await deps.order_summary(deps.db, session.active_order_id)
     except Exception:
         logger.exception("falha ao buscar o pedido %s para responder o cliente", session.active_order_id)
         summary = None
     if summary is None:
-        return r.order_awaiting_payment()
-    return r.pending_order_status(summary)
+        return r.pedido_aguardando_pagamento()
+    return r.situacao_do_pedido(summary)
 
 
 def _total_reply(deps: AgentDeps, session: ConversationSession) -> str:
     if session.cart.is_empty:
-        return r.cart_empty()
+        return r.pedido_vazio()
     kind = fulfillment_of(session)
-    return r.total_reply(
+    return r.resposta_do_total(
         session.cart,
         deps.settings.delivery_fee,
         is_pickup=None if kind is None else kind is FulfillmentType.RETIRADA,
@@ -950,7 +950,7 @@ def to_human(session: ConversationSession) -> list[str]:
     _go(session, S.ATENDIMENTO_HUMANO)
     session.handoff = True
     session.touch_handoff()
-    return [r.handoff()]
+    return [r.chamou_atendente()]
 
 
 def human_on_the_line(session: ConversationSession) -> bool:
@@ -988,5 +988,5 @@ def cancel(session: ConversationSession) -> list[str]:
     session.cart.items.clear()
     session.active_order_id = None
     session.fail_count = 0
-    return [r.cancelled()]
+    return [r.pedido_cancelado()]
 

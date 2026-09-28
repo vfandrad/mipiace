@@ -25,7 +25,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from app.agent import renderer as r
+from app import textos as r
 from app.dominio import Cart, CatalogSnapshot, normalize
 
 #: Palavras que identificam o assunto sem margem para dúvida. É o contrário de
@@ -71,7 +71,7 @@ def answer(
     if assunto == "taxa_entrega":
         taxa: Decimal = settings.delivery_fee
         return (
-            f"A taxa de entrega é *{r.money(taxa)}*, fixa para toda a região que "
+            f"A taxa de entrega é *{r.em_reais(taxa)}*, fixa para toda a região que "
             "atendemos.\nSe preferir retirar na loja, não tem taxa. 🛵🏠"
         )
 
@@ -163,13 +163,13 @@ def _precos(catalog: CatalogSnapshot, texto: str) -> str:
     # responde só ele; senão manda a tabela inteira, que é curta.
     if any(p in texto for p in ("maior", "grande", "mais caro")):
         alvo = max(produtos, key=lambda p: p.base_price)
-        return f"O *{alvo.name}* sai {r.money(alvo.base_price)}. 😊"
+        return f"O *{alvo.name}* sai {r.em_reais(alvo.base_price)}. 😊"
     if any(p in texto for p in ("menor", "pequeno", "mais barato")):
         alvo = min(produtos, key=lambda p: p.base_price)
-        return f"O *{alvo.name}* sai {r.money(alvo.base_price)}. 😊"
+        return f"O *{alvo.name}* sai {r.em_reais(alvo.base_price)}. 😊"
 
     linhas = ["Os preços de hoje:"]
-    linhas += [f"• *{p.name}* — {r.money(p.base_price)}" for p in produtos]
+    linhas += [f"• *{p.name}* — {r.em_reais(p.base_price)}" for p in produtos]
     return "\n".join(linhas)
 
 
