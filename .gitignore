@@ -32,3 +32,6 @@ Thumbs.db
 
 # Ferramentas locais
 .claude/
+
+# Transcricoes de conversas de teste (anotacoes locais)
+conversa-*.txt
