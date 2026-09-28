@@ -1314,3 +1314,70 @@ async def test_tirar_sem_dizer_quantos_apaga_a_linha() -> None:
         "tira a casquinha",
     )
     assert session.cart.is_empty
+
+
+# ---------------------------------------------------------------------------
+# A regra estrutural: ação destrutiva exige a fala do cliente
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_ancoragem_das_acoes_destrutivas() -> None:
+    """Nenhuma ação que destrói pedido ou cobra age só porque o modelo mandou.
+
+    Este teste existe por causa do jeito como os defeitos apareceram: uma
+    trava por bug, sempre DEPOIS de um cliente real ser prejudicado —
+    endereço inventado, entrega marcada sozinha, confirmação morna virando
+    Pix, "deixa pra lá" apagando o carrinho. A regra existia na cabeça de
+    quem escreveu, não no código.
+
+    Aqui cada ação de `_EXIGEM_FALA_DO_CLIENTE` recebe uma mensagem que não
+    pede nada daquilo. Se alguma delas mexer no pedido mesmo assim, este
+    teste quebra — inclusive para uma ação destrutiva que venha a ser criada
+    depois e entre na lista sem trava.
+    """
+    from app.agente import _EXIGEM_FALA_DO_CLIENTE
+
+    inocente = "bom dia, tudo bem?"
+    argumentos = {
+        Action.SET_FULFILLMENT: {"fulfillment": "entrega"},
+        Action.UPDATE_ADDRESS: {
+            "address": Address(rua="Rua Inventada", numero="9", bairro="Centro")
+        },
+    }
+
+    for acao in sorted(_EXIGEM_FALA_DO_CLIENTE, key=lambda a: a.value):
+        deps, session = build_deps(), build_session()
+        await montar_pote(deps, session)
+
+        await run(deps, session, plano(op(acao, **argumentos.get(acao, {}))), inocente)
+
+        assert len(session.cart.items) == 1, f"{acao.value} mexeu no carrinho"
+        assert session.state is not S.CANCELADO, f"{acao.value} cancelou o pedido"
+        assert session.state is not S.AGUARDANDO_PAGAMENTO, f"{acao.value} cobrou"
+        assert session.active_order_id is None, f"{acao.value} criou pedido"
+        assert not session.slots.get("fulfillment"), f"{acao.value} escolheu a entrega"
+        assert not session.slots.get("address"), f"{acao.value} inventou endereço"
+
+
+@pytest.mark.asyncio
+async def test_a_mesma_acao_funciona_quando_o_cliente_pede() -> None:
+    """O contrapeso: com a fala certa, cada uma das travas deixa passar."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(deps, session, plano(op(Action.REMOVE_ITEM)), "tira esse pote")
+    assert session.cart.is_empty, "remover deixou de funcionar"
+
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(deps, session, plano(op(Action.CANCEL_ORDER)), "cancela meu pedido")
+    assert session.state is S.CANCELADO, "cancelar deixou de funcionar"
+
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada")),
+        "vou retirar na loja",
+    )
+    assert session.slots.get("fulfillment") == "retirada", "retirada deixou de funcionar"

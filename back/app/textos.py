@@ -148,6 +148,18 @@ def cardapio(catalog: CatalogSnapshot) -> str:
     return "\n".join(linhas)
 
 
+def lista_de_sabores(flavors: Sequence[Any], titulo: str = "Sabores de hoje") -> str:
+    """Só os sabores, sem o cardápio inteiro em volta.
+
+    Para quem perguntou "quais sabores vocês têm?" ou "tem alguma coisa sem
+    lactose?" — perguntas que o bot respondia com "não sei", apesar de a
+    resposta estar no catálogo que ele imprime duas mensagens depois.
+    """
+    if not flavors:
+        return "Hoje estamos sem sabores disponíveis. 😔"
+    return "\n".join(_bloco_de_sabores(flavors, titulo))
+
+
 # ---------------------------------------------------------------------------
 # Escolha do item
 # ---------------------------------------------------------------------------
@@ -602,3 +614,13 @@ def voltou_do_atendente() -> str:
 
 def pedido_cancelado() -> str:
     return "Tudo bem, cancelei o pedido. 🙂 Quando quiser é só chamar!"
+
+
+def confirmar_cancelamento() -> str:
+    """Quando a IA entendeu "cancelar" e a frase do cliente não disse isso.
+
+    Apagar o pedido por um palpite é o estrago mais caro do sistema: em
+    conversa real, "deixa pra lá, continua vc mesmo" — que dispensava o
+    atendente — zerou o carrinho. Perguntar custa uma mensagem.
+    """
+    return "Só confirmando: você quer cancelar o pedido? 🙂"

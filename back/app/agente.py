@@ -283,7 +283,7 @@ SIMILARITY_TOLERANCE = 0.06
 #: Palavras que não ajudam a identificar item nenhum no cardápio.
 _STOPWORDS = frozenset(
     {
-        "quero", "queria", "gostaria", "de", "do", "da", "dos", "das", "um",
+        "quero", "queria", "querer", "gostaria", "de", "do", "da", "dos", "das", "um",
         "uma", "uns", "umas", "o", "a", "os", "as", "por", "favor", "pfv",
         "me", "ve", "ver", "manda", "pode", "ser", "e", "com", "sabor",
         "sabores", "ai", "pra", "para", "vou", "levar", "no",
@@ -293,6 +293,11 @@ _STOPWORDS = frozenset(
         "dois", "duas", "tres", "quatro", "cinco", "meia", "meio",
         # "tem acai?" -> a consulta é "acai"; o resto é a pergunta.
         "tem", "temos", "voces", "vcs", "tinha",
+        # Verbos de pedido. Sem eles, "poe tambem um G de morango..." chegava
+        # ao resolvedor como "poe tambem g" e não casava com nada, enquanto
+        # "vou querer um M..." casava — a diferença era só o ruído em volta.
+        "poe", "põe", "bota", "coloca", "colocar", "adiciona", "acrescenta",
+        "tambem", "também", "traz", "trazer", "quer",
     }
 )
 
@@ -337,9 +342,26 @@ class ComplementMatch:
 # Núcleo do casamento (independente de ser produto ou complemento)
 # ---------------------------------------------------------------------------
 
+#: Litro e mililitro são a mesma medida escrita de dois jeitos, e o cliente
+#: usa a que quiser: "o de um litro" para um produto chamado "GG - 1000ml".
+#: A troca é conversão de unidade, não conhecimento da loja — se a casa não
+#: nomear os tamanhos em ml, o termo simplesmente não casa com nada, como já
+#: acontecia antes.
+_MEDIDAS = (
+    ("meio litro", "500ml"),
+    ("1 litro", "1000ml"),
+    ("um litro", "1000ml"),
+    ("2 litros", "2000ml"),
+    ("dois litros", "2000ml"),
+    ("litro", "1000ml"),
+)
+
+
 def _clean(query: str) -> str:
     """Normaliza e remove ruído de pedido ("quero um...") do texto."""
     norm = normalize(query)
+    for escrito, medida in _MEDIDAS:
+        norm = norm.replace(escrito, medida)
     tokens = [t for t in norm.replace("/", " ").split() if t]
     kept = [t for t in tokens if t not in _STOPWORDS]
     return " ".join(kept) if kept else norm
@@ -501,6 +523,20 @@ _PISTAS = {
     "horario": ("horario", "que horas", "abre", "fecha", "aberto", "funciona ate"),
     "endereco_loja": ("onde fica", "endereco da loja", "endereco de voces", "fica onde"),
     "area_entrega": ("entregam em", "entrega em", "atendem o", "chega no bairro"),
+    # Preço e sabores estavam faltando, e eram as duas perguntas mais comuns:
+    # em conversa real "quanto tá o gelato aí?" e "vocês têm algum sabor sem
+    # lactose?" foram respondidas com "não sei" — com o catálogo na mão.
+    "preco": (
+        "quanto custa", "quanto ta", "quanto sai", "qual o preco", "qual o valor",
+        "precos", "tabela de preco", "quais tamanhos", "que tamanhos",
+        "quais os tamanhos", "tamanhos tem", "quais os potes", "que potes",
+        "tamanhos de pote",
+    ),
+    "sabores": (
+        "quais sabores", "que sabores", "quais os sabores", "sabores tem",
+        "sabores de hoje", "lista de sabores", "sem lactose", "com lactose",
+        "tem sabor", "quais opcoes de sabor", "intoleran", "alergi",
+    ),
 }
 
 
@@ -537,6 +573,9 @@ def answer(
 
     if assunto == "preco":
         return _precos(catalog, texto)
+
+    if assunto == "sabores":
+        return _sabores(catalog, texto)
 
     if assunto in {"restricao", "disponibilidade"} and _parece_produto_ou_sabor(
         raw_text or question
@@ -611,6 +650,46 @@ def _nao_sei(topic: str) -> str:
         f"{assunto.capitalize()} eu não tenho certeza pra te falar. 🙈\n"
         "Quer que eu chame alguém do time pra confirmar?"
     )
+
+
+def _sabores(catalog: CatalogSnapshot, texto: str) -> str:
+    """Sabores de hoje, do catálogo — filtrando por categoria quando o cliente cita uma.
+
+    "tem algo sem lactose?" devolve só os sem lactose. A categoria vem do
+    cadastro do lojista, não de lista fixa no código: numa outra loja as
+    categorias seriam outras.
+    """
+    vistos: dict[str, Any] = {}
+    for produto in catalog.available_products:
+        for grupo in produto.groups:
+            for complemento in grupo.available_complements:
+                vistos.setdefault(normalize(complemento.name), complemento)
+    todos = list(vistos.values())
+
+    categorias = {
+        normalize(c.category): c.category for c in todos if c.category
+    }
+
+    def da_categoria(chave: str) -> list[Any]:
+        return [c for c in todos if c.category and normalize(c.category) == chave]
+
+    for chave, nome in categorias.items():
+        if chave and chave in texto:
+            return r.lista_de_sabores(da_categoria(chave), f"Sabores {nome.lower()}")
+
+    # "sou intolerante a lactose" quer a categoria "Sem lactose" sem citá-la
+    # pelo nome. Procura uma categoria "sem X" cujo X apareça na frase.
+    restricao = any(m in texto for m in ("intoleran", "alergi", "nao posso", "nao pode"))
+    if restricao:
+        for chave, nome in categorias.items():
+            if chave.startswith("sem ") and chave[4:].strip() and chave[4:].strip() in texto:
+                return r.lista_de_sabores(da_categoria(chave), f"Sabores {nome.lower()}")
+        # Restrição que o catálogo não sabe responder (alergia a castanha, por
+        # exemplo). Devolver a lista inteira aqui soaria como "pode comer
+        # tudo" — e é exatamente o tipo de garantia que o sistema não tem.
+        return _nao_sei("restricao")
+
+    return r.lista_de_sabores(todos)
 
 
 def _precos(catalog: CatalogSnapshot, texto: str) -> str:
@@ -834,7 +913,12 @@ _ACTION_DESCRIPTIONS = {
         "quantity com esse número — sem ele a linha inteira sai"
     ),
     Action.UPDATE_QUANTITY: (
-        '"quero 3 cascões", "coloca mais dois", "na verdade só um"'
+        '"quero 3 cascões", "coloca mais dois", "na verdade só um", '
+        '"são 2 potes não 1", "muda a quantidade do item 1 pra 2", '
+        '"quero 2 desses". Qualquer frase que mude QUANTOS de um item que JÁ '
+        "está no pedido, mesmo corrigindo o bot. Ponha o total desejado em "
+        "`quantity` (2, e não +1) e o número do item em `item_index` quando "
+        "ele disser qual"
     ),
     Action.DUPLICATE_ITEM: (
         '"quero outro igual", "mais um desses" — SÓ quando é uma cópia do '
@@ -956,6 +1040,20 @@ def tool_schema() -> dict[str, Any]:
                             },
                             "address": {
                                 "type": ["object", "null"],
+                                "description": (
+                                    "Endereço da entrega, quebrado em campos. O "
+                                    "cliente escreve de QUALQUER jeito e quase "
+                                    "nunca com vírgula — preencha assim mesmo. "
+                                    "\"rua das laranjeiras 45 bairro santa rita\" "
+                                    "é rua=\"Rua das Laranjeiras\", numero=\"45\", "
+                                    "bairro=\"Santa Rita\". \"av brasil 1200 apto "
+                                    "91 bloco B centro\" é rua=\"Av Brasil\", "
+                                    "numero=\"1200\", complemento=\"apto 91 bloco "
+                                    "B\", bairro=\"Centro\". Apartamento, bloco, "
+                                    "casa e fundos vão em complemento, nunca "
+                                    "grudados na rua. Só preencha o que o cliente "
+                                    "escreveu; o resto fica null."
+                                ),
                                 "properties": {
                                     "rua": {"type": ["string", "null"]},
                                     "numero": {"type": ["string", "null"]},
@@ -2869,7 +2967,29 @@ def _group_of(deps: AgentDeps, item: CartItem) -> CatalogGroup | None:
 # Resolução de nomes (a IA propõe, o catálogo decide)
 # ---------------------------------------------------------------------------
 
-def _find_product(deps: AgentDeps, op: Operation) -> tuple[CatalogProduct | None, str | None]:
+def _sem_sabores(catalog: CatalogSnapshot, texto: str) -> str:
+    """Tira os nomes de sabor da frase, para sobrar só o que fala do produto.
+
+    "quero um G com pistache chocolate e brownie" chegava ao resolvedor como
+    "g pistache chocolate brownie" e não casava com nada — o cliente pedia do
+    jeito mais natural possível e ouvia "não peguei essa". Sem os sabores,
+    sobra "g", que o resolvedor acerta.
+    """
+    limpo = normalize(texto)
+    nomes = {
+        normalize(c.name)
+        for p in catalog.products
+        for g in p.groups
+        for c in g.complements
+    }
+    for nome in sorted(nomes, key=len, reverse=True):
+        limpo = limpo.replace(nome, " ")
+    return " ".join(limpo.split())
+
+
+def _find_product(
+    deps: AgentDeps, op: Operation, mensagem: str = ""
+) -> tuple[CatalogProduct | None, str | None]:
     """Produto da operação, ou o motivo de não ter dado.
 
     Devolve `(produto, problema)`. O nome vem da IA, mas quem diz se existe,
@@ -2885,9 +3005,16 @@ def _find_product(deps: AgentDeps, op: Operation) -> tuple[CatalogProduct | None
 
     texto = (op.raw_text or op.product_name or "").strip()
     if not texto:
+        # O modelo não nomeou produto nenhum: a frase do cliente é o que resta.
+        # Só vale se o catálogo reconhecer com certeza (ver abaixo) — senão o
+        # comportamento é o de antes, e não uma resposta pior.
+        if mensagem:
+            tentativa = resolve_product(_sem_sabores(deps.catalog, mensagem), deps.catalog)
+            if tentativa.ok:
+                return tentativa.product, None
         return None, None
 
-    match = resolve_product(texto, deps.catalog)
+    match = resolve_product(_sem_sabores(deps.catalog, texto), deps.catalog)
     if match.ok:
         return match.product, None
     if match.status is MatchStatus.AMBIGUOUS:
@@ -3041,6 +3168,68 @@ def _flavors_into(
         turn.answered = True
 
 
+#: ---------------------------------------------------------------------------
+#: A FALA DO CLIENTE MANDA
+#: ---------------------------------------------------------------------------
+#: As ações abaixo destroem pedido ou cobram, e nenhuma delas tem catálogo que
+#: possa contradizer o modelo — se ele erra a classificação, o estrago é real e
+#: o cliente só descobre depois. Por isso cada uma exige um sinal na FALA do
+#: cliente, e não só no plano que a IA devolveu.
+#:
+#: A regra nasceu remendo a remendo, uma trava por bug encontrado em produção
+#: (endereço inventado, entrega marcada sozinha, confirmação morna virando Pix,
+#: "deixa pra lá" apagando o pedido). `test_ancoragem_das_acoes_destrutivas`
+#: existe para que a próxima ação destrutiva não repita o ciclo: se ela entrar
+#: em `_EXIGEM_FALA_DO_CLIENTE` sem trava, o teste quebra.
+_EXIGEM_FALA_DO_CLIENTE = frozenset(
+    {
+        Action.CANCEL_ORDER,
+        Action.REMOVE_ITEM,
+        Action.CLOSE_ORDER,
+        Action.CONFIRM_ORDER,
+        Action.SET_FULFILLMENT,
+        Action.UPDATE_ADDRESS,
+    }
+)
+
+#: Cancelamento sem margem para outra leitura.
+_CANCELAMENTO_CLARO = (
+    "cancel", "desist", "anul", "nao quero mais", "nao vou querer",
+    "esquece o pedido", "deixa o pedido", "nao precisa mais",
+)
+
+#: Tudo o que conta como desistir. Inclui as formas ambíguas ("deixa pra lá"),
+#: que no meio de um pedido são desistência de verdade — mas que em
+#: atendimento humano costumam ser sobre o ATENDENTE, não sobre a compra. Por
+#: isso o handoff usa `_cancelamento_claro`, mais estrito, e a conversa normal
+#: usa esta lista.
+_SINAIS_CANCELAR = _CANCELAMENTO_CLARO + (
+    "deixa pra la", "deixa pra lá", "deixa quieto", "deixa pra proxima",
+    "melhor nao", "esquece",
+)
+
+#: O que o cliente escreve quando quer tirar alguma coisa do pedido.
+_SINAIS_REMOVER = (
+    "tira", "tirar", "remove", "remover", "retira", "apaga", "exclui",
+    "nao quero", "sem o ", "sem a ", "troca", "trocar", "substitui", "cancela o",
+)
+
+
+def _cancelamento_dito(text: str) -> bool:
+    limpo = normalize(text)
+    return any(sinal in limpo for sinal in _SINAIS_CANCELAR)
+
+
+def _cancelamento_claro(text: str) -> bool:
+    limpo = normalize(text)
+    return any(sinal in limpo for sinal in _CANCELAMENTO_CLARO)
+
+
+def _remocao_dita(text: str) -> bool:
+    limpo = normalize(text)
+    return any(sinal in limpo for sinal in _SINAIS_REMOVER)
+
+
 # ---------------------------------------------------------------------------
 # As operações
 # ---------------------------------------------------------------------------
@@ -3119,7 +3308,15 @@ async def apply(
         session.slots[CLOSING] = True
 
     elif action is Action.CANCEL_ORDER:
-        turn.finished = cancel(session)
+        if mensagem and not _cancelamento_dito(mensagem):
+            # O modelo classificou como cancelamento algo que não tem uma
+            # palavra de cancelamento na frase. Apagar o pedido por um palpite
+            # é o estrago mais caro do sistema — pergunta, não executa.
+            logger.info("cancel_order descartado, sem sinal em %r", mensagem)
+            turn.say(r.confirmar_cancelamento())
+            turn.answered = True
+        else:
+            turn.finished = cancel(session)
 
     elif action is Action.REQUEST_HUMAN:
         turn.finished = to_human(session)
@@ -3225,6 +3422,7 @@ def _merge_address(
     if address is None:
         return
     endereco = address_of(session)
+    salvou = False
     for campo, valor in address.model_dump().items():
         if not valor:
             continue
@@ -3236,6 +3434,14 @@ def _merge_address(
             )
             continue
         endereco[campo] = valor
+        salvou = True
+
+    if not salvou:
+        # Todo campo caiu na checagem: o modelo inventou o endereço inteiro.
+        # Marcar "entrega" aqui grudava a taxa de R$ 5 num pedido em que o
+        # cliente não falou nem de endereço nem de entrega.
+        return
+
     session.slots["address"] = endereco
     ja_era_entrega = fulfillment_of(session) is FulfillmentType.ENTREGA
     set_fulfillment(session, FulfillmentType.ENTREGA)
@@ -3283,7 +3489,7 @@ def _op_add_item(
     Quem quer mesmo um segundo pote igual diz "outro igual" (duplicate_item)
     ou dá a quantidade — e o pote só vira "de verdade" depois de fechado.
     """
-    product, problema = _find_product(deps, op)
+    product, problema = _find_product(deps, op, mensagem)
     pendente = _pending(deps, session)
 
     if product is None:
@@ -3358,7 +3564,7 @@ def _op_update_item(
         op.product_name and not op.add_flavors and not op.remove_flavors
     )
     if quer_trocar_produto:
-        product, problema = _find_product(deps, op)
+        product, problema = _find_product(deps, op, mensagem)
         if product is None:
             if problema:
                 turn.say(problema)
@@ -3466,6 +3672,15 @@ def _op_remove_item(
         turn.answered = True
         return
 
+    # Sem alvo nomeado pelo modelo E sem palavra de remoção na frase, isto não
+    # é um pedido para apagar nada: "bom dia" com um remove_item do modelo
+    # esvaziava o carrinho. Com `item_index` ou `product_name` o modelo
+    # apontou para algo concreto, e aí a remoção segue normalmente.
+    sem_alvo = op.item_index is None and not op.product_name and not op.remove_flavors
+    if sem_alvo and mensagem and not _remocao_dita(mensagem):
+        logger.info("remove_item descartado, sem sinal em %r", mensagem)
+        return
+
     index = _target(deps, session, op)
 
     # "tira o pistache" é tirar o sabor, não o item.
@@ -3484,9 +3699,13 @@ def _op_remove_item(
             for c in item.complements
         )
         if group is not None and (tem_o_sabor or so_fala_de_sabor):
-            _apply_flavors(
-                item, group, add=[], remove_names=op.remove_flavors, turn=turn
-            )
+            # "tira o brownie e poe coco no lugar" é UMA troca. O `add=[]`
+            # fixo daqui jogava fora o sabor novo: o antigo saía, o substituto
+            # nunca entrava, e o cliente ficava com o pote faltando sabor sem
+            # ninguém avisar. Os sabores passam pelo mesmo caminho do resto
+            # (`_flavors_into`), que confere contra o catálogo e ainda recupera
+            # o que o modelo tenha deixado cair da lista.
+            _flavors_into(deps, item, op, turn, mensagem)
             return
     if so_fala_de_sabor:
         return  # sabor que não está em lugar nenhum: não se apaga o item por isso
@@ -3742,18 +3961,6 @@ _VOLTAR_PRO_BOT = (
 )
 
 
-#: O que o cliente escreve quando quer mesmo desistir do pedido. Sem uma
-#: destas, "deixa pra lá" é sobre o atendente, não sobre a compra.
-_SINAIS_CANCELAR = (
-    "cancel", "desist", "nao quero mais", "esquece o pedido", "deixa o pedido",
-)
-
-
-def _cancelamento_dito(text: str) -> bool:
-    limpo = normalize(text)
-    return any(sinal in limpo for sinal in _SINAIS_CANCELAR)
-
-
 def _quer_o_bot_de_volta(text: str) -> bool:
     limpo = normalize(text)
     return any(termo in limpo for termo in _VOLTAR_PRO_BOT)
@@ -3780,7 +3987,7 @@ def _handoff_turn(
     # novo "cancelei o pedido". Quem pede o bot de volta sem dizer "cancela"
     # não está cancelando.
     cancelou_mesmo = plan.has(Action.CANCEL_ORDER) and (
-        _cancelamento_dito(text) or not _quer_o_bot_de_volta(text)
+        _cancelamento_claro(text) or not _quer_o_bot_de_volta(text)
     )
     if cancelou_mesmo:
         return cancel(session)
@@ -3822,7 +4029,7 @@ def _handoff_turn(
             # que dispensa o atendente ("deixa pra lá") faz o modelo achar que
             # o cliente desistiu do pedido.
             descartar = {Action.REQUEST_HUMAN}
-            if not _cancelamento_dito(text):
+            if not _cancelamento_claro(text):
                 descartar.add(Action.CANCEL_ORDER)
             plan.operations = [
                 op for op in plan.operations if op.action not in descartar
@@ -3994,6 +4201,122 @@ def describe_situation(deps: AgentDeps, session: ConversationSession) -> str:
 # O turno
 # ---------------------------------------------------------------------------
 
+#: "apto 91", "bloco B", "casa 2", "fundos" — o que não é rua nem bairro.
+_RE_COMPLEMENTO = re.compile(
+    r"\b((?:apto?|apartamento|ap|bloco|bl|casa|cs|fundos|qd|quadra|lote)"
+    r"\b[\s.\-º°]*\w*)",
+    re.IGNORECASE,
+)
+_RE_NUMERO = re.compile(r"\b(\d{1,6})\b")
+
+#: Sem uma destas a frase não é endereço. É o que impede "quero 2 potes" de
+#: virar rua="quero", numero="2", bairro="potes" quando o bot está esperando
+#: o endereço e o modelo devolve um plano vazio.
+_RE_LOGRADOURO = re.compile(
+    r"\b(rua|r\.|av|av\.|avenida|travessa|tv\.|alameda|al\.|estrada|rodovia|"
+    r"rod\.|praca|praça|largo|viela|servidao|servidão|quadra|qd)\b",
+    re.IGNORECASE,
+)
+
+#: Enfeites antes do endereço: "meu endereço é", "já falei,", "anota aí".
+#: Removidos em laço porque vêm empilhados ("meu endereco eh av brasil...").
+_LIXO_NA_FRENTE = re.compile(
+    r"^(?:meu|endereco|endereço|e|eh|é|ja|já|falei|anota|ai|aí|o|pode|anotar)"
+    r"\b[\s:,.\-]*",
+    re.IGNORECASE,
+)
+
+
+def _endereco_do_texto(mensagem: str) -> Address | None:
+    """Lê o endereço direto da frase, quando o modelo não o enxergou.
+
+    Só é chamado quando o bot ACABOU de pedir o endereço e o plano voltou sem
+    nenhum — aí a mensagem é, quase por definição, a resposta a essa pergunta.
+    Existe porque o modelo só reconhecia o endereço no formato do exemplo que
+    o próprio bot mostra ("Rua das Flores, 123, Centro"): em conversa real,
+    "rua das laranjeiras 45 bairro santa rita" foi recusado três vezes
+    seguidas e o cliente não teve como concluir o pedido.
+
+    Descrever o formato livre no prompt foi tentado e não mudou nada — por
+    isso a leitura aqui é determinística. E conservadora: exige um nome de
+    logradouro E um número, senão desiste e deixa o fluxo normal perguntar de
+    novo. Preencher errado é pior do que perguntar mais uma vez.
+    """
+    texto = mensagem.strip()
+    if not _RE_LOGRADOURO.search(texto):
+        return None
+
+    while True:
+        limpo = _LIXO_NA_FRENTE.sub("", texto).strip(" ,.")
+        if limpo == texto or not limpo:
+            break
+        texto = limpo
+
+    numero = _RE_NUMERO.search(texto)
+    if not numero:
+        return None
+
+    rua = texto[: numero.start()].strip(" ,.-")
+    resto = texto[numero.end():].strip(" ,.-")
+    if not rua:
+        return None
+
+    # "apto 91 bloco B" são dois pedaços; tira todos, não só o primeiro.
+    pedacos = [m.group(1).strip(" ,.-") for m in _RE_COMPLEMENTO.finditer(resto)]
+    complemento = " ".join(pedacos) if pedacos else None
+    resto = _RE_COMPLEMENTO.sub(" ", resto).strip(" ,.-")
+
+    # "bairro santa rita" / "b. centro" — a palavra é dica, não exigência.
+    bairro = re.sub(r"^(?:bairro|b\.)\s*", "", resto, flags=re.IGNORECASE)
+    bairro = bairro.strip(" ,.-")
+    # Sobrou mais de um pedaço separado por vírgula: o bairro é o último.
+    if "," in bairro:
+        bairro = bairro.split(",")[-1].strip(" ,.-")
+
+    return Address(
+        rua=rua or None,
+        numero=numero.group(1),
+        bairro=bairro or None,
+        complemento=complemento or None,
+    )
+
+#: Frases em que o cliente diz QUANTOS de um item já pedido ele quer. São
+#: propositalmente estreitas: errar para mais aqui muda o valor cobrado, então
+#: só entra o que não tem outra leitura. "quero 2 sabores" não casa com
+#: nenhuma delas.
+_RE_QUANTIDADE = (
+    re.compile(r"\bmuda\w*\s+(?:a\s+)?quantidade.*?\b(?:pra|para)\s+(\d{1,2})\b"),
+    re.compile(r"\b(?:sao|são|eh|é|era)\s+(\d{1,2})\s+\w*\s*(?:n[aã]o|e n[aã]o)\b"),
+    re.compile(r"\b(?:quero|queria|coloca|poe|põe|bota)\s+(\d{1,2})\s+dess[ae]s?\b"),
+    re.compile(r"\bna verdade\s+(?:sao|são|quero|queria)\s+(\d{1,2})\b"),
+)
+
+
+def _quantidade_dita(mensagem: str) -> int | None:
+    """Quantos itens o cliente disse que quer, quando o modelo não percebeu.
+
+    O modelo classifica "são 2 potes não 1" como pedido de esclarecimento e
+    "muda a quantidade do item 1 pra 2" como pergunta — em conversa real o
+    cliente tentou as duas formas e o pedido continuou com 1. Descrever isso
+    na lista de ações do prompt foi tentado e não mudou o comportamento.
+    """
+    limpo = normalize(mensagem)
+    for padrao in _RE_QUANTIDADE:
+        achado = padrao.search(limpo)
+        if achado:
+            valor = int(achado.group(1))
+            if 1 <= valor <= 20:
+                return valor
+    return None
+
+
+def _esperando_endereco(session: ConversationSession) -> bool:
+    return (
+        fulfillment_of(session) is FulfillmentType.ENTREGA
+        and bool(missing_address_fields(address_of(session)))
+    )
+
+
 async def run(
     deps: AgentDeps,
     session: ConversationSession,
@@ -4002,6 +4325,25 @@ async def run(
 ) -> list[str]:
     """Aplica o plano da IA e devolve o que o bot vai falar."""
     adopt_legacy_draft(deps, session)
+
+    # O bot pediu o endereço e o modelo não viu endereço nenhum na resposta:
+    # lê da frase antes de responder "não entendi" a quem respondeu direito.
+    if _esperando_endereco(session) and not plan.has(Action.UPDATE_ADDRESS):
+        lido = _endereco_do_texto(text)
+        if lido is not None:
+            plan.operations.append(
+                Operation(action=Action.UPDATE_ADDRESS, address=lido)
+            )
+
+    # Mesma ideia para a quantidade: "são 2 potes não 1" com um item no
+    # carrinho e um plano que não mexe em nada é o cliente corrigindo quantos
+    # ele quer, e o bot respondia "qual tamanho você quer?".
+    if not session.cart.is_empty and not plan.has_any(_EDITAM_OS_ITENS):
+        quantos = _quantidade_dita(text)
+        if quantos is not None:
+            plan.operations.append(
+                Operation(action=Action.UPDATE_QUANTITY, quantity=quantos)
+            )
 
     voltou_do_humano = False
     if session.handoff or session.state is S.ATENDIMENTO_HUMANO:
