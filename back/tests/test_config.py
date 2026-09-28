@@ -1,8 +1,8 @@
 """A configuração e o `.env.example` têm de contar a mesma história.
 
-Antes havia quatro listas de variáveis de ambiente (`back/.env.example`,
-`.env.prod.example`, os dois docker-compose e uma tabela na documentação) e
-nenhuma era superconjunto da outra: os quatro `STORE_*` existiam no exemplo de
+Antes havia várias listas de variáveis de ambiente (`back/.env.example`, um
+exemplo separado para produção, os docker-compose e uma tabela na documentação)
+e nenhuma era superconjunto da outra: os quatro `STORE_*` existiam no exemplo de
 desenvolvimento e faltavam no de produção, então um deploy feito pelo DEPLOY.md
 subia um bot que respondia "não sei" sobre horário e endereço.
 

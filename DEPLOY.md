@@ -17,84 +17,70 @@ aparece depois de `#` é comentário, não precisa digitar.
 | Domínio | registrador | não há HTTPS, e sem HTTPS o Mercado Pago não chama o webhook |
 | Chave da OpenAI | platform.openai.com | o agente não entende nada |
 | Credenciais **de produção** do Mercado Pago | painel do MP | o Pix não cobra de verdade |
-| Um chip dedicado para a loja | operadora | ver a seção 9 antes de usar o número do dono |
+| Um chip dedicado para a loja | operadora | ver a seção 7 antes de usar o número do dono |
 
 4 GB de RAM é o mínimo confortável **com** a Evolution API junto (ela sozinha
 come ~500 MB). Sem WhatsApp no mesmo servidor, 2 GB bastam.
 
 ---
 
-## 1. Preparar o servidor
+## 1. Subir no Easypanel
 
-```bash
-ssh root@SEU_IP
+O Easypanel cuida de Docker, HTTPS e deploy. A Hostinger tem um template de VPS
+com ele já instalado, e ele sabe subir um serviço do tipo **Compose** direto de
+um repositório Git, rodando `docker compose up --build -d` e preenchendo `${VAR}`
+com as variáveis que você digita na interface. É o Traefik dele que emite o
+certificado — você não instala Docker, não configura firewall nem escreve
+arquivo de proxy.
 
-# Docker (script oficial)
-curl -fsSL https://get.docker.com | sh
+Use o **`docker-compose.easypanel.yml`**, não o `docker-compose.yml`. O de
+desenvolvimento tem `container_name`, portas publicadas e `profiles` — as três
+coisas que o Easypanel ou recusa ou ignora silenciosamente (um serviço atrás de
+profile nunca sobe, porque ele não passa `--profile`).
 
-# Um usuário que não seja root para rodar a aplicação
-adduser mipiace
-usermod -aG docker mipiace
+1. **Suba o repositório para o GitHub.** Pode ser privado; o Easypanel conecta
+   pela sua conta do GitHub.
+2. **VPS com o template Ubuntu + Easypanel.** O painel responde em
+   `http://SEU_IP:3000` — crie a conta de admin na primeira visita.
+3. **DNS:** um registro **A** apontando para o IP da VPS, em dois nomes —
+   `mipiace.com.br` (painel) e `api.mipiace.com.br` (backend). Faça agora e
+   espere propagar (`dig +short mipiace.com.br` tem que devolver o IP da VPS),
+   porque o Let's Encrypt confere o DNS no instante em que emite o certificado.
+4. **No Easypanel:** novo projeto → **New Service** → **Compose** → source Git,
+   apontando para o repositório, branch `main`, arquivo
+   `docker-compose.easypanel.yml`.
+5. **Environment:** cole as variáveis de `back/.env.example`, deixando marcado
+   *Create .env file* — é dele que sai a interpolação. Gere os segredos:
 
-# Firewall: só SSH e web. O banco, a API e a Evolution NÃO ficam expostos —
-# o docker-compose.prod.yml prende as portas deles em 127.0.0.1.
-ufw allow OpenSSH
-ufw allow 80
-ufw allow 443
-ufw enable
-```
+   ```bash
+   openssl rand -hex 32    # POSTGRES_PASSWORD
+   openssl rand -hex 32    # ADMIN_API_KEY
+   openssl rand -hex 24    # EVOLUTION_API_KEY
+   openssl rand -hex 24    # EVOLUTION_WEBHOOK_TOKEN
+   ```
 
-> **Atenção com o firewall e o Docker.** O Docker escreve direto no iptables e
-> consegue furar o `ufw` ao publicar uma porta. É por isso que toda porta
-> interna deste projeto é publicada como `127.0.0.1:porta:porta` em produção —
-> confira com `ss -tlnp` depois de subir: só 80, 443 e 22 podem aparecer em
-> `0.0.0.0`.
+6. **Deploy.** A primeira subida constrói as duas imagens e aplica
+   `back/db/schema.sql` e `back/db/seed.sql`: o banco nasce com o cardápio e
+   **nada mais** — sem cliente, sem pedido, sem conversa. Kanban e Dashboard
+   começam zerados de propósito.
+7. **Domains**, dentro do serviço:
 
-### DNS — faça agora, não depois
+   | Serviço interno | Porta | Domínio |
+   |---|---|---|
+   | `frontend` | 8080 | `mipiace.com.br` |
+   | `backend` | 8000 | `api.mipiace.com.br` |
 
-No painel do seu domínio, um registro **A** apontando para o IP da VPS:
+   Marque HTTPS com o certificate resolver padrão.
 
-```
-mipiace.com.br.   A   203.0.113.10
-```
+**Três variáveis que costumam passar batido:**
 
-O Caddy pede o certificado ao Let's Encrypt na primeira subida, e o Let's
-Encrypt confere o DNS naquele instante. Se o domínio ainda não resolver, a
-emissão falha e você fica com o site fora do ar por minutos até ele tentar de
-novo. Espere propagar:
-
-```bash
-dig +short mipiace.com.br    # tem que devolver o IP da VPS
-```
-
----
-
-## 2. Código e configuração
-
-```bash
-su - mipiace
-git clone <URL_DO_REPO> mipiace && cd mipiace
-
-cp .env.prod.example .env.prod
-
-# Gere os segredos (rode cada linha e cole o resultado no .env.prod)
-openssl rand -hex 32    # POSTGRES_PASSWORD
-openssl rand -hex 32    # ADMIN_API_KEY
-openssl rand -hex 24    # EVOLUTION_API_KEY
-openssl rand -hex 24    # EVOLUTION_WEBHOOK_TOKEN
-
-nano .env.prod
-chmod 600 .env.prod
-```
-
-O arquivo `.env.prod.example` explica cada variável. Três que costumam passar
-batido:
-
-- **`EVOLUTION_WEBHOOK_URL`** repete o `EVOLUTION_WEBHOOK_TOKEN` dentro da URL.
-  Se esquecer de colar o token lá, o WhatsApp conecta e o bot fica mudo — as
+- **`EVOLUTION_WEBHOOK_TOKEN`** aparece de novo dentro da URL do webhook. Se
+  esquecer de colar o token lá, o WhatsApp conecta e o bot fica mudo — as
   mensagens chegam na Evolution e são descartadas pelo backend.
-- **`PUBLIC_BASE_URL`** é o endereço `https://` do seu domínio. É dele que sai a
-  `notification_url` do Pix; errado, a cobrança é criada e nunca confirma.
+- **`PUBLIC_BASE_URL`** e **`VITE_API_BASE_URL`** são o endereço `https://` do
+  backend. É de `PUBLIC_BASE_URL` que sai a `notification_url` do Pix; errado, a
+  cobrança é criada e nunca confirma. E as `VITE_*` entram no bundle em tempo de
+  build: mudou, precisa de redeploy — reiniciar não basta.
 - **`MP_ACCESS_TOKEN`** precisa ser o de produção. O de conta de teste também
   começa com `APP_USR-`. Confirme antes de confiar:
 
@@ -104,43 +90,25 @@ curl -s https://api.mercadopago.com/users/me \
 # TESTUSER... = conta de teste, ninguém paga de verdade
 ```
 
----
-
-## 3. Subir
+Confira que subiu:
 
 ```bash
-chmod +x deploy.sh
-PROFILE=whatsapp ./deploy.sh
+curl https://api.mipiace.com.br/health
+# {"status":"ok","version":"1.0.0","fake_mode":false,"environment":"production","database":"ok"}
 ```
 
-O script recusa subir com variável obrigatória em branco ou com
-`FAKE_MODE=true` — as duas formas de pôr no ar um sistema que parece saudável e
-não cobra ninguém. Sem `PROFILE=whatsapp` tudo sobe menos a Evolution API
-(útil para preparar o painel antes de ter o chip).
-
-Na primeira subida o Postgres aplica `back/db/schema.sql` e `back/db/seed.sql`:
-nasce com o cardápio (3 tamanhos, 31 sabores) e **nada mais** — sem cliente,
-sem pedido, sem conversa. Kanban e Dashboard começam zerados de propósito.
-
-Confira:
-
-```bash
-curl https://SEU_DOMINIO/health
-# {"status":"ok","version":"1.0.0","fake_mode":false,"environment":"production"}
-```
-
-`fake_mode:false` e `environment:production` são o que importa aqui.
+`fake_mode:false`, `environment:production` e `database:ok` são o que importa.
 
 ---
 
-## 4. Parear o WhatsApp
+## 2. Parear o WhatsApp
 
 A Evolution API não tem porta pública (de propósito: o manager dela é acesso
 total ao WhatsApp da loja). Abra um túnel SSH da sua máquina:
 
 ```bash
 # na SUA máquina, não na VPS — deixe rodando
-ssh -L 8081:localhost:8081 mipiace@SEU_IP
+ssh -L 8081:localhost:8081 root@SEU_IP
 ```
 
 Agora `http://localhost:8081` no seu navegador é a Evolution da VPS.
@@ -151,7 +119,7 @@ Criada pelo manager, a instância nasce **sem webhook**: o QR pareia, o WhatsApp
 conecta e o bot não responde nada. Pela API já sai configurada. Na VPS:
 
 ```bash
-source .env.prod
+source /etc/easypanel/projects/mi-piace/mi-piace/code/.env
 curl -X POST http://localhost:8081/instance/create \
   -H "apikey: $EVOLUTION_API_KEY" -H "Content-Type: application/json" \
   -d "{\"instanceName\":\"$EVOLUTION_INSTANCE\",
@@ -166,11 +134,11 @@ curl -X POST http://localhost:8081/instance/create \
                     \"events\":[\"MESSAGES_UPSERT\"]}}"
 ```
 
-O nome da instância tem que ser exatamente o `EVOLUTION_INSTANCE` do
-`.env.prod` — é por ele que o backend envia as respostas.
+O nome da instância tem que ser exatamente o `EVOLUTION_INSTANCE` do `.env`
+do projeto — é por ele que o backend envia as respostas.
 
 Os quatro ajustes (`groupsIgnore`, `readMessages`, `alwaysOnline=false`,
-`syncFullHistory=false`) não são enfeite: estão explicados na seção 9.
+`syncFullHistory=false`) não são enfeite: estão explicados na seção 7.
 
 ### Escaneie o QR
 
@@ -203,7 +171,7 @@ dado nenhum do negócio, só obriga a parear de novo.
 
 ---
 
-## 5. Ligar o Mercado Pago
+## 3. Ligar o Mercado Pago
 
 No painel do MP → **Suas integrações** → sua aplicação → **Webhooks**, cadastre
 em modo produção:
@@ -214,11 +182,13 @@ https://SEU_DOMINIO/webhooks/mercadopago
 
 Marque o evento **Pagamentos**. O MP faz um `GET` de teste ao salvar; a rota
 responde 200. Copie a **Assinatura secreta** que ele mostra para
-`MP_WEBHOOK_SECRET` no `.env.prod` e reinicie o backend:
+`MP_WEBHOOK_SECRET` no `.env` do projeto e recrie o backend:
 
 ```bash
-docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml \
-  up -d backend
+cd /etc/easypanel/projects/mi-piace/mi-piace/code
+docker compose -p mi-piace_mi-piace \
+  -f docker-compose.easypanel.yml -f docker-compose.override.yml \
+  --env-file .env up -d --no-deps backend
 ```
 
 Sem a assinatura o sistema ainda funciona — o webhook nunca acredita no corpo
@@ -227,7 +197,7 @@ mas qualquer um poderia disparar consultas na sua conta. Configure.
 
 ---
 
-## 6. Conferir que está tudo de pé
+## 4. Conferir que está tudo de pé
 
 ```bash
 # só 22, 80 e 443 podem estar em 0.0.0.0
@@ -244,18 +214,23 @@ o cardápio, **Produção** e **Dashboard** aparecem zerados.
 
 O teste que vale por todos: mande "oi" do seu celular para o número da loja.
 Deve chegar resposta do agente em alguns segundos (ele demora de propósito, ver
-seção 9), a conversa aparecer em **Conversas** no painel, e:
+seção 7), a conversa aparecer em **Conversas** no painel, e:
 
 ```bash
-docker compose --env-file .env.prod logs -f backend | grep webhooks/evolution
+docker logs -f mi-piace_mi-piace-backend-1 | grep webhooks/evolution
 ```
 
 ---
 
-## 7. Banco de dados
+## 5. Banco de dados
 
-O Supabase Studio não é publicado. Para usar, mesmo túnel SSH da seção 4
-(`ssh -L 54323:localhost:54323 mipiace@SEU_IP`) e abra `http://localhost:54323`.
+A stack do Easypanel não sobe o Supabase Studio de propósito: administrador de
+banco sem senha própria não vale o risco num servidor público. Para olhar o
+banco, use o terminal do Easypanel ou o SSH:
+
+```bash
+docker exec -it mi-piace_mi-piace-db-1 psql -U postgres
+```
 
 **Backup.** O que não pode ser perdido é o volume `pgdata`. Use o
 `backup_db.sh` do repositório — ele já resolve o detalhe de que a imagem
@@ -287,23 +262,27 @@ gunzip -c /root/backups/mipiace-db-AAAA-MM-DD_HHMMSS.sql.gz \
 
 ---
 
-## 8. Dia a dia
+## 6. Dia a dia
 
 ```bash
-docker compose --env-file .env.prod logs -f backend   # acompanhar o agente
-docker compose --env-file .env.prod ps                # o que está de pé
-docker stats                                          # CPU e memória
+docker logs -f mi-piace_mi-piace-backend-1   # acompanhar o agente
+docker ps                                    # o que está de pé
+docker stats                                 # CPU e memória
 ```
 
-**Atualizar o código:**
+**Atualizar o código.** O Easypanel deste projeto não redeploya sozinho a partir
+do GitHub, então é na mão — o passo a passo completo (quando usar `--build`, como
+conferir) está no [CLAUDE.md](CLAUDE.md):
 
 ```bash
-cd ~/mipiace
+cd /etc/easypanel/projects/mi-piace/mi-piace/code
 git pull origin main
-PROFILE=whatsapp ./deploy.sh
+docker compose -p mi-piace_mi-piace \
+  -f docker-compose.easypanel.yml -f docker-compose.override.yml \
+  --env-file .env up -d --build --no-deps backend
 ```
 
-**Voltar atrás:** `git revert HEAD && PROFILE=whatsapp ./deploy.sh`.
+**Voltar atrás:** `git revert HEAD`, `git push`, e rode a mesma sequência acima.
 
 > Não há Alembic. Se a mudança alterou `back/db/schema.sql`, o banco existente
 > **não** se atualiza sozinho. Em vez de rodar SQL à mão e confiar na memória
@@ -400,14 +379,14 @@ rebuildado** — não basta reiniciar o container.
 
 | Segredo | Como |
 |---|---|
-| `ADMIN_API_KEY` | edite, `./deploy.sh` — **precisa rebuildar o front**, a chave está no bundle |
+| `ADMIN_API_KEY` | edite o `.env` e redeploy **com `--build`** — a chave está no bundle do front |
 | `OPENAI_API_KEY`, `MP_ACCESS_TOKEN` | edite e `up -d backend` |
 | `POSTGRES_PASSWORD` | não troque depois da primeira subida: a senha está dentro do volume |
 | Certificado TLS | o Caddy renova sozinho |
 
 ---
 
-## 9. O risco de banimento do WhatsApp — leia antes de abrir a loja
+## 7. O risco de banimento do WhatsApp — leia antes de abrir a loja
 
 O canal é um cliente **não-oficial** (Evolution API, Baileys por baixo). Isso
 contraria os termos do WhatsApp, e o risco é da conta. Três coisas mudam a
@@ -434,22 +413,23 @@ e respeita um teto de 12 mensagens por minuto. Na instância:
 
 ---
 
-## 10. Quando quebrar
+## 8. Quando quebrar
 
 **Certificado não emite / site não abre**
 ```bash
-docker compose --env-file .env.prod logs caddy | grep -i acme
+docker service logs easypanel-traefik 2>&1 | grep -i acme
 dig +short SEU_DOMINIO      # o DNS aponta mesmo para esta VPS?
 ```
-Quase sempre é DNS que ainda não propagou quando o Caddy subiu.
+Quase sempre é DNS que ainda não propagou quando o Traefik pediu o certificado.
 
 **Painel abre mas diz "Chave de acesso inválida"**
 A `ADMIN_API_KEY` do backend e a embutida no bundle do front divergiram.
-Rode `./deploy.sh` de novo — ele reconstrói o front com a chave atual.
+Faça um redeploy do `frontend` com `--build` (seção 6) — a chave só entra no
+bundle em tempo de build.
 
 **Painel carrega em `/` mas dá erro em `/produtos` ao recarregar**
-Rota de SPA. O nginx do front já trata; se aparecer, foi mexida no `Caddyfile`
-— o bloco `handle` sem caminho tem que ser o último.
+Rota de SPA. O nginx dentro da imagem do front já trata isso em
+`front/nginx.conf`; se aparecer, foi mexida ali.
 
 **O bot não responde**
 ```bash
@@ -458,15 +438,15 @@ curl -s http://localhost:8081/instance/connectionState/$EVOLUTION_INSTANCE \
   -H "apikey: $EVOLUTION_API_KEY"        # state tem que ser "open"
 
 # o webhook chega?
-docker compose --env-file .env.prod logs backend | grep webhooks/evolution
+docker logs mi-piace_mi-piace-backend-1 | grep webhooks/evolution
 ```
 Se chega e o bot fica calado, veja se a conversa está em **handoff** no painel
 (Conversas) — com handoff ligado o bot cala de propósito. Se não chega nada, o
-webhook da instância está sem o token certo: recrie a instância (seção 4).
+webhook da instância está sem o token certo: recrie a instância (seção 2).
 
 **O Pix não confirma**
 ```bash
-docker compose --env-file .env.prod logs backend | grep mercadopago
+docker logs mi-piace_mi-piace-backend-1 | grep mercadopago
 ```
 `PUBLIC_BASE_URL` errada é a causa mais comum: a cobrança sai com uma
 `notification_url` que o MP não consegue chamar. Um 502 aqui significa token
@@ -474,77 +454,10 @@ errado ou MP fora do ar.
 
 **Backend não sobe**
 ```bash
-docker compose --env-file .env.prod ps db       # healthy?
-docker compose --env-file .env.prod logs db
+docker ps | grep mi-piace_mi-piace-db-1        # healthy?
+docker logs mi-piace_mi-piace-db-1
 ```
 
 **`OOMKilled` nos logs** — falta memória; aumente os limites em
-`docker-compose.prod.yml`. **`too many connections`** — ajuste o pool na
+`docker-compose.easypanel.yml`. **`too many connections`** — ajuste o pool na
 `DATABASE_URL`: `...?pool_size=20&max_overflow=40&pool_recycle=3600`.
-
----
-
-## 11. Alternativa: Easypanel (Hostinger)
-
-Em vez das seções 1 a 5, dá para deixar um painel cuidar de Docker, TLS e
-deploy. O caminho é mais curto e testado: a Hostinger tem um template de VPS
-com o Easypanel já instalado, e o Easypanel sabe subir um serviço do tipo
-**Compose** direto de um repositório Git, rodando `docker compose up --build -d`
-e interpolando `${VAR}` a partir das variáveis que você preenche na interface.
-
-O que você deixa de fazer à mão: instalar Docker, configurar `ufw`, escrever
-Caddyfile, emitir certificado, lembrar os comandos de deploy. O Traefik do
-Easypanel faz o HTTPS, e cada `git push` pode disparar redeploy sozinho.
-
-Use o **`docker-compose.easypanel.yml`**, não o `docker-compose.yml`. O de
-desenvolvimento tem `container_name`, portas publicadas e `profiles` — as três
-coisas que o Easypanel ou recusa ou ignora silenciosamente (um serviço atrás de
-profile nunca sobe, porque ele não passa `--profile`). O arquivo do Easypanel
-já vem sem elas e sem Caddy e túnel, que ali não fazem falta.
-
-**Passo a passo**
-
-1. **Suba o repositório para o GitHub.** Pode ser privado; o Easypanel conecta
-   pela sua conta do GitHub.
-2. **VPS na Hostinger** com o template Ubuntu 24.04 + Easypanel. O painel
-   responde em `http://SEU_IP:3000` — crie a conta de admin na primeira visita.
-3. **DNS:** registro A do domínio para o IP da VPS. Dois nomes:
-   `mipiace.com.br` (painel) e `api.mipiace.com.br` (backend).
-4. **No Easypanel:** novo projeto → **New Service** → **Compose** → source Git,
-   apontando para o repositório, branch `main`, e o caminho do arquivo
-   `docker-compose.easypanel.yml`.
-5. **Environment:** cole as variáveis (as mesmas do `.env.prod.example`, menos
-   `DOMAIN` e `ACME_EMAIL`, que o Easypanel resolve). Deixe marcado *Create
-   .env file* — é dele que sai a interpolação.
-6. **Deploy.** A primeira subida constrói as duas imagens e aplica
-   `schema.sql` + `seed.sql` no banco novo.
-7. **Domains**, dentro do serviço:
-
-   | Serviço interno | Porta | Domínio |
-   |---|---|---|
-   | `frontend` | 8080 | `mipiace.com.br` |
-   | `backend` | 8000 | `api.mipiace.com.br` |
-
-   Marque HTTPS com o certificate resolver padrão.
-8. **Confira** que `PUBLIC_BASE_URL` e `VITE_API_BASE_URL` apontam para
-   `https://api.mipiace.com.br` e `CORS_ORIGINS` para `https://mipiace.com.br`.
-   Mudou? Redeploy — as `VITE_*` entram no bundle em tempo de build, reiniciar
-   não basta.
-9. **WhatsApp:** a Evolution não tem domínio de propósito. Para parear, dê a
-   ela um domínio temporário (porta 8080) na aba Domains, crie a instância pela
-   API como na seção 4 — pelo manager ela nasce sem webhook e o bot fica mudo —,
-   escaneie o QR e **remova o domínio depois**.
-10. **Mercado Pago:** webhook em `https://api.mipiace.com.br/webhooks/mercadopago`
-    (seção 5).
-
-**O que foi verificado aqui antes de recomendar:** o `docker-compose.easypanel.yml`
-passa no `docker compose config` sem `container_name`, portas nem profiles; a
-interpolação chega nos build args; e uma imagem construída por ele carrega no
-bundle a `VITE_ADMIN_API_KEY` e a `VITE_API_BASE_URL` que vieram do ambiente —
-que era o ponto de falha mais provável do plano.
-
-**O que continua sendo seu:** backup do volume `pgdata` (seção 7 — o Easypanel
-não faz backup do seu banco por você), as credenciais do Mercado Pago e o risco
-de banimento do WhatsApp (seção 9), que num IP de datacenter é maior do que em
-casa. E como não há Alembic, mudança em `back/db/schema.sql` continua exigindo
-`psql` à mão.

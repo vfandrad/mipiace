@@ -92,20 +92,29 @@ def _clean_name(value: str) -> str:
     return cleaned
 
 
-class ProductCreate(BaseModel):
+class _ComNome(BaseModel):
+    """Base de todo schema que recebe `name` do painel.
+
+    O mesmo validador estava copiado dez vezes, uma por entidade. Aqui ele
+    existe uma vez só; `check_fields=False` é o que permite declará-lo antes
+    de o campo `name` existir, já que quem o declara é a subclasse.
+    """
+
+    @field_validator("name", check_fields=False)
+    @classmethod
+    def _limpar_nome(cls, value: str | None) -> str | None:
+        return _clean_name(value) if value is not None else None
+
+
+class ProductCreate(_ComNome):
     name: str = Field(min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=500)
     base_price: Money
     is_available: bool = True
     sort_order: int = Field(default=0, ge=0)
 
-    @field_validator("name")
-    @classmethod
-    def _normalize_name(cls, value: str) -> str:
-        return _clean_name(value)
 
-
-class ProductUpdate(BaseModel):
+class ProductUpdate(_ComNome):
     """PATCH: só os campos enviados são alterados."""
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
@@ -114,32 +123,17 @@ class ProductUpdate(BaseModel):
     is_available: bool | None = None
     sort_order: int | None = Field(default=None, ge=0)
 
-    @field_validator("name")
-    @classmethod
-    def _normalize_name(cls, value: str | None) -> str | None:
-        return _clean_name(value) if value is not None else None
 
-
-class GroupCreate(BaseModel):
+class GroupCreate(_ComNome):
     """Cria a lista na biblioteca. Vincular a um produto é outra operação."""
 
     name: str = Field(min_length=1, max_length=120)
     sort_order: int = Field(default=0, ge=0)
 
-    @field_validator("name")
-    @classmethod
-    def _normalize_name(cls, value: str) -> str:
-        return _clean_name(value)
 
-
-class GroupUpdate(BaseModel):
+class GroupUpdate(_ComNome):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     sort_order: int | None = Field(default=None, ge=0)
-
-    @field_validator("name")
-    @classmethod
-    def _normalize_name(cls, value: str | None) -> str | None:
-        return _clean_name(value) if value is not None else None
 
 
 def _validar_escolhas(min_choices: int, max_choices: int, is_required: bool) -> None:
@@ -151,7 +145,7 @@ def _validar_escolhas(min_choices: int, max_choices: int, is_required: bool) -> 
         raise ValueError("grupo obrigatório precisa de min_choices >= 1")
 
 
-class ProductGroupCreate(BaseModel):
+class ProductGroupCreate(_ComNome):
     """Faz um produto usar um grupo — o "importar grupo" do painel.
 
     Ou aponta um grupo que já existe (`group_id`), ou cria um novo pelo nome
@@ -166,11 +160,6 @@ class ProductGroupCreate(BaseModel):
     is_required: bool = False
     sort_order: int = Field(default=0, ge=0)
 
-    @field_validator("name")
-    @classmethod
-    def _normalize_name(cls, value: str | None) -> str | None:
-        return _clean_name(value) if value is not None else None
-
     @model_validator(mode="after")
     def _check(self) -> ProductGroupCreate:
         if (self.group_id is None) == (self.name is None):
@@ -179,7 +168,7 @@ class ProductGroupCreate(BaseModel):
         return self
 
 
-class ProductGroupUpdate(BaseModel):
+class ProductGroupUpdate(_ComNome):
     """Edita o grupo como este produto o usa.
 
     A regra de escolha é deste produto. O `name` é da lista compartilhada, então
@@ -194,11 +183,6 @@ class ProductGroupUpdate(BaseModel):
     is_required: bool | None = None
     sort_order: int | None = Field(default=None, ge=0)
 
-    @field_validator("name")
-    @classmethod
-    def _normalize_name(cls, value: str | None) -> str | None:
-        return _clean_name(value) if value is not None else None
-
     @model_validator(mode="after")
     def _check_range(self) -> ProductGroupUpdate:
         if (
@@ -210,30 +194,20 @@ class ProductGroupUpdate(BaseModel):
         return self
 
 
-class ComplementCreate(BaseModel):
+class ComplementCreate(_ComNome):
     name: str = Field(min_length=1, max_length=120)
     extra_price: Money = Decimal("0")
     is_available: bool = True
     sort_order: int = Field(default=0, ge=0)
     category_id: UUID | None = None
 
-    @field_validator("name")
-    @classmethod
-    def _normalize_name(cls, value: str) -> str:
-        return _clean_name(value)
 
-
-class ComplementUpdate(BaseModel):
+class ComplementUpdate(_ComNome):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     extra_price: Money | None = None
     is_available: bool | None = None
     sort_order: int | None = Field(default=None, ge=0)
     category_id: UUID | None = None
-
-    @field_validator("name")
-    @classmethod
-    def _normalize_name(cls, value: str | None) -> str | None:
-        return _clean_name(value) if value is not None else None
 
 
 class ComplementCategoryRead(ORMModel):
@@ -242,7 +216,7 @@ class ComplementCategoryRead(ORMModel):
     sort_order: int
 
 
-class ComplementCategoryCreate(BaseModel):
+class ComplementCategoryCreate(_ComNome):
     """Categoria de sabor ("Sem lactose", "Clássicos", "Frutados"...).
 
     É o lojista que decide quais existem: numa sorveteria são restrições, numa
@@ -253,20 +227,10 @@ class ComplementCategoryCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     sort_order: int = Field(default=0, ge=0)
 
-    @field_validator("name")
-    @classmethod
-    def _normalize_name(cls, value: str) -> str:
-        return _clean_name(value)
 
-
-class ComplementCategoryUpdate(BaseModel):
+class ComplementCategoryUpdate(_ComNome):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     sort_order: int | None = Field(default=None, ge=0)
-
-    @field_validator("name")
-    @classmethod
-    def _normalize_name(cls, value: str | None) -> str | None:
-        return _clean_name(value) if value is not None else None
 
 
 class ReorderRequest(BaseModel):

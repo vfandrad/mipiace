@@ -51,6 +51,5 @@ export function useOrders() {
     error: query.error,
     refetch: query.refetch,
     changeStatus: (id: string, status: OrderStatus) => mutation.mutate({ id, status }),
-    isChangingStatus: mutation.isPending,
   };
 }

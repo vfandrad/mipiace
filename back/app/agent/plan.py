@@ -77,10 +77,6 @@ class Address(BaseModel):
     complemento: str | None = None
     referencia: str | None = None
 
-    @property
-    def is_complete(self) -> bool:
-        return bool(self.rua and self.numero and self.bairro)
-
 
 class Operation(BaseModel):
     """Uma coisa que o cliente quer fazer com o pedido.
