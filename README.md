@@ -59,7 +59,7 @@ cd ../front && npm install && npm run dev
 ### Conversar com o agente sem WhatsApp
 
 ```bash
-cd back && python -m app.cli.chat
+cd back && python -m app.main
 ```
 
 ---

@@ -170,7 +170,7 @@ Duas convenções que ajudam a se achar:
 | `db/models.py` | Os modelos SQLAlchemy. **`schema.sql` é a fonte da verdade**, não isto. |
 | `db/session.py` | Conexão e pool. |
 | `banco.py` | `python -m app.banco --seed` para criar o banco sem Docker. |
-| `cli/chat.py` | `python -m app.cli.chat` — conversa pelo terminal. |
+| `main.py` (seção final) | `python -m app.main` — conversa pelo terminal. |
 
 ### `front/src/`
 
@@ -412,7 +412,7 @@ npm run dev
 **Conversar com o agente sem WhatsApp:**
 
 ```bash
-cd back && python -m app.cli.chat
+cd back && python -m app.main
 ```
 
 ---
