@@ -169,7 +169,7 @@ Duas convenções que ajudam a se achar:
 | `services/customers.py` | Cliente e endereço. |
 | `db/models.py` | Os modelos SQLAlchemy. **`schema.sql` é a fonte da verdade**, não isto. |
 | `db/session.py` | Conexão e pool. |
-| `db/init_db.py` | `python -m app.db.init_db --seed` para criar o banco sem Docker. |
+| `banco.py` | `python -m app.banco --seed` para criar o banco sem Docker. |
 | `cli/chat.py` | `python -m app.cli.chat` — conversa pelo terminal. |
 
 ### `front/src/`
@@ -401,7 +401,7 @@ O `schema.sql` e o `seed.sql` são aplicados no primeiro boot.
 ```bash
 cd back
 pip install -r requirements.txt
-python -m app.db.init_db --seed
+python -m app.banco --seed
 uvicorn app.main:app --reload
 
 cd ../front

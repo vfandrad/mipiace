@@ -22,7 +22,7 @@ from uuid import uuid4
 import pytest
 
 from app.api.routes import webhooks
-from app.domain.enums import OrderStatus, PaymentStatus
+from app.dominio import OrderStatus, PaymentStatus
 from app.services import payments as payments_service
 from app.services.pix_provider import (
     FakePaymentProvider,
@@ -285,7 +285,7 @@ def _assinar(secret: str, payment_id: str, request_id: str, ts: str) -> str:
 
 
 def test_assinatura_valida_e_aceita(monkeypatch) -> None:
-    from app.core.config import get_settings
+    from app.configuracao import get_settings
 
     settings = get_settings()
     monkeypatch.setattr(settings, "mp_webhook_secret", "segredo", raising=False)
@@ -299,7 +299,7 @@ def test_assinatura_valida_e_aceita(monkeypatch) -> None:
 
 
 def test_assinatura_forjada_e_recusada(monkeypatch) -> None:
-    from app.core.config import get_settings
+    from app.configuracao import get_settings
 
     settings = get_settings()
     monkeypatch.setattr(settings, "mp_webhook_secret", "segredo", raising=False)
@@ -313,7 +313,7 @@ def test_assinatura_forjada_e_recusada(monkeypatch) -> None:
 
 def test_sem_segredo_configurado_a_validacao_e_pulada(monkeypatch) -> None:
     """MP_WEBHOOK_SECRET é opcional na conta do MP; travar deixaria o MVP sem webhook."""
-    from app.core.config import get_settings
+    from app.configuracao import get_settings
 
     settings = get_settings()
     monkeypatch.setattr(settings, "mp_webhook_secret", None, raising=False)

@@ -27,7 +27,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.agent.pacing import throttle, typing_delay_ms
-from app.core.config import Settings, get_settings
+from app.configuracao import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 

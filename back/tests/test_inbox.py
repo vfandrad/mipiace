@@ -12,7 +12,7 @@ import pytest
 
 from app.agent import inbox
 from app.agent.whatsapp import InboundMessage
-from app.core.config import get_settings
+from app.configuracao import get_settings
 
 
 def msg(text: str, *, phone: str = "5511999990000", id_: str = "m1") -> InboundMessage:

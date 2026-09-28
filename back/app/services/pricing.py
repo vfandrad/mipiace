@@ -15,9 +15,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
-from app.core.config import get_settings
-from app.domain.cart import ZERO, Cart, money
-from app.domain.enums import FulfillmentType
+from app.configuracao import get_settings
+from app.dominio import ZERO, Cart, FulfillmentType, arredondar_dinheiro
 from app.schemas.common import Money
 
 
@@ -35,7 +34,7 @@ def delivery_fee_for(
     """Retirada na loja não paga entrega; entrega usa a taxa de `settings`."""
     if fulfillment_type is FulfillmentType.RETIRADA:
         return ZERO
-    return money(get_settings().delivery_fee if fee is None else fee)
+    return arredondar_dinheiro(get_settings().delivery_fee if fee is None else fee)
 
 
 def calculate_cart(
@@ -47,7 +46,7 @@ def calculate_cart(
     """Subtotal + taxa de entrega + total de um carrinho."""
     subtotal = cart.subtotal
     fee = delivery_fee_for(fulfillment_type, fee=delivery_fee)
-    return PriceBreakdown(subtotal=subtotal, delivery_fee=fee, total=money(subtotal + fee))
+    return PriceBreakdown(subtotal=subtotal, delivery_fee=fee, total=arredondar_dinheiro(subtotal + fee))
 
 
 __all__ = ["PriceBreakdown", "calculate_cart", "delivery_fee_for"]

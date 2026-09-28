@@ -35,7 +35,7 @@ import pytest
 from app.agent.llm_openai import OpenAILLMClient
 from app.agent.machine import describe_situation
 from app.agent.plan import Action
-from app.core.config import get_settings
+from app.configuracao import get_settings
 from tests.eval_cases import CASES, EvalCase
 from tests.test_agent_machine import build_deps, build_session
 

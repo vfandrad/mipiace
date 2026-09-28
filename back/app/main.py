@@ -28,8 +28,7 @@ from app.api.routes import (
     webhooks,
 )
 from app.api.routes.health import API_VERSION
-from app.core.config import get_settings
-from app.core.logging import get_logger, setup_logging
+from app.configuracao import get_logger, get_settings, setup_logging
 
 logger = get_logger(__name__)
 
@@ -44,7 +43,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.fake_mode,
     )
     yield
-    from app.db.session import dispose_engine  # noqa: PLC0415
+    from app.banco import dispose_engine  # noqa: PLC0415
 
     await dispose_engine()
 

@@ -11,7 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.domain.enums import FulfillmentType, OrderChannel, OrderStatus, PaymentStatus
+from app.dominio import FulfillmentType, OrderChannel, OrderStatus, PaymentStatus
 from app.schemas.common import Money, ORMModel
 
 # ---------------------------------------------------------------------------

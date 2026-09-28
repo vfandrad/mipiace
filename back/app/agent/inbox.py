@@ -26,7 +26,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from app.agent.whatsapp import InboundMessage
-from app.core.config import get_settings
+from app.configuracao import get_settings
 
 logger = logging.getLogger(__name__)
 

@@ -12,8 +12,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Conversation, ConversationMessage, Customer
-from app.domain.enums import ConversationState
+from app.banco import Conversation, ConversationMessage, Customer
+from app.dominio import ConversationState
 from app.schemas.conversation import ConversationMessageRead, ConversationRead
 
 #: Corta a prévia pra caber numa linha da lista (o histórico tem o texto inteiro).

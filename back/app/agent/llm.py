@@ -22,8 +22,8 @@ from typing import Protocol
 from pydantic import BaseModel
 
 from app.agent.plan import AgentPlan
-from app.core.config import get_settings
-from app.domain.catalog import CatalogSnapshot
+from app.configuracao import get_settings
+from app.dominio import CatalogSnapshot
 
 logger = logging.getLogger(__name__)
 

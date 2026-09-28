@@ -30,9 +30,8 @@ from app.agent.runner import (
 )
 from app.agent.whatsapp import EvolutionAdapter, phone_allowed
 from app.api.deps import SessionDep
-from app.core.config import get_settings
-from app.core.logging import get_logger
-from app.db.session import get_sessionmaker
+from app.banco import get_sessionmaker
+from app.configuracao import get_logger, get_settings
 from app.services import payments as payments_service
 from app.services.pix_provider import get_payment_provider
 

@@ -22,9 +22,8 @@ from uuid import UUID
 import httpx
 from pydantic import BaseModel, Field
 
-from app.core.config import get_settings
-from app.core.logging import get_logger
-from app.domain.enums import PaymentStatus
+from app.configuracao import get_logger, get_settings
+from app.dominio import PaymentStatus
 
 logger = get_logger(__name__)
 

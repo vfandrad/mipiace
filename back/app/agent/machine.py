@@ -59,9 +59,8 @@ from app.agent.operations import (
 from app.agent.plan import Action, AgentPlan
 from app.agent.session import ConversationSession
 from app.agent.states import advance as _go
-from app.domain.catalog import normalize
-from app.domain.enums import ConversationState as S
-from app.domain.enums import FulfillmentType
+from app.dominio import ConversationState as S
+from app.dominio import FulfillmentType, normalize
 
 logger = logging.getLogger(__name__)
 

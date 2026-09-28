@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from app.core.config import Settings
+from app.configuracao import Settings
 
 ENV_EXAMPLE = Path(__file__).resolve().parents[1] / ".env.example"
 

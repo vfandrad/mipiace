@@ -20,7 +20,7 @@ from app.agent.renderer import money
 from app.agent.runner import handle_inbound, settings_snapshot
 from app.agent.session import load_or_create, reset_session
 from app.agent.whatsapp import InboundMessage
-from app.core.config import get_settings
+from app.configuracao import get_settings
 
 CHANNEL = "simulador"
 DEFAULT_PHONE = "5511999990000"
@@ -77,9 +77,9 @@ async def main(phone: str = DEFAULT_PHONE) -> int:
     settings = get_settings()
 
     try:
-        from app.db.session import get_sessionmaker  # noqa: PLC0415
+        from app.banco import get_sessionmaker  # noqa: PLC0415
     except Exception as exc:  # sem banco no ar a CLI avisa em vez de estourar
-        print(f"{_ERR}Não consegui carregar app.db.session: {exc}{_OFF}")
+        print(f"{_ERR}Não consegui carregar app.banco: {exc}{_OFF}")
         return 1
 
     sessionmaker = get_sessionmaker()

@@ -136,7 +136,7 @@ services:
       MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET:-}
       # Trava de contatos: vazio atende todo mundo; com número, só ele.
       ALLOWED_PHONES: ${ALLOWED_PHONES:-}
-      # Ritmo e atendimento (os defaults vivem em app/core/config.py; sem
+      # Ritmo e atendimento (os defaults vivem em app/configuracao.py; sem
       # repassar aqui, o que estiver no .env não chega ao container).
       WA_TYPING_WPM: ${WA_TYPING_WPM:-45}
       WA_MIN_SECONDS_BETWEEN_MESSAGES: ${WA_MIN_SECONDS_BETWEEN_MESSAGES:-3}

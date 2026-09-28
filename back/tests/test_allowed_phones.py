@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.agent.whatsapp import phone_allowed
-from app.core.config import get_settings
+from app.configuracao import get_settings
 
 DONO = "5569993061196"
 

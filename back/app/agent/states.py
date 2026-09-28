@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from app.domain.enums import ConversationState as S
+from app.dominio import ConversationState as S
 
 if TYPE_CHECKING:  # evita ciclo de import em tempo de execução
     from app.agent.session import ConversationSession

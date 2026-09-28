@@ -29,7 +29,7 @@ from app.agent.resolver import (
     resolve_product,
     split_queries,
 )
-from app.domain.catalog import CatalogSnapshot, normalize
+from app.dominio import CatalogSnapshot, normalize
 
 _SAUDACOES = ("oi", "ola", "bom dia", "boa tarde", "boa noite", "opa", "eai", "e ai")
 _CARDAPIO = ("cardapio", "menu", "opcoes", "que sabores", "quais sabores")

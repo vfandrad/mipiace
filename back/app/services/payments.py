@@ -16,10 +16,9 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.logging import get_logger
-from app.db.models import Order, Payment, WebhookEvent
-from app.domain.cart import money
-from app.domain.enums import OrderStatus, PaymentStatus
+from app.banco import Order, Payment, WebhookEvent
+from app.configuracao import get_logger
+from app.dominio import OrderStatus, PaymentStatus, arredondar_dinheiro
 from app.services.orders import OrderError, OrderNotFoundError, get_order
 from app.services.pix_provider import (
     PaymentStatusResult,
@@ -151,7 +150,7 @@ async def create_pix_for_order(session: AsyncSession, order_id: UUID) -> PixChar
             "provider": charge.provider,
             "provider_payment_id": charge.provider_payment_id,
             "method": "pix",
-            "amount": money(charge.amount),
+            "amount": arredondar_dinheiro(charge.amount),
             "status": PaymentStatus.PENDENTE,
             "qr_code": charge.qr_code,
             "qr_code_base64": charge.qr_code_base64,

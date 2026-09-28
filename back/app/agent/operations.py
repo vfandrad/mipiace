@@ -48,11 +48,16 @@ from app.agent.resolver import MatchStatus, resolve_product
 from app.agent.session import ConversationSession
 from app.agent.states import CANCELLABLE_STATES, can_transition
 from app.agent.states import advance as _go
-from app.core.config import get_settings
-from app.domain.cart import CartComplement, CartItem
-from app.domain.catalog import CatalogGroup, CatalogProduct, normalize
-from app.domain.enums import ConversationState as S
-from app.domain.enums import FulfillmentType
+from app.configuracao import get_settings
+from app.dominio import (
+    CartComplement,
+    CartItem,
+    CatalogGroup,
+    CatalogProduct,
+    FulfillmentType,
+    normalize,
+)
+from app.dominio import ConversationState as S
 
 logger = logging.getLogger(__name__)
 

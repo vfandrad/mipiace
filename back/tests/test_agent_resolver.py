@@ -18,7 +18,7 @@ from app.agent.resolver import (
     resolve_product,
     split_queries,
 )
-from app.domain.catalog import (
+from app.dominio import (
     CatalogComplement,
     CatalogGroup,
     CatalogProduct,

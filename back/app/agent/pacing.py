@@ -29,7 +29,7 @@ import random
 import time
 from collections import deque
 
-from app.core.config import get_settings
+from app.configuracao import get_settings
 
 #: Piso e teto do "digitando..." (ms). O piso evita a resposta instantânea que
 #: denuncia automação; o teto evita que o cliente ache que ninguém viu.

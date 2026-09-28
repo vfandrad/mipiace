@@ -50,7 +50,7 @@ existe dado fabricado em lugar nenhum.
 
 ```bash
 cd back && pip install -r requirements.txt
-python -m app.db.init_db --seed
+python -m app.banco --seed
 uvicorn app.main:app --reload
 
 cd ../front && npm install && npm run dev
@@ -86,7 +86,7 @@ cd back && FAKE_MODE=false pytest -m eval
 ## Configuração
 
 Toda variável lida pelo sistema está em **`back/.env.example`**, na mesma ordem
-de `app/core/config.py` — e há um teste que quebra se as duas listas
+de `app/configuracao.py` — e há um teste que quebra se as duas listas
 divergirem. O painel tem as suas em `front/.env.example`.
 
 Para atender uma segunda empresa, veja

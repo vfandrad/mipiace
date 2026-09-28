@@ -20,10 +20,9 @@ from uuid import UUID
 from app.agent import renderer as r
 from app.agent.session import ConversationSession, get_saved_address
 from app.agent.states import advance
-from app.core.config import Settings, get_settings
-from app.domain.catalog import CatalogSnapshot
-from app.domain.enums import ConversationState as S
-from app.domain.enums import FulfillmentType, OrderChannel
+from app.configuracao import Settings, get_settings
+from app.dominio import CatalogSnapshot, FulfillmentType, OrderChannel
+from app.dominio import ConversationState as S
 from app.services.orders import create_order_from_cart, get_order_summary
 from app.services.payments import create_pix_for_order
 

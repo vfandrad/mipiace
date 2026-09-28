@@ -22,9 +22,8 @@ from uuid import UUID
 from sqlalchemy import text
 
 from app.agent.llm import Turn
-from app.core.config import get_settings
-from app.domain.cart import Cart
-from app.domain.enums import ConversationState, MessageDirection, parse_state
+from app.configuracao import get_settings
+from app.dominio import Cart, ConversationState, MessageDirection, parse_state
 
 logger = logging.getLogger(__name__)
 

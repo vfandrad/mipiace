@@ -20,14 +20,14 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
+from app.banco import (
     Complement,
     ComplementCategory,
     ComplementGroup,
     Product,
     ProductGroup,
 )
-from app.domain.catalog import (
+from app.dominio import (
     CatalogComplement,
     CatalogGroup,
     CatalogProduct,

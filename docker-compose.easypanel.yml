@@ -95,7 +95,7 @@ services:
       # Vazio = atende qualquer cliente. Com numeros dentro, so eles conversam
       # com o agente -- e o bot nao consegue enviar para mais ninguem.
       ALLOWED_PHONES: ${ALLOWED_PHONES:-}
-      # Ritmo e atendimento (defaults em app/core/config.py).
+      # Ritmo e atendimento (defaults em app/configuracao.py).
       WA_TYPING_WPM: ${WA_TYPING_WPM:-45}
       WA_MIN_SECONDS_BETWEEN_MESSAGES: ${WA_MIN_SECONDS_BETWEEN_MESSAGES:-3}
       WA_MAX_MESSAGES_PER_MINUTE: ${WA_MAX_MESSAGES_PER_MINUTE:-12}

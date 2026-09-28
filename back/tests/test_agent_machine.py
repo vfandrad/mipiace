@@ -26,14 +26,14 @@ from app.agent.states import (
     assert_transition,
     can_transition,
 )
-from app.core.config import get_settings
-from app.domain.catalog import (
+from app.configuracao import get_settings
+from app.dominio import (
     CatalogComplement,
     CatalogGroup,
     CatalogProduct,
     CatalogSnapshot,
 )
-from app.domain.enums import ConversationState as S
+from app.dominio import ConversationState as S
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -1,16 +1,35 @@
-"""Modelos SQLAlchemy 2.0 que espelham `back/db/schema.sql`.
+"""O banco: as tabelas, a conexão e a criação inicial.
 
-O schema.sql continua sendo a fonte de verdade (é ele que roda no Postgres via
-docker-entrypoint-initdb.d). Estes modelos existem para dar acesso tipado ao
-mesmo desenho — por isso nada de `metadata.create_all()`: os tipos ENUM nativos,
-as sequences e as views são criados pelo SQL.
+Os modelos espelham `back/db/schema.sql`, que continua sendo a fonte de
+verdade (é ele que roda no Postgres via docker-entrypoint-initdb.d). Os
+modelos existem para dar acesso tipado ao mesmo desenho — por isso nada de
+`metadata.create_all()`: os tipos ENUM nativos, as sequences e as views são
+criados pelo SQL.
+
+**Os nomes dos atributos são os nomes das colunas.** Não há nome explícito em
+`mapped_column`, então o SQLAlchemy usa o nome do atributo Python para achar a
+coluna no Postgres: traduzir `name` para `nome` aqui quebraria o mapeamento
+contra o banco que está no ar.
+
+No fim do arquivo ficam a conexão (engine/sessão) e o `init_db`, que aplica
+`schema.sql` e `seed.sql` num banco vazio:
+
+    python -m app.banco --seed
 """
 
 from __future__ import annotations
 
+import argparse
+import asyncio
+import logging
+import sys
 import uuid
+import warnings
+from collections.abc import AsyncIterator
 from datetime import datetime
 from decimal import Decimal
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import (
@@ -23,19 +42,34 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ENUM as PGEnum
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUuid
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from app.domain.enums import (
+from app.configuracao import get_settings
+from app.dominio import (
     FulfillmentType,
     MessageDirection,
     OrderChannel,
     OrderStatus,
     PaymentStatus,
 )
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Tabelas
+# ---------------------------------------------------------------------------
 
 
 class Base(DeclarativeBase):
@@ -556,3 +590,134 @@ __all__ = [
     "WebhookEvent",
     "order_code_seq",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Conexão
+# ---------------------------------------------------------------------------
+
+def _ensure_selector_event_loop() -> None:
+    """No Windows, psycopg async não roda no ProactorEventLoop (o padrão).
+
+    Sem isso, todo `asyncio.run(...)` que toque o banco — o simulador de
+    terminal, os scripts de manutenção — morre com InterfaceError. Uvicorn
+    escolhe o loop por conta própria (com `--reload` já usa o selector), então
+    isto só afeta quem cria o loop na mão.
+    """
+    if sys.platform != "win32":
+        return
+    with warnings.catch_warnings():
+        # A API de policy está deprecada no 3.14, mas ainda é a única forma
+        # de trocar o loop padrão para quem chama asyncio.run().
+        warnings.simplefilter("ignore", DeprecationWarning)
+        policy = asyncio.get_event_loop_policy()
+        selector_policy = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+        if selector_policy is not None and not isinstance(policy, selector_policy):
+            asyncio.set_event_loop_policy(selector_policy())
+
+
+_ensure_selector_event_loop()
+
+
+@lru_cache
+def get_engine() -> AsyncEngine:
+    settings = get_settings()
+    return create_async_engine(
+        settings.database_url,
+        echo=False,
+        pool_pre_ping=True,   # conexão morta depois do container do banco reiniciar
+        pool_size=5,
+        max_overflow=10,
+    )
+
+
+@lru_cache
+def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    """Fábrica de sessões compartilhada pela API e pelo agente."""
+    return async_sessionmaker(
+        bind=get_engine(),
+        class_=AsyncSession,
+        expire_on_commit=False,  # ler atributos depois do commit sem novo SELECT
+        autoflush=False,
+    )
+
+
+async def get_session() -> AsyncIterator[AsyncSession]:
+    """Dependência FastAPI: uma sessão por request, com rollback em erro."""
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def dispose_engine() -> None:
+    """Fecha o pool no shutdown da aplicação."""
+    if get_engine.cache_info().currsize:
+        await get_engine().dispose()
+
+
+__all__ = [
+    "dispose_engine",
+    "get_engine",
+    "get_session",
+    "get_sessionmaker",
+]
+
+
+# ---------------------------------------------------------------------------
+# Criação inicial do banco
+# ---------------------------------------------------------------------------
+
+DB_DIR = Path(__file__).resolve().parents[1] / "db"
+SCHEMA_FILE = DB_DIR / "schema.sql"
+SEED_FILE = DB_DIR / "seed.sql"
+
+
+async def schema_exists() -> bool:
+    """Usa a tabela `products` como sentinela do schema já aplicado."""
+    engine = get_engine()
+    async with engine.connect() as conn:
+        found = await conn.scalar(text("SELECT to_regclass('public.products')"))
+    return found is not None
+
+
+async def run_sql_file(path: Path) -> None:
+    if not path.exists():
+        raise FileNotFoundError(f"arquivo SQL não encontrado: {path}")
+    sql = path.read_text(encoding="utf-8")
+    engine = get_engine()
+    async with engine.begin() as conn:
+        # exec_driver_sql: psycopg aceita várias instruções num único envio,
+        # o que preserva os blocos $fn$ ... $fn$ do schema.sql.
+        await conn.exec_driver_sql(sql)
+    logger.info("SQL aplicado: %s", path.name)
+
+
+async def init_db(*, seed: bool = False, force: bool = False) -> None:
+    if await schema_exists() and not force:
+        logger.info("Schema já existe; nada a fazer (use --force para reaplicar).")
+        return
+    await run_sql_file(SCHEMA_FILE)
+    if seed:
+        await run_sql_file(SEED_FILE)
+
+
+async def _main() -> None:
+    parser = argparse.ArgumentParser(description="Cria o schema do banco.")
+    parser.add_argument("--seed", action="store_true", help="também aplica o seed")
+    parser.add_argument(
+        "--force", action="store_true", help="reaplica mesmo se já existir"
+    )
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    try:
+        await init_db(seed=args.seed, force=args.force)
+    finally:
+        await dispose_engine()
+
+
+if __name__ == "__main__":
+    asyncio.run(_main())

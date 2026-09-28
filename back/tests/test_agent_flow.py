@@ -20,15 +20,15 @@ from app.agent.llm import Turn
 from app.agent.llm_fake import FakeLLMClient
 from app.agent.session import ConversationSession
 from app.agent.whatsapp import ConsoleAdapter, InboundMessage
-from app.core.config import get_settings
-from app.domain.catalog import (
+from app.configuracao import get_settings
+from app.dominio import (
     CatalogComplement,
     CatalogGroup,
     CatalogProduct,
     CatalogSnapshot,
+    MessageDirection,
 )
-from app.domain.enums import ConversationState as S
-from app.domain.enums import MessageDirection
+from app.dominio import ConversationState as S
 
 PHONE = "5511988887777"
 

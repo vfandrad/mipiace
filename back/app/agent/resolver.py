@@ -20,7 +20,7 @@ from difflib import SequenceMatcher
 from enum import StrEnum
 from typing import TypeVar
 
-from app.domain.catalog import (
+from app.dominio import (
     CatalogComplement,
     CatalogGroup,
     CatalogProduct,

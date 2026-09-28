@@ -7,9 +7,8 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Settings, get_settings
-from app.core.security import require_api_key
-from app.db.session import get_session
+from app.banco import get_session
+from app.configuracao import Settings, get_settings, require_api_key
 
 #: Sessão de banco por request.
 SessionDep = Annotated[AsyncSession, Depends(get_session)]

@@ -28,9 +28,8 @@ from app.agent.session import (
 )
 from app.agent.states import assert_transition
 from app.agent.whatsapp import InboundMessage, get_channel_adapter
-from app.core.config import get_settings
-from app.domain.catalog import CatalogSnapshot
-from app.domain.enums import ConversationState, MessageDirection, OrderChannel
+from app.configuracao import get_settings
+from app.dominio import CatalogSnapshot, ConversationState, MessageDirection, OrderChannel
 from app.services.catalog import get_catalog_snapshot
 from app.services.orders import get_order_summary
 

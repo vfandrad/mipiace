@@ -22,8 +22,8 @@ from typing import Any
 from app.agent.llm import Turn
 from app.agent.plan import QUESTION_TOPICS, Action, Address, AgentPlan, Operation
 from app.agent.prompts import TOOL_NAME, build_system_blocks, tool_schema
-from app.core.config import Settings, get_settings
-from app.domain.catalog import CatalogSnapshot
+from app.configuracao import Settings, get_settings
+from app.dominio import CatalogSnapshot
 
 logger = logging.getLogger(__name__)
 

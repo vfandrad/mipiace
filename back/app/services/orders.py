@@ -16,10 +16,17 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.logging import get_logger
-from app.db.models import Order, OrderItem, OrderItemComplement, order_code_seq
-from app.domain.cart import Cart, item_unit_price, money
-from app.domain.enums import FulfillmentType, OrderChannel, OrderStatus, PaymentStatus
+from app.banco import Order, OrderItem, OrderItemComplement, order_code_seq
+from app.configuracao import get_logger
+from app.dominio import (
+    Cart,
+    FulfillmentType,
+    OrderChannel,
+    OrderStatus,
+    PaymentStatus,
+    arredondar_dinheiro,
+    item_unit_price,
+)
 from app.schemas.order import OrderCreated, OrderSummary, OrderSummaryItem
 from app.services import customers as customers_service
 from app.services import pricing
@@ -199,7 +206,7 @@ async def create_order_from_cart(
             order_id=order.id,
             product_id=cart_item.product_id,
             product_name_snapshot=cart_item.product_name,
-            unit_base_price=money(cart_item.unit_base_price),
+            unit_base_price=arredondar_dinheiro(cart_item.unit_base_price),
             quantity=cart_item.quantity,
             line_total=cart_item.line_total,
             details=cart_item.details,
@@ -212,7 +219,7 @@ async def create_order_from_cart(
                     order_item_id=item.id,
                     complement_id=complement.id,
                     complement_name_snapshot=complement.name,
-                    extra_price_snapshot=money(complement.extra_price),
+                    extra_price_snapshot=arredondar_dinheiro(complement.extra_price),
                 )
             )
 

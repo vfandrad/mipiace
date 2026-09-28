@@ -20,8 +20,8 @@ from app.agent.operations import human_on_the_line
 from app.agent.plan import Action, AgentPlan
 from app.agent.runner import handle_inbound
 from app.agent.whatsapp import InboundMessage
-from app.core.config import get_settings
-from app.domain.enums import ConversationState as S
+from app.configuracao import get_settings
+from app.dominio import ConversationState as S
 from tests.test_agent_machine import build_deps, build_session, op, plano
 
 

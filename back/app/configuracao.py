@@ -1,18 +1,32 @@
-"""Configuração central via variáveis de ambiente.
+"""Configuração, log e autenticação — as três coisas que todo o resto usa.
 
-Regra do projeto: nenhum segredo hardcoded em código. Tudo passa por aqui.
-Com FAKE_MODE=true o sistema roda inteiro localmente sem nenhuma chave de API
-externa (LLM e pagamento usam implementações falsas determinísticas).
+Regra do projeto: nenhum segredo hardcoded em código. Tudo passa pelo
+`Settings` daqui. Com FAKE_MODE=true o sistema roda inteiro localmente sem
+nenhuma chave de API externa (LLM e pagamento usam implementações falsas
+determinísticas).
+
+O log e a checagem da chave de API moram no mesmo arquivo porque os dois só
+existem em função da configuração: o nível do log sai do `debug`, e a chave
+exigida no header sai do `admin_api_key`.
 """
 
 from __future__ import annotations
 
+import logging
+import secrets
+import sys
 from decimal import Decimal
 from functools import lru_cache
 from typing import Annotated
 
+from fastapi import Depends, HTTPException, status
+from fastapi.security import APIKeyHeader
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+# ---------------------------------------------------------------------------
+# Configuração
+# ---------------------------------------------------------------------------
 
 
 class Settings(BaseSettings):
@@ -158,3 +172,89 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+# ---------------------------------------------------------------------------
+# Log
+# ---------------------------------------------------------------------------
+# Uma linha por evento, com o nome do módulo — o suficiente para depurar o
+# agente e o webhook de pagamento sem trazer dependência de observabilidade.
+
+_CONFIGURED = False
+
+_FORMAT = "%(asctime)s %(levelname)-8s %(name)s | %(message)s"
+
+
+def setup_logging() -> None:
+    """Idempotente: pode ser chamada no import e no startup sem duplicar handler."""
+    global _CONFIGURED
+    if _CONFIGURED:
+        return
+
+    settings = get_settings()
+    level = logging.DEBUG if settings.debug else logging.INFO
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter(_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))
+
+    root = logging.getLogger()
+    root.setLevel(level)
+    root.handlers = [handler]
+
+    # SQLAlchemy é falador demais em DEBUG e afoga o log do agente.
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    _CONFIGURED = True
+
+
+def get_logger(name: str) -> logging.Logger:
+    setup_logging()
+    return logging.getLogger(name)
+
+
+# ---------------------------------------------------------------------------
+# Autenticação das rotas administrativas
+# ---------------------------------------------------------------------------
+# Uma chave estática no header `X-API-Key` é o suficiente para o MVP (o painel
+# é interno), mas a comparação usa `secrets.compare_digest` para não vazar a
+# chave por tempo de resposta.
+
+API_KEY_HEADER = "X-API-Key"
+
+# auto_error=False para devolvermos a mensagem em português no formato do projeto.
+_api_key_scheme = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
+
+
+def _unauthorized(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": API_KEY_HEADER},
+    )
+
+
+async def require_api_key(
+    api_key: str | None = Depends(_api_key_scheme),
+    settings: Settings = Depends(get_settings),
+) -> str:
+    """Dependência das rotas `/api/*` administrativas."""
+    expected = settings.admin_api_key
+    if not expected:
+        # Sem chave configurada a API ficaria aberta; melhor falhar fechado.
+        raise _unauthorized("ADMIN_API_KEY não configurada no servidor.")
+    if not api_key:
+        raise _unauthorized(f"Header {API_KEY_HEADER} ausente.")
+    if not secrets.compare_digest(api_key, expected):
+        raise _unauthorized("Chave de API inválida.")
+    return api_key
+
+
+__all__ = [
+    "API_KEY_HEADER",
+    "Settings",
+    "get_logger",
+    "get_settings",
+    "require_api_key",
+    "setup_logging",
+]

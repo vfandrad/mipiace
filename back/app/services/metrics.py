@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.cart import money
+from app.dominio import arredondar_dinheiro
 from app.schemas.metrics import (
     DailySales,
     HourlySales,
@@ -184,10 +184,10 @@ async def get_summary(
     totals = await summary_totals(session, days=days)
     by_status = await summary_by_status(session, days=days)
 
-    total_vendas = money(as_decimal(totals["total_vendas"]))
+    total_vendas = arredondar_dinheiro(as_decimal(totals["total_vendas"]))
     total_pedidos = int(totals["total_pedidos"])
     anterior = as_decimal(totals["total_anterior"])
-    ticket = money(total_vendas / total_pedidos) if total_pedidos else ZERO
+    ticket = arredondar_dinheiro(total_vendas / total_pedidos) if total_pedidos else ZERO
 
     return MetricsSummary(
         total_vendas=total_vendas,
@@ -204,7 +204,7 @@ async def get_daily_sales(session: AsyncSession, *, days: int = 7) -> list[Daily
         DailySales(
             dia=row["dia"],
             pedidos=int(row["pedidos"]),
-            total=money(as_decimal(row["total"])),
+            total=arredondar_dinheiro(as_decimal(row["total"])),
         )
         for row in rows
     ]
@@ -222,7 +222,7 @@ async def get_product_sales(
         ProductSales(
             produto=row["produto"],
             unidades=int(row["unidades"]),
-            receita=money(as_decimal(row["receita"])),
+            receita=arredondar_dinheiro(as_decimal(row["receita"])),
         )
         for row in rows
     ]
@@ -237,7 +237,7 @@ async def get_hourly_sales(
         HourlySales(
             hora=int(row["hora"]),
             pedidos=int(row["pedidos"]),
-            receita=money(as_decimal(row["receita"])),
+            receita=arredondar_dinheiro(as_decimal(row["receita"])),
         )
         for row in rows
     ]

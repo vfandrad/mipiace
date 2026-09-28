@@ -25,8 +25,8 @@ os.environ.setdefault("ADMIN_API_KEY", "test-key")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.core.config import get_settings  # noqa: E402
-from app.db.session import get_session  # noqa: E402
+from app.banco import get_session  # noqa: E402
+from app.configuracao import get_settings  # noqa: E402
 from app.main import app  # noqa: E402
 
 

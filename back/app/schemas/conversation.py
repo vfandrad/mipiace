@@ -12,7 +12,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.domain.enums import MessageDirection
+from app.dominio import MessageDirection
 from app.schemas.common import ORMModel
 
 

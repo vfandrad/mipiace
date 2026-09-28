@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.domain.enums import ConversationState as S
+from app.dominio import ConversationState as S
 from app.services import conversations as conversations_service
 
 

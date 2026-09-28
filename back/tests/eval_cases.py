@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.agent.plan import Action, Address, Operation
-from app.domain.enums import ConversationState as S
+from app.dominio import ConversationState as S
 
 Preparar = Callable[[Any, Any], Awaitable[None]]
 Verificar = Callable[[Any, Any, list[str]], None]

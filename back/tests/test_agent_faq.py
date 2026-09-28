@@ -13,7 +13,7 @@ from decimal import Decimal
 import pytest
 
 from app.agent.faq import answer
-from app.core.config import get_settings
+from app.configuracao import get_settings
 from tests.test_agent_phrases import build_cardapio
 
 TAXA = Decimal("5.00")
@@ -56,7 +56,7 @@ def test_sem_acucar_procura_no_cardapio_do_dia() -> None:
     """A resposta tem que vir do catálogo: os sabores mudam todo dia."""
     from uuid import uuid4
 
-    from app.domain.catalog import (
+    from app.dominio import (
         CatalogComplement,
         CatalogGroup,
         CatalogProduct,
@@ -160,7 +160,7 @@ def test_produto_indisponivel_nao_e_confundido_com_inexistente() -> None:
     """
     from uuid import uuid4
 
-    from app.domain.catalog import CatalogProduct, CatalogSnapshot
+    from app.dominio import CatalogProduct, CatalogSnapshot
 
     catalogo = CatalogSnapshot(
         products=[
@@ -218,7 +218,7 @@ def test_pergunta_por_categoria_de_sabor_lista_a_categoria() -> None:
     """
     from uuid import uuid4
 
-    from app.domain.catalog import (
+    from app.dominio import (
         CatalogComplement,
         CatalogGroup,
         CatalogProduct,

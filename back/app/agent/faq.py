@@ -26,8 +26,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.agent import renderer as r
-from app.domain.cart import Cart
-from app.domain.catalog import CatalogSnapshot, normalize
+from app.dominio import Cart, CatalogSnapshot, normalize
 
 #: Palavras que identificam o assunto sem margem para dúvida. É o contrário de
 #: depender de palavra-chave para ENTENDER o cliente: aqui a IA já entendeu que

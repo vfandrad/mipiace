@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from app.agent.pacing import MAX_TYPING_MS, MIN_TYPING_MS, Throttle, typing_delay_ms
-from app.core.config import get_settings
+from app.configuracao import get_settings
 
 
 def test_delay_nunca_e_instantaneo_nem_eterno():

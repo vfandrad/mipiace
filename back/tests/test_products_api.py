@@ -202,7 +202,7 @@ def test_health_falha_quando_banco_esta_fora(monkeypatch):
     """
     from fastapi.testclient import TestClient
 
-    from app.db.session import get_session
+    from app.banco import get_session
     from app.main import app
 
     class _SessaoQuebrada:

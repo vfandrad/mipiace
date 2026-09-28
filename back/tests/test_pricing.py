@@ -12,8 +12,14 @@ from uuid import uuid4
 
 import pytest
 
-from app.domain.cart import Cart, CartComplement, CartItem, item_unit_price, money
-from app.domain.enums import FulfillmentType
+from app.dominio import (
+    Cart,
+    CartComplement,
+    CartItem,
+    FulfillmentType,
+    arredondar_dinheiro,
+    item_unit_price,
+)
 from app.services import pricing
 
 
@@ -39,8 +45,8 @@ def _pote_500() -> CartItem:
 
 
 def test_money_quantiza_para_centavos():
-    assert money(Decimal("10.005")) == Decimal("10.01")  # meio pra cima
-    assert money(Decimal("10")) == Decimal("10.00")
+    assert arredondar_dinheiro(Decimal("10.005")) == Decimal("10.01")  # meio pra cima
+    assert arredondar_dinheiro(Decimal("10")) == Decimal("10.00")
 
 
 def test_unit_price_soma_complementos():

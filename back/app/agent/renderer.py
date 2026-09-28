@@ -18,9 +18,8 @@ from collections.abc import Iterable, Sequence
 from decimal import Decimal
 from typing import Any
 
-from app.core.config import get_settings
-from app.domain.cart import Cart, CartItem
-from app.domain.catalog import CatalogGroup, CatalogProduct, CatalogSnapshot
+from app.configuracao import get_settings
+from app.dominio import Cart, CartItem, CatalogGroup, CatalogProduct, CatalogSnapshot
 
 
 def _loja() -> str:

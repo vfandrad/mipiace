@@ -21,8 +21,8 @@ from __future__ import annotations
 from typing import Any
 
 from app.agent.plan import QUESTION_TOPICS, Action
-from app.core.config import get_settings
-from app.domain.catalog import CatalogSnapshot
+from app.configuracao import get_settings
+from app.dominio import CatalogSnapshot
 
 #: Nome da tool. O modelo é forçado a chamá-la (tool_choice), então ela é o
 #: único formato de saída possível — não há texto livre para parsear.

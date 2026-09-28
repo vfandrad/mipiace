@@ -13,7 +13,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Address, Customer
+from app.banco import Address, Customer
 
 # ---------------------------------------------------------------------------
 # Acesso a dados

@@ -8,8 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.domain.cart import Cart, CartItem
-from app.domain.enums import FulfillmentType, OrderChannel, OrderStatus
+from app.dominio import Cart, CartItem, FulfillmentType, OrderChannel, OrderStatus
 from app.services import orders as orders_service
 
 S = OrderStatus
