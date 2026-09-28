@@ -17,17 +17,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import ADMIN_DEPS
-from app.api.routes import (
-    conversations,
-    health,
-    metrics,
-    orders,
-    products,
-    simulator,
-    webhooks,
+from app.api import (
+    ADMIN_DEPS,
+    API_VERSION,
+    rotas_conversas,
+    rotas_metricas,
+    rotas_pedidos,
+    rotas_produtos,
+    rotas_saude,
+    rotas_simulador,
+    rotas_webhooks,
 )
-from app.api.routes.health import API_VERSION
 from app.configuracao import get_logger, get_settings, setup_logging
 
 logger = get_logger(__name__)
@@ -86,18 +86,18 @@ def create_app() -> FastAPI:
         return response
 
     # Públicas: health e webhooks (Mercado Pago e Evolution validam o remetente).
-    app.include_router(health.router)
-    app.include_router(webhooks.router)
+    app.include_router(rotas_saude)
+    app.include_router(rotas_webhooks)
 
     # Administrativas: exigem X-API-Key.
-    for router in (
-        products.router,
-        orders.router,
-        metrics.router,
-        conversations.router,
-        simulator.router,
+    for rotas in (
+        rotas_produtos,
+        rotas_pedidos,
+        rotas_metricas,
+        rotas_conversas,
+        rotas_simulador,
     ):
-        app.include_router(router, dependencies=ADMIN_DEPS)
+        app.include_router(rotas, dependencies=ADMIN_DEPS)
 
     @app.exception_handler(IntegrityError)
     async def _integrity_error(request: Request, exc: IntegrityError) -> JSONResponse:

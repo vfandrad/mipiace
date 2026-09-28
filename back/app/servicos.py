@@ -63,16 +63,19 @@ from app.dominio import (
     arredondar_dinheiro,
     item_unit_price,
 )
-from app.schemas.common import Money
-from app.schemas.conversation import ConversationMessageRead, ConversationRead
-from app.schemas.metrics import (
+from app.esquemas import (
+    ConversationMessageRead,
+    ConversationRead,
     DailySales,
     HourlySales,
     MetricsRange,
     MetricsSummary,
+    Money,
+    OrderCreated,
+    OrderSummary,
+    OrderSummaryItem,
     ProductSales,
 )
-from app.schemas.order import OrderCreated, OrderSummary, OrderSummaryItem
 
 # ---------------------------------------------------------------------------
 # Preços — a conta que depende de configuração

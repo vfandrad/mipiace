@@ -163,7 +163,7 @@ async def test_notificacao_de_pagamento_comita(monkeypatch) -> None:
     "aguardando_pagamento" e o cliente nunca recebia a confirmação: as
     alterações do agente morriam ao fechar a sessão.
     """
-    from app.api.routes import webhooks
+    from app import api as webhooks
 
     chamadas: list[object] = []
 
@@ -182,7 +182,7 @@ async def test_notificacao_de_pagamento_comita(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_falha_ao_notificar_nao_derruba_o_pagamento(monkeypatch) -> None:
     """Erro do agente não pode fazer o Mercado Pago reenviar para sempre."""
-    from app.api.routes import webhooks
+    from app import api as webhooks
 
     async def explode(session, order_id) -> None:
         raise RuntimeError("agente fora do ar")
