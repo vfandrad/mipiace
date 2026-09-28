@@ -16,6 +16,7 @@ from app.agent.runner import handle_inbound
 from app.agent.session import load_or_create, reset_session
 from app.agent.whatsapp import InboundMessage
 from app.api.deps import SessionDep, bad_request, not_found, require_fake_mode
+from app.api.routes.webhooks import avisar_agente_do_pagamento
 from app.schemas.order import OrderSummary
 from app.services import orders as orders_service
 from app.services import payments as payments_service
@@ -87,7 +88,7 @@ async def approve_fake_payment(order_id: UUID, session: SessionDep) -> OrderSumm
     if order is None:
         raise not_found("Pedido não encontrado.")
     if approved_now:
-        await payments_service.notify_agent_payment_approved(session, order.id)
+        await avisar_agente_do_pagamento(session, order.id)
 
     summary = await orders_service.get_order_summary(session, order.id)
     if summary is None:  # pragma: no cover - o pedido acabou de ser lido

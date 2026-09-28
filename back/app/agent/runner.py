@@ -31,6 +31,8 @@ from app.agent.whatsapp import InboundMessage, get_channel_adapter
 from app.core.config import get_settings
 from app.domain.catalog import CatalogSnapshot
 from app.domain.enums import ConversationState, MessageDirection, OrderChannel
+from app.services.catalog import get_catalog_snapshot
+from app.services.orders import get_order_summary
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +43,8 @@ _CHANNEL_TO_ORDER_CHANNEL = {
 }
 
 
-# Indireções nomeadas: os testes trocam estas funções por fakes, e o import
-# tardio evita ciclo com os serviços do catálogo/pedidos.
+# Indireção nomeada: os testes trocam esta função por um catálogo de mentira.
 async def _fetch_catalog(db: Any) -> CatalogSnapshot:
-    from app.services.catalog import get_catalog_snapshot  # noqa: PLC0415
-
     return await get_catalog_snapshot(db)
 
 
@@ -238,8 +237,6 @@ async def notify_payment_approved(session: Any, order_id: UUID) -> None:
 async def _order_code(db: Any, order_id: UUID) -> str:
     """Código curto do pedido para a mensagem; cai no id se o serviço falhar."""
     try:
-        from app.services.orders import get_order_summary  # noqa: PLC0415
-
         summary = await get_order_summary(db, order_id)
     except Exception:
         logger.warning("não foi possível ler o pedido %s", order_id, exc_info=True)

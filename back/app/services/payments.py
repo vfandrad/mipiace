@@ -216,30 +216,6 @@ async def apply_payment_result(
     return order, approved_now
 
 
-async def notify_agent_payment_approved(session: AsyncSession, order_id: UUID) -> None:
-    """Avisa o agente que o Pix caiu — sem deixar o webhook morrer por isso.
-
-    Import tardio de propósito: `app.agent.runner` importa serviços daqui, e o
-    ciclo quebraria o boot. Se o agente ainda não existir (desenvolvimento em
-    paralelo), o pagamento continua registrado.
-    """
-    try:
-        from app.agent.runner import notify_payment_approved  # noqa: PLC0415
-    except ImportError:  # pragma: no cover - agente opcional
-        logger.warning("app.agent.runner indisponível; cliente não foi notificado.")
-        return
-    try:
-        await notify_payment_approved(session, order_id)
-        # ÚNICA exceção à regra "quem comita é a rota": esta função é chamada
-        # DEPOIS do commit da rota, já fora do fluxo de resposta, e escreve o
-        # novo estado da conversa. Sem o commit aqui a conversa fica presa em
-        # "aguardando_pagamento" e o cliente nunca recebe a confirmação.
-        await session.commit()
-    except Exception:  # noqa: BLE001 - notificação nunca derruba o webhook
-        logger.exception("Falha ao notificar o cliente do pedido %s", order_id)
-        await session.rollback()
-
-
 async def get_pending_payment(session: AsyncSession, order_id: UUID) -> Payment | None:
     """Cobrança Pix pendente do pedido, se houver."""
     return await get_latest_payment(
@@ -251,5 +227,4 @@ __all__ = [
     "apply_payment_result",
     "create_pix_for_order",
     "get_pending_payment",
-    "notify_agent_payment_approved",
 ]

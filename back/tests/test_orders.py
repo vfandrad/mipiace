@@ -11,7 +11,6 @@ import pytest
 from app.domain.cart import Cart, CartItem
 from app.domain.enums import FulfillmentType, OrderChannel, OrderStatus
 from app.services import orders as orders_service
-from app.services import payments as payments_service
 
 S = OrderStatus
 
@@ -167,17 +166,17 @@ async def test_notificacao_de_pagamento_comita(monkeypatch) -> None:
     "aguardando_pagamento" e o cliente nunca recebia a confirmação: as
     alterações do agente morriam ao fechar a sessão.
     """
-    import app.agent.runner as runner
+    from app.api.routes import webhooks
 
     chamadas: list[object] = []
 
     async def fake_notify(session, order_id) -> None:
         chamadas.append(order_id)
 
-    monkeypatch.setattr(runner, "notify_payment_approved", fake_notify)
+    monkeypatch.setattr(webhooks, "notify_payment_approved", fake_notify)
 
     session = _StubSession()
-    await payments_service.notify_agent_payment_approved(session, uuid4())
+    await webhooks.avisar_agente_do_pagamento(session, uuid4())
 
     assert len(chamadas) == 1, "o agente precisa ser avisado"
     assert session.commits == 1, "sem commit a conversa fica presa"
@@ -186,14 +185,14 @@ async def test_notificacao_de_pagamento_comita(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_falha_ao_notificar_nao_derruba_o_pagamento(monkeypatch) -> None:
     """Erro do agente não pode fazer o Mercado Pago reenviar para sempre."""
-    import app.agent.runner as runner
+    from app.api.routes import webhooks
 
     async def explode(session, order_id) -> None:
         raise RuntimeError("agente fora do ar")
 
-    monkeypatch.setattr(runner, "notify_payment_approved", explode)
+    monkeypatch.setattr(webhooks, "notify_payment_approved", explode)
 
     session = _StubSession()
-    await payments_service.notify_agent_payment_approved(session, uuid4())
+    await webhooks.avisar_agente_do_pagamento(session, uuid4())
 
     assert session.rollbacks == 1, "transação suja precisa ser desfeita"

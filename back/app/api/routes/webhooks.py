@@ -23,7 +23,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
 from app.agent import inbox
-from app.agent.runner import handle_inbound, handle_outbound_echo
+from app.agent.runner import (
+    handle_inbound,
+    handle_outbound_echo,
+    notify_payment_approved,
+)
 from app.agent.whatsapp import EvolutionAdapter, phone_allowed
 from app.api.deps import SessionDep
 from app.core.config import get_settings
@@ -37,6 +41,26 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 SOURCE = "mercadopago"
+
+
+async def avisar_agente_do_pagamento(session: SessionDep, order_id: Any) -> None:
+    """Avisa o agente que o Pix caiu — sem deixar o webhook morrer por isso.
+
+    Mora aqui, e não em `services/payments`, porque avisar o cliente é
+    orquestração: o serviço registra o pagamento, a rota decide o que fazer
+    depois. Quando estava lá dentro, o serviço precisava importar o agente, que
+    importa os serviços de volta — um ciclo remendado com import tardio.
+    """
+    try:
+        await notify_payment_approved(session, order_id)
+        # ÚNICA exceção à regra "quem comita é a rota": isto roda DEPOIS do
+        # commit da rota, já fora do fluxo da resposta, e escreve o novo estado
+        # da conversa. Sem o commit aqui a conversa fica presa em
+        # "aguardando_pagamento" e o cliente nunca recebe a confirmação.
+        await session.commit()
+    except Exception:  # noqa: BLE001 - notificação nunca derruba o webhook
+        logger.exception("Falha ao notificar o cliente do pedido %s", order_id)
+        await session.rollback()
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +262,7 @@ async def mercadopago_webhook(request: Request, session: SessionDep) -> dict[str
     await session.commit()
 
     if order is not None and approved_now:
-        await payments_service.notify_agent_payment_approved(session, order.id)
+        await avisar_agente_do_pagamento(session, order.id)
 
     return {"status": "ok", "pedido": order.code if order else ""}
 

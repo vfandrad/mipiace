@@ -18,12 +18,14 @@ from typing import Any
 from uuid import UUID
 
 from app.agent import renderer as r
-from app.agent.session import ConversationSession
+from app.agent.session import ConversationSession, get_saved_address
 from app.agent.states import advance
 from app.core.config import Settings, get_settings
 from app.domain.catalog import CatalogSnapshot
 from app.domain.enums import ConversationState as S
 from app.domain.enums import FulfillmentType, OrderChannel
+from app.services.orders import create_order_from_cart, get_order_summary
+from app.services.payments import create_pix_for_order
 
 logger = logging.getLogger(__name__)
 
@@ -53,18 +55,11 @@ async def build_deps(
     phone: str | None = None,
     channel: OrderChannel = OrderChannel.WHATSAPP,
 ) -> AgentDeps:
-    """Monta as dependências reais. Import tardio evita ciclo com os serviços."""
-    from app.services.orders import (  # noqa: PLC0415  (import tardio proposital)
-        create_order_from_cart,
-        get_order_summary,
-    )
-    from app.services.payments import create_pix_for_order  # noqa: PLC0415
+    """Monta as dependências reais do agente."""
 
     async def _saved_address() -> dict[str, Any] | None:
         if phone is None:
             return None
-        from app.agent.session import get_saved_address  # noqa: PLC0415
-
         return await get_saved_address(db, phone)
 
     return AgentDeps(
