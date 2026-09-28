@@ -553,6 +553,143 @@ async def test_fechar_informal_morno_ainda_nao_confirma() -> None:
 
 
 @pytest.mark.asyncio
+async def test_correcao_junto_com_fechar_nao_vira_cobranca() -> None:
+    """Quem ainda está corrigindo o pedido NÃO está confirmando.
+
+    O pior achado das conversas de teste: com o resumo na tela, o cliente
+    escreveu "nao ta certo nao, voce nao mudou nada. no item 2 troca brownie
+    por coco". O modelo devolveu update_item + close_order, e o bot respondeu
+    emitindo um Pix de R$ 165. Uma reclamação virou cobrança.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
+        "pode fechar, vou retirar",
+    )
+    assert session.state is S.CONFIRMANDO_PEDIDO
+
+    await run(
+        deps,
+        session,
+        plano(
+            op(Action.UPDATE_ITEM, remove_flavors=["Pistache"], add_flavors=["Chocolate"]),
+            op(Action.CLOSE_ORDER),
+        ),
+        "nao ta certo nao, troca pistache por chocolate",
+    )
+
+    assert session.state is S.CONFIRMANDO_PEDIDO, "alterar e cobrar no mesmo turno"
+    assert session.active_order_id is None, "não pode ter cobrado"
+    sabores = [c.name for c in session.cart.items[0].complements]
+    assert "Chocolate" in sabores and "Pistache" not in sabores, "a troca tinha que valer"
+
+
+@pytest.mark.asyncio
+async def test_dispensar_o_atendente_nao_cancela_o_pedido() -> None:
+    """"deixa pra lá, continua vc mesmo" dispensa o ATENDENTE, não o pedido.
+
+    Achado em conversa real: o modelo devolveu cancel_order para essa frase,
+    o cliente perdeu o pedido inteiro e, ao reclamar ("eu não mandei cancelar
+    nada"), ouviu "cancelei o pedido" de novo.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(deps, session, plano(op(Action.REQUEST_HUMAN)), "quero falar com um atendente")
+    assert session.state is S.ATENDIMENTO_HUMANO
+
+    await run(
+        deps, session, plano(op(Action.CANCEL_ORDER)), "deixa pra la continua vc mesmo"
+    )
+
+    assert session.state is not S.CANCELADO, "dispensar o atendente não é cancelar"
+    assert len(session.cart.items) == 1, "o pedido tinha que continuar de pé"
+
+
+@pytest.mark.asyncio
+async def test_cancelar_de_verdade_no_atendimento_humano_continua_valendo() -> None:
+    """O contrapeso do teste acima: quem pede para cancelar, cancela."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(deps, session, plano(op(Action.REQUEST_HUMAN)), "chama um atendente")
+
+    await run(deps, session, plano(op(Action.CANCEL_ORDER)), "cancela meu pedido")
+
+    assert session.state is S.CANCELADO
+    assert session.cart.is_empty
+
+
+@pytest.mark.asyncio
+async def test_pedir_pra_tirar_a_taxa_nao_oferece_apagar_produto() -> None:
+    """"tira essa taxa aí" não é pedido para apagar um pote de R$ 50.
+
+    Achado em conversa real: o bot respondia "Qual deles? 1. GG  2. M" — e um
+    "1" teria apagado o produto. Pior, insistia na mesma pergunta depois de o
+    cliente explicar que falava da taxa.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    replies = await run(
+        deps, session, plano(op(Action.REMOVE_ITEM)), "tira essa taxa de entrega ai vai"
+    )
+
+    assert len(session.cart.items) == 1, "nenhum item pode sair"
+    resposta = " ".join(replies).lower()
+    assert "qual deles" not in resposta, "não pode oferecer apagar produto"
+    assert "taxa" in resposta, "tinha que falar da taxa"
+
+
+@pytest.mark.asyncio
+async def test_lista_de_sabores_sem_virgula_nao_perde_sabor() -> None:
+    """"pistache chocolate e morango" são TRÊS sabores, não só o último.
+
+    O modelo devolve só o último sabor quando a lista vem sem vírgula, e o
+    cliente não vê o que sumiu. O catálogo recupera: só entra sabor que está
+    escrito na mensagem E existe no grupo.
+    """
+    deps, session = build_deps(), build_session()
+    await run(
+        deps, session, plano(op(Action.ADD_ITEM, product_name="Pote 500ml")), "um pote"
+    )
+
+    await run(
+        deps,
+        session,
+        # O plano traz só o último, como o modelo real devolve.
+        plano(op(Action.UPDATE_ITEM, add_flavors=["Morango"])),
+        "pistache e morango",
+    )
+
+    sabores = [c.name for c in session.cart.items[0].complements]
+    assert sabores == ["Pistache", "Morango"], sabores
+
+
+@pytest.mark.asyncio
+async def test_varredura_de_sabores_nao_readiciona_o_que_foi_removido() -> None:
+    """"tira o pistache e poe morango" não pode trazer o pistache de volta.
+
+    A recuperação pelo catálogo lê a mensagem inteira, e o nome do sabor
+    removido está escrito nela.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)  # Pistache + Morango
+
+    await run(
+        deps,
+        session,
+        plano(op(Action.UPDATE_ITEM, remove_flavors=["Pistache"], add_flavors=["Chocolate"])),
+        "tira o pistache e poe chocolate",
+    )
+
+    sabores = [c.name for c in session.cart.items[0].complements]
+    assert "Pistache" not in sabores, sabores
+    assert "Chocolate" in sabores, sabores
+
+
+@pytest.mark.asyncio
 async def test_retirada_nao_pede_endereco() -> None:
     deps, session = build_deps(), build_session()
     await montar_pote(deps, session)

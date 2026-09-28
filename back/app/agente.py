@@ -933,10 +933,16 @@ def tool_schema() -> dict[str, Any]:
                                 "type": "array",
                                 "items": {"type": "string"},
                                 "description": (
-                                    "Nomes EXATOS de sabores do cardápio que ele "
-                                    "escolheu NESTA mensagem. Se respondeu por "
-                                    "número, traduza usando a lista mostrada. "
-                                    "Não repita o que ele já tinha escolhido."
+                                    "TODOS os sabores do cardápio que ele "
+                                    "escolheu NESTA mensagem, um por entrada, "
+                                    "com o nome EXATO do cardápio. Liste todos "
+                                    "mesmo quando vierem numa frase corrida, sem "
+                                    "vírgula: \"pistache chocolate e brownie\" são "
+                                    "TRÊS sabores, e o resultado tem que ser "
+                                    "[\"Pistache\", \"Chocolate\", \"Brownie\"] — "
+                                    "nunca só o último. Se respondeu por número, "
+                                    "traduza usando a lista mostrada. Não repita o "
+                                    "que ele já tinha escolhido."
                                 ),
                             },
                             "remove_flavors": {
@@ -2968,8 +2974,38 @@ def _apply_flavors(
         turn.say(r.sabor_repetido(repetidos[0]))
 
 
+#: Palavras que indicam EXCLUSÃO numa lista de sabores. Com uma delas na
+#: mensagem, a varredura do catálogo (`_sabores_ditos`) desliga: "quero tudo
+#: menos pistache" cita pistache, e varrer o texto o adicionaria.
+_EXCLUINDO = ("menos ", "exceto", "tirando", "nao quero", "sem ser", "fora o")
+
+
+def _sabores_ditos(group: CatalogGroup, mensagem: str) -> list[Any]:
+    """Sabores DESTE grupo que aparecem no texto do cliente, na ordem falada.
+
+    Existe porque o modelo perde itens de uma lista escrita sem vírgula:
+    "pistache chocolate e brownie" volta como `["Brownie"]` — só o último. A
+    instrução no prompt não resolveu, e o cliente não vê o que sumiu; ele
+    acha que pediu três sabores e o pedido sai com um.
+
+    O catálogo é justamente o que existe para contradizer o modelo (mesma
+    ideia de `_disse_isso` para endereço). Aqui ele recupera o que o modelo
+    deixou cair, sem inventar nada: só entra sabor que está escrito na
+    mensagem E existe no grupo.
+    """
+    limpo = normalize(mensagem)
+    if not limpo or any(marca in limpo for marca in _EXCLUINDO):
+        return []
+    achados = []
+    for complemento in group.complements:
+        posicao = limpo.find(normalize(complemento.name))
+        if posicao >= 0:
+            achados.append((posicao, complemento))
+    return [c for _, c in sorted(achados, key=lambda par: par[0])]
+
+
 def _flavors_into(
-    deps: AgentDeps, item: CartItem, op: Operation, turn: Turno
+    deps: AgentDeps, item: CartItem, op: Operation, turn: Turno, mensagem: str = ""
 ) -> None:
     """Aplica os sabores da operação no item, no grupo certo."""
     if not (op.add_flavors or op.remove_flavors):
@@ -2981,6 +3017,18 @@ def _flavors_into(
             turn.answered = True
         return
     achados, problemas = _find_flavors(group, op.add_flavors)
+
+    # O modelo acertou o sabor, mas pode ter perdido o resto da lista. Se o
+    # texto do cliente cita MAIS sabores deste grupo do que ele devolveu, o
+    # texto manda — tirando os que o próprio plano pediu para remover.
+    if achados and mensagem:
+        removendo = {normalize(n) for n in op.remove_flavors}
+        pelo_texto = [
+            c for c in _sabores_ditos(group, mensagem)
+            if normalize(c.name) not in removendo
+        ]
+        if len(pelo_texto) > len(achados):
+            achados = pelo_texto
     antes = len(turn.notes)
     turn.say(*problemas)
     _apply_flavors(item, group, add=achados, remove_names=op.remove_flavors, turn=turn)
@@ -3027,7 +3075,7 @@ async def apply(
         _op_update_item(deps, session, op, turn, mensagem)
 
     elif action is Action.REMOVE_ITEM:
-        _op_remove_item(deps, session, op, turn)
+        _op_remove_item(deps, session, op, turn, mensagem)
 
     elif action is Action.UPDATE_QUANTITY:
         _op_quantity(deps, session, op, turn, mensagem)
@@ -3242,7 +3290,7 @@ def _op_add_item(
         # Sem produto identificado, mas com sabores: é resposta à pergunta do
         # item que está aberto.
         if pendente is not None and (op.add_flavors or op.remove_flavors):
-            _flavors_into(deps, pendente, op, turn)
+            _flavors_into(deps, pendente, op, turn, mensagem)
             if _is_complete(deps, pendente):
                 turn.say(r.item_adicionado(pendente))
             return
@@ -3255,7 +3303,7 @@ def _op_add_item(
         if op.quantity:
             pendente.quantity = max(1, op.quantity)
             turn.changed = True
-        _flavors_into(deps, pendente, op, turn)
+        _flavors_into(deps, pendente, op, turn, mensagem)
         if _is_complete(deps, pendente):
             turn.say(r.item_adicionado(pendente))
         return
@@ -3277,7 +3325,7 @@ def _op_add_item(
 
     item = _new_item(session, product, op.quantity or 1)
     turn.changed = True
-    _flavors_into(deps, item, op, turn)
+    _flavors_into(deps, item, op, turn, mensagem)
     if _is_complete(deps, item):
         turn.say(r.item_adicionado(item))
 
@@ -3331,7 +3379,7 @@ def _op_update_item(
             return
         antigo = session.cart.items[index]
         if antigo.product_id == product.id:
-            _flavors_into(deps, antigo, op, turn)
+            _flavors_into(deps, antigo, op, turn, mensagem)
             return
         _replace_product(deps, session, index, product, turn)
         return
@@ -3344,7 +3392,7 @@ def _op_update_item(
 
     item = session.cart.items[index]
     estava_completo = _is_complete(deps, item)
-    _flavors_into(deps, item, op, turn)
+    _flavors_into(deps, item, op, turn, mensagem)
     if turn.changed and estava_completo and _is_complete(deps, item):
         turn.say(r.item_alterado(item))
 
@@ -3380,11 +3428,41 @@ def _replace_product(
     turn.changed = True
 
 
+#: Palavras que mostram que o cliente está falando da TAXA, não de um produto.
+_FALA_DE_TAXA = ("taxa", "frete", "entrega gratis", "entrega gratuita")
+
+
+def _fala_de_taxa(mensagem: str) -> bool:
+    limpo = normalize(mensagem)
+    return any(marca in limpo for marca in _FALA_DE_TAXA)
+
+
 def _op_remove_item(
-    deps: AgentDeps, session: ConversationSession, op: Operation, turn: Turno
+    deps: AgentDeps,
+    session: ConversationSession,
+    op: Operation,
+    turn: Turno,
+    mensagem: str = "",
 ) -> None:
     if session.cart.is_empty:
         turn.say(r.pedido_vazio())
+        turn.answered = True
+        return
+
+    # "tira essa taxa aí vai" não é pedido para apagar produto. Vem antes de
+    # resolver o alvo de propósito: com um item só no carrinho o alvo é
+    # resolvido sozinho, e o pote sumiria sem ninguém perguntar nada.
+    if not op.product_name and op.item_index is None and _fala_de_taxa(mensagem):
+        turn.say(
+            answer(
+                topic="taxa_entrega",
+                question=mensagem,
+                raw_text=mensagem,
+                catalog=deps.catalog,
+                settings=deps.settings,
+                cart=session.cart,
+            )
+        )
         turn.answered = True
         return
 
@@ -3484,6 +3562,23 @@ def _op_duplicate(
 
     if session.cart.is_empty:
         turn.say(r.pedido_vazio())
+        turn.answered = True
+        return
+
+    # "tira essa taxa aí vai" não é pedido para apagar produto. Vem antes de
+    # resolver o alvo de propósito: com um item só no carrinho o alvo é
+    # resolvido sozinho, e o pote sumiria sem ninguém perguntar nada.
+    if not op.product_name and op.item_index is None and _fala_de_taxa(mensagem):
+        turn.say(
+            answer(
+                topic="taxa_entrega",
+                question=mensagem,
+                raw_text=mensagem,
+                catalog=deps.catalog,
+                settings=deps.settings,
+                cart=session.cart,
+            )
+        )
         turn.answered = True
         return
 
@@ -3647,6 +3742,18 @@ _VOLTAR_PRO_BOT = (
 )
 
 
+#: O que o cliente escreve quando quer mesmo desistir do pedido. Sem uma
+#: destas, "deixa pra lá" é sobre o atendente, não sobre a compra.
+_SINAIS_CANCELAR = (
+    "cancel", "desist", "nao quero mais", "esquece o pedido", "deixa o pedido",
+)
+
+
+def _cancelamento_dito(text: str) -> bool:
+    limpo = normalize(text)
+    return any(sinal in limpo for sinal in _SINAIS_CANCELAR)
+
+
 def _quer_o_bot_de_volta(text: str) -> bool:
     limpo = normalize(text)
     return any(termo in limpo for termo in _VOLTAR_PRO_BOT)
@@ -3666,7 +3773,16 @@ def _handoff_turn(
     nem resposta a "cancela". Aqui ele continua ouvindo: avisa que está
     aguardando, aceita cancelamento e volta a atender se o cliente pedir.
     """
-    if plan.has(Action.CANCEL_ORDER):
+    # A fala do cliente vem antes do palpite do modelo. "deixa pra lá, continua
+    # vc mesmo" dispensa o ATENDENTE, não o pedido — e o modelo devolvia
+    # cancel_order para essa frase. Em conversa real o cliente perdeu o pedido
+    # inteiro assim, e ao reclamar ("eu não mandei cancelar nada") ouviu de
+    # novo "cancelei o pedido". Quem pede o bot de volta sem dizer "cancela"
+    # não está cancelando.
+    cancelou_mesmo = plan.has(Action.CANCEL_ORDER) and (
+        _cancelamento_dito(text) or not _quer_o_bot_de_volta(text)
+    )
+    if cancelou_mesmo:
         return cancel(session)
 
     # Qualquer operação que MEXE no pedido significa "quero seguir por aqui
@@ -3702,8 +3818,14 @@ def _handoff_turn(
             # o turno seguia normalmente e esse request_human jogava a
             # conversa de volta para o atendimento humano no mesmo turno em
             # que o cliente pediu para sair dele.
+            # `cancel_order` sai pelo mesmo motivo do `request_human`: a frase
+            # que dispensa o atendente ("deixa pra lá") faz o modelo achar que
+            # o cliente desistiu do pedido.
+            descartar = {Action.REQUEST_HUMAN}
+            if not _cancelamento_dito(text):
+                descartar.add(Action.CANCEL_ORDER)
             plan.operations = [
-                op for op in plan.operations if op.action is not Action.REQUEST_HUMAN
+                op for op in plan.operations if op.action not in descartar
             ]
         return None  # o turno segue normalmente; quem chama põe o aviso
 
@@ -3736,7 +3858,10 @@ def _handoff_turn(
 
 #: Operações que mexem no pedido. Enquanto houver Pix pendente elas ficam
 #: bloqueadas — cancelar, perguntar e pedir gente seguem valendo.
-_MEXEM_NO_PEDIDO = frozenset(
+#: Operações que ALTERAM os itens do pedido. Fechar e confirmar ficam de fora:
+#: elas encerram o pedido, não o modificam — e a diferença importa na trava da
+#: confirmação, que precisa saber se o cliente ainda estava mexendo em algo.
+_EDITAM_OS_ITENS = frozenset(
     {
         Action.ADD_ITEM,
         Action.UPDATE_ITEM,
@@ -3744,9 +3869,11 @@ _MEXEM_NO_PEDIDO = frozenset(
         Action.REMOVE_ITEM,
         Action.UPDATE_QUANTITY,
         Action.DUPLICATE_ITEM,
-        Action.CLOSE_ORDER,
-        Action.CONFIRM_ORDER,
     }
+)
+
+_MEXEM_NO_PEDIDO = _EDITAM_OS_ITENS | frozenset(
+    {Action.CLOSE_ORDER, Action.CONFIRM_ORDER}
 )
 
 
@@ -3921,8 +4048,18 @@ async def run(
     # reexibia o mesmo resumo, obrigando o cliente a repetir a confirmação de
     # um jeito mais formal. A trava da resposta morna (`_hedged`) continua
     # valendo do mesmo jeito para os dois casos.
-    quer_confirmar = session.slots.get(AWAITING_CONFIRM) and (
-        plan.has(Action.CONFIRM_ORDER) or plan.has(Action.CLOSE_ORDER)
+    # ...mas quem ainda está corrigindo o pedido NÃO está confirmando. Se o
+    # mesmo plano traz uma alteração junto do fechamento, o cliente estava
+    # mexendo em algo — e alterar e confirmar na mesma frase é contradição.
+    # Achado em conversa real, no pior jeito possível: "nao ta certo nao, voce
+    # nao mudou nada. no item 2 troca brownie por coco" saiu do modelo como
+    # update_item + close_order, e o bot respondeu emitindo um Pix de R$ 165.
+    # Uma reclamação virou cobrança. Aqui a alteração é aplicada e o resumo
+    # volta para a tela; cobrar espera o próximo turno.
+    quer_confirmar = (
+        session.slots.get(AWAITING_CONFIRM)
+        and (plan.has(Action.CONFIRM_ORDER) or plan.has(Action.CLOSE_ORDER))
+        and not any(action in _EDITAM_OS_ITENS for action in plan.actions)
     )
     if quer_confirmar:
         if _hedged(text):
