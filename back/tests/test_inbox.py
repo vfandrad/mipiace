@@ -47,6 +47,28 @@ async def test_baloes_seguidos_viram_um_turno_so(janela_curta) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reentrega_dentro_da_janela_nao_duplica_texto(janela_curta) -> None:
+    """Retry de webhook do gateway, ainda dentro do agrupamento, não conta duas vezes.
+
+    Sem checar o id antes de somar ao buffer, a reentrega de um balão que já
+    está NESTA janela duplicava o texto — o LLM lia "quero um pote" duas
+    vezes na mesma mensagem, como se o cliente tivesse pedido dois.
+    """
+    turnos: list[InboundMessage] = []
+
+    async def handler(message: InboundMessage) -> None:
+        turnos.append(message)
+
+    await inbox.submit(msg("quero um pote", id_="m1"), handler)
+    await inbox.submit(msg("quero um pote", id_="m1"), handler)  # reentrega do m1
+    await inbox.submit(msg("de pistache", id_="m2"), handler)
+    await inbox.drain()
+
+    assert len(turnos) == 1
+    assert turnos[0].text == "quero um pote\nde pistache"
+
+
+@pytest.mark.asyncio
 async def test_clientes_diferentes_nao_se_misturam(janela_curta) -> None:
     turnos: list[InboundMessage] = []
 

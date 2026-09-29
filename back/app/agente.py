@@ -56,15 +56,19 @@ from app.dominio import (
     FulfillmentType,
     MessageDirection,
     OrderChannel,
+    OrderStatus,
     normalize,
     parse_state,
 )
 from app.dominio import ConversationState as S
 from app.servicos import (
+    InvalidStatusTransition,
+    OrderNotFoundError,
     create_order_from_cart,
     create_pix_for_order,
     get_catalog_snapshot,
     get_order_summary,
+    update_order_status,
 )
 
 # ---------------------------------------------------------------------------
@@ -122,6 +126,10 @@ class Address(BaseModel):
     bairro: str | None = None
     complemento: str | None = None
     referencia: str | None = None
+
+
+#: Ver `OpenAILLMClient._positive`.
+_QUANTIDADE_MAXIMA_POR_OPERACAO = 50
 
 
 class Operation(BaseModel):
@@ -1522,7 +1530,13 @@ class OpenAILLMClient:
             value = int(raw)
         except (TypeError, ValueError):
             return None
-        return value if value > 0 else None
+        if value <= 0:
+            return None
+        # Teto de sanidade, não regra de negócio: a loja não tem um máximo de
+        # potes por pedido, mas sem isto "quero 900000 potes" virava item de
+        # carrinho com preço "correto" porém sem sentido, capaz de travar a
+        # geração do Pix.
+        return min(value, _QUANTIDADE_MAXIMA_POR_OPERACAO)
 
     @staticmethod
     def _fulfillment(raw: Any) -> str | None:
@@ -2375,6 +2389,8 @@ class _Buffer:
     last: InboundMessage
     texts: list[str] = field(default_factory=list)
     deadline: float = 0.0
+    #: ids já somados a `texts` — ver `submit`.
+    seen_ids: set[str] = field(default_factory=set)
 
 
 _buffers: dict[str, _Buffer] = {}
@@ -2430,6 +2446,19 @@ async def submit(message: InboundMessage, handler: Handler) -> None:
         return
 
     buffer = _buffers.get(message.phone)
+    if (
+        buffer is not None
+        and message.provider_message_id
+        and message.provider_message_id in buffer.seen_ids
+    ):
+        # Reentrega do gateway (retry de webhook) de um balão que já está
+        # NESTA janela de agrupamento: sem isto o texto entrava de novo no
+        # buffer antes do turno rodar, e o LLM lia a mesma frase repetida
+        # como se o cliente tivesse dito duas vezes. A reentrega de um balão
+        # de um turno ANTERIOR já processado é outro caso — esse é pego pela
+        # dedupe de `already_seen` lá no `handle_inbound`.
+        return
+
     if buffer is None:
         buffer = _Buffer(last=message)
         _buffers[message.phone] = buffer
@@ -2439,6 +2468,8 @@ async def submit(message: InboundMessage, handler: Handler) -> None:
     else:
         buffer.last = message
 
+    if message.provider_message_id:
+        buffer.seen_ids.add(message.provider_message_id)
     buffer.texts.append(message.text)
     buffer.deadline = time.monotonic() + window
 
@@ -2891,6 +2922,7 @@ logger = logging.getLogger(__name__)
 CreateOrder = Callable[..., Awaitable[Any]]
 CreatePix = Callable[..., Awaitable[Any]]
 OrderSummaryFn = Callable[..., Awaitable[Any]]
+CancelOrderFn = Callable[[Any, UUID], Awaitable[Any]]
 
 
 @dataclass(slots=True)
@@ -2903,6 +2935,7 @@ class AgentDeps:
     create_order: CreateOrder
     create_pix: CreatePix
     order_summary: OrderSummaryFn
+    cancel_order: CancelOrderFn | None = None
     saved_address: Callable[[], Awaitable[dict[str, Any] | None]] | None = None
     channel: OrderChannel = OrderChannel.WHATSAPP
 
@@ -2921,6 +2954,9 @@ async def build_deps(
             return None
         return await get_saved_address(db, phone)
 
+    async def _cancel_order(db: Any, order_id: UUID) -> Any:
+        return await update_order_status(db, order_id, OrderStatus.CANCELADO)
+
     return AgentDeps(
         db=db,
         catalog=catalog,
@@ -2928,6 +2964,7 @@ async def build_deps(
         create_order=create_order_from_cart,
         create_pix=create_pix_for_order,
         order_summary=get_order_summary,
+        cancel_order=_cancel_order,
         saved_address=_saved_address,
         channel=channel,
     )
@@ -2976,6 +3013,24 @@ def final_summary(deps: AgentDeps, session: ConversationSession) -> str:
 # ---------------------------------------------------------------------------
 # Do carrinho ao Pix
 # ---------------------------------------------------------------------------
+
+async def _abandon_pending_order(deps: AgentDeps, session: ConversationSession) -> None:
+    """Descarta um pedido que ficou esperando o Pix e já não bate com o carrinho.
+
+    Sem isto, `place_order` reaproveitava esse `pending_order_id` na próxima
+    tentativa e gerava o Pix para os itens/total de ANTES da edição — o
+    cliente pagava um valor que não correspondia ao que tinha acabado de
+    pedir. O pedido abandonado é cancelado no banco (melhor esforço) para não
+    ficar como um pedido "novo" órfão na fila da cozinha.
+    """
+    pending = session.slots.pop("pending_order_id", None)
+    if not pending or deps.cancel_order is None:
+        return
+    try:
+        await deps.cancel_order(deps.db, UUID(pending))
+    except Exception:
+        logger.exception("não deu para cancelar o pedido pendente %s", pending)
+
 
 async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str]:
     """Cria o pedido, gera o Pix e leva para AGUARDANDO_PAGAMENTO.
@@ -3065,6 +3120,12 @@ class Turno:
     #: replace_item), e sem isto o sabor que não coube no tamanho novo era
     #: descartado sem o cliente nunca ser avisado de qual sumiu.
     sabores_removidos: list[str] = field(default_factory=list)
+    #: O carrinho como estava ANTES da primeira operação deste turno. Um plano
+    #: com mais de uma operação por `item_index` (ex.: duas remoções, "tira o
+    #: primeiro, tira o primeiro de novo") não pode resolver a segunda contra
+    #: o carrinho já encolhido pela primeira — o número que o cliente viu era
+    #: sobre ESTA lista, não sobre a lista depois de mexida. Ver `_target`.
+    cart_no_inicio_do_turno: list[CartItem] | None = None
 
     def say(self, *texts: str) -> None:
         """Acrescenta falas, sem repetir a mesma no mesmo turno.
@@ -3159,8 +3220,36 @@ def adopt_legacy_draft(deps: AgentDeps, session: ConversationSession) -> None:
 # Alvo (qual item a operação atinge)
 # ---------------------------------------------------------------------------
 
+#: Quando há dois itens do mesmo produto no carrinho e o cliente aponta qual
+#: pelo número de ordem em vez de pelo número da lista ("tira o pistache do
+#: PRIMEIRO pote"), isto resolve o empate por aquilo que ele disse em vez de
+#: sempre cair no último. Só entra em jogo com mais de um item igual — não
+#: exige nada do cliente, só aproveita o sinal quando ele está lá.
+_ORDINAIS = {
+    "primeiro": 0, "primeira": 0, "1o": 0, "1º": 0,
+    "segundo": 1, "segunda": 1, "2o": 1, "2º": 1,
+    "terceiro": 2, "terceira": 2, "3o": 2, "3º": 2,
+    "ultimo": -1, "ultima": -1,
+}
+
+
+def _achado_por_ordinal(mensagem: str, achados: list[int]) -> int | None:
+    if len(achados) < 2 or not mensagem:
+        return None
+    limpo = normalize(mensagem)
+    for termo, posicao in _ORDINAIS.items():
+        if termo in limpo.split() and -len(achados) <= posicao < len(achados):
+            return achados[posicao]
+    return None
+
+
 def _target(
-    deps: AgentDeps, session: ConversationSession, op: Operation
+    deps: AgentDeps,
+    session: ConversationSession,
+    op: Operation,
+    mensagem: str = "",
+    *,
+    turn: Turno | None = None,
 ) -> int | None:
     """Índice do item que a operação atinge, ou None quando não dá para saber.
 
@@ -3181,8 +3270,23 @@ def _target(
         return None
 
     if op.item_index is not None:
-        if 1 <= op.item_index <= len(itens):
-            return op.item_index - 1
+        # O número é sobre o carrinho que o cliente VIU, não sobre o carrinho
+        # já mexido por uma operação anterior deste mesmo turno — ver
+        # `Turno.cart_no_inicio_do_turno`.
+        referencia = (
+            turn.cart_no_inicio_do_turno
+            if turn is not None and turn.cart_no_inicio_do_turno is not None
+            else itens
+        )
+        if 1 <= op.item_index <= len(referencia):
+            alvo = referencia[op.item_index - 1]
+            for i, item in enumerate(itens):
+                if item is alvo:
+                    return i
+            # O item que esse número apontava já saiu do carrinho NESTE
+            # turno (uma operação anterior do mesmo plano removeu) — não
+            # existe mais o que renumerar sozinho para ele.
+            return None
         # Índice fora da lista com um item só: ele quis dizer esse.
         return 0 if len(itens) == 1 else None
 
@@ -3190,7 +3294,11 @@ def _target(
         alvo = normalize(op.product_name)
         achados = [i for i, item in enumerate(itens) if normalize(item.product_name) == alvo]
         if achados:
-            # Dois iguais no pedido: mexe no último, como gente espera.
+            por_ordinal = _achado_por_ordinal(mensagem, achados)
+            if por_ordinal is not None:
+                return por_ordinal
+            # Dois iguais no pedido, sem o cliente apontar qual: mexe no
+            # último, como gente espera.
             return achados[-1]
         if deps.catalog.product_by_name(op.product_name) is not None:
             return None
@@ -3567,7 +3675,7 @@ async def apply(
             turn.say(r.confirmar_cancelamento())
             turn.answered = True
         else:
-            turn.finished = cancel(session)
+            turn.finished = await cancel(deps, session)
 
     elif action is Action.REQUEST_HUMAN:
         turn.finished = to_human(session)
@@ -3841,7 +3949,7 @@ def _op_update_item(
         _replace_product(deps, session, index, product, turn)
         return
 
-    index = _target(deps, session, op)
+    index = _target(deps, session, op, mensagem, turn=turn)
     if index is None:
         turn.say(r.perguntar_qual_item(session.cart))
         turn.answered = True
@@ -3932,7 +4040,7 @@ def _op_remove_item(
         logger.info("remove_item descartado, sem sinal em %r", mensagem)
         return
 
-    index = _target(deps, session, op)
+    index = _target(deps, session, op, mensagem, turn=turn)
 
     # "tira o pistache" é tirar o sabor, não o item.
     #
@@ -3994,7 +4102,7 @@ def _op_quantity(
     if op.quantity is None:
         return
 
-    index = _target(deps, session, op)
+    index = _target(deps, session, op, mensagem, turn=turn)
     if index is None:
         # "quero 2 cascões" com o cascão fora do pedido é adicionar, não
         # mudar a quantidade do que já está lá — senão o cliente leva dois
@@ -4024,7 +4132,9 @@ def _op_duplicate(
     # carrinho. Quando o nome é de outro item, isto é adicionar, não duplicar.
     if op.product_name:
         alvo = deps.catalog.product_by_name(op.product_name)
-        index = _target(deps, session, Operation(action=op.action, item_index=op.item_index))
+        index = _target(
+            deps, session, Operation(action=op.action, item_index=op.item_index), turn=turn
+        )
         atual = session.cart.items[index] if index is not None else None
         if alvo is not None and (atual is None or alvo.id != atual.product_id):
             _op_add_item(deps, session, op, turn, mensagem)
@@ -4052,7 +4162,7 @@ def _op_duplicate(
         turn.answered = True
         return
 
-    index = _target(deps, session, op)
+    index = _target(deps, session, op, mensagem, turn=turn)
     if index is None:
         index = len(session.cart.items) - 1
     copia = session.cart.items[index].model_copy(deep=True)
@@ -4170,11 +4280,40 @@ def resume_from_human(session: ConversationSession) -> None:
 
 
 
-def cancel(session: ConversationSession) -> list[str]:
+async def cancel(deps: AgentDeps, session: ConversationSession) -> list[str]:
+    """Cancela a conversa E o pedido real — as duas coisas, não só uma.
+
+    Cancelar só a sessão foi o pior jeito de descobrir isto: o `Order` no
+    banco continuava `novo`/pendente com o Pix ainda válido no provedor. Se o
+    pagamento chegasse depois (atrasado, ou o cliente pagou sem ver a
+    confirmação de cancelamento a tempo), o webhook aprovava normalmente e um
+    pedido que a conversa já tratava como morto ia para a cozinha sem
+    ninguém perceber.
+    """
     if session.state in CANCELLABLE_STATES or session.state is S.ATENDIMENTO_HUMANO:
         if session.state is S.ATENDIMENTO_HUMANO:
             session.handoff = False
         _go(session, S.CANCELADO)
+
+    order_id = session.active_order_id
+    if order_id is None:
+        pending = session.slots.get("pending_order_id")
+        if pending:
+            try:
+                order_id = UUID(pending)
+            except ValueError:
+                order_id = None
+    if order_id is not None and deps.cancel_order is not None:
+        try:
+            await deps.cancel_order(deps.db, order_id)
+        except (OrderNotFoundError, InvalidStatusTransition):
+            # Já saiu do estado em que cancelar faz sentido (cozinha já
+            # finalizou, ou já tinha sido cancelado) — a conversa cancela do
+            # lado dela mesmo assim; o pedido físico é do Kanban.
+            logger.info("cancelamento do pedido %s no banco não se aplicava mais", order_id)
+        except Exception:
+            logger.exception("não deu para cancelar o pedido %s no banco", order_id)
+
     session.slots = {}
     session.cart.items.clear()
     session.active_order_id = None
@@ -4218,8 +4357,8 @@ def _quer_o_bot_de_volta(text: str) -> bool:
     return any(termo in limpo for termo in _VOLTAR_PRO_BOT)
 
 
-def _handoff_turn(
-    session: ConversationSession, plan: AgentPlan, text: str
+async def _handoff_turn(
+    deps: AgentDeps, session: ConversationSession, plan: AgentPlan, text: str
 ) -> list[str] | None:
     """Em atendimento humano o bot não conduz o pedido — mas não emudece.
 
@@ -4242,7 +4381,7 @@ def _handoff_turn(
         _cancelamento_claro(text) or not _quer_o_bot_de_volta(text)
     )
     if cancelou_mesmo:
-        return cancel(session)
+        return await cancel(deps, session)
 
     # Qualquer operação que MEXE no pedido significa "quero seguir por aqui
     # mesmo". show_cart/show_total/show_menu ficaram de fora de propósito:
@@ -4334,6 +4473,14 @@ _EDITAM_OS_ITENS = frozenset(
 _MEXEM_NO_PEDIDO = _EDITAM_OS_ITENS | frozenset(
     {Action.CLOSE_ORDER, Action.CONFIRM_ORDER}
 )
+
+#: As mesmas ações de `_EDITAM_OS_ITENS`, mais trocar entrega/retirada: junto
+#: com os itens, ela pesa no total (a taxa de R$5) e por isso também não pode
+#: ficar pendente quando o cliente confirma NA MESMA mensagem. Sem isto,
+#: "muda pra entrega e fecha o pedido" cobrava com a forma de recebimento
+#: ANTIGA — `place_order` rodava antes de `set_fulfillment` ser aplicado,
+#: porque o gate de confirmação só olhava para operações de item.
+_ADIAM_A_COBRANCA = _EDITAM_OS_ITENS | frozenset({Action.SET_FULFILLMENT})
 
 
 #: De quanto em quanto tempo o aviso longo de "estou aguardando alguém" se
@@ -4600,7 +4747,7 @@ async def run(
     voltou_do_humano = False
     if session.handoff or session.state is S.ATENDIMENTO_HUMANO:
         if human_on_the_line(session):
-            resposta = _handoff_turn(session, plan, text)
+            resposta = await _handoff_turn(deps, session, plan, text)
             if resposta is not None:
                 return resposta
             voltou_do_humano = True
@@ -4632,6 +4779,7 @@ async def run(
     session.slots["ja_falamos"] = True
 
     turn = Turno()
+    turn.cart_no_inicio_do_turno = list(session.cart.items)
 
     # A confirmação é a única operação que mexe em dinheiro: ela sai da fila e
     # só vale se houver um resumo na tela esperando resposta.
@@ -4653,7 +4801,7 @@ async def run(
     quer_confirmar = (
         session.slots.get(AWAITING_CONFIRM)
         and (plan.has(Action.CONFIRM_ORDER) or plan.has(Action.CLOSE_ORDER))
-        and not any(action in _EDITAM_OS_ITENS for action in plan.actions)
+        and not any(action in _ADIAM_A_COBRANCA for action in plan.actions)
     )
     if quer_confirmar:
         if _hedged(text):
@@ -4694,6 +4842,13 @@ async def run(
             # cliente não sabia se a primeira parte do pedido realmente
             # aconteceu.
             return turn.notes + turn.finished
+
+    if turn.changed and session.slots.get("pending_order_id"):
+        # O pedido que ficou esperando o Pix (falhou ao gerar, cliente ainda
+        # não tinha tentado de novo) não corresponde mais ao carrinho depois
+        # desta edição — reaproveitá-lo na próxima confirmação cobraria os
+        # itens ANTIGOS, descartando a edição em silêncio.
+        await _abandon_pending_order(deps, session)
 
     replies = await _next_step(deps, session, plan, turn, primeira_vez=primeira_vez)
     if voltou_do_humano and replies:

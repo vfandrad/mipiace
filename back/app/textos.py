@@ -536,6 +536,11 @@ def situacao_do_pedido(summary: Any) -> str:
     `place_order` esvazia o carrinho ao emitir o Pix; é o resumo do pedido já
     registrado que sobra para responder por ele — sem isto o cliente ouvia que
     o pedido dele "está vazio", como se tivesse sumido.
+
+    Repetir o copia-e-cola aqui (quando ainda há um Pix pendente) importa mais
+    do que parece: se o envio da mensagem original do Pix falhar (throttle,
+    canal fora do ar), esta é a única outra porta pela qual o cliente consegue
+    pagar sem precisar pedir ajuda de um atendente.
     """
     linhas = [f"Seu pedido *{summary.code}*:"]
     for item in summary.items:
@@ -546,6 +551,8 @@ def situacao_do_pedido(summary: Any) -> str:
         linhas.append("Já está pago e confirmado. ✅")
     else:
         linhas.append("Ainda aguardando o pagamento do Pix. 💳")
+        if summary.pix_qr_code:
+            linhas.append(f"\nCopia e cola do Pix:\n{summary.pix_qr_code}")
     return "\n".join(linhas)
 
 

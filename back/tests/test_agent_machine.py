@@ -12,7 +12,7 @@ Aqui o plano da IA é escrito à mão (`plano(...)`), porque o que está sob tes
 from __future__ import annotations
 
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -27,6 +27,7 @@ from app.agente import (
     Operation,
     assert_transition,
     can_transition,
+    fulfillment_of,
     run,
 )
 from app.configuracao import get_settings
@@ -35,6 +36,7 @@ from app.dominio import (
     CatalogGroup,
     CatalogProduct,
     CatalogSnapshot,
+    FulfillmentType,
 )
 from app.dominio import ConversationState as S
 
@@ -1196,7 +1198,11 @@ async def test_pergunta_sobre_pedido_pago_nao_ve_carrinho_vazio() -> None:
             line_total=Decimal("32.00"),
         )
         return SimpleNamespace(
-            code="MP-0007", items=[item], total=Decimal("32.00"), payment_status="pendente"
+            code="MP-0007",
+            items=[item],
+            total=Decimal("32.00"),
+            payment_status="pendente",
+            pix_qr_code="PIX-COPIA-E-COLA",
         )
 
     deps, session = build_deps(), build_session()
@@ -1381,3 +1387,198 @@ async def test_a_mesma_acao_funciona_quando_o_cliente_pede() -> None:
         "vou retirar na loja",
     )
     assert session.slots.get("fulfillment") == "retirada", "retirada deixou de funcionar"
+
+
+# ---------------------------------------------------------------------------
+# Defeitos achados na revisão de robustez para produção
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_cancelar_com_pix_pendente_cancela_o_pedido_no_banco_tambem() -> None:
+    """Cancelar só a sessão deixava o `Order` real como "novo"/pendente.
+
+    Um pagamento atrasado (ou pago sem o cliente ver a confirmação de
+    cancelamento a tempo) aprovava normalmente depois — um pedido que a
+    conversa já tratava como morto ia para a cozinha sem ninguém perceber.
+    """
+    cancelados: list[UUID] = []
+
+    async def _cancel_order(db, order_id):
+        cancelados.append(order_id)
+
+    deps, session = build_deps(), build_session()
+    deps.cancel_order = _cancel_order
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
+        "pode fechar, vou retirar",
+    )
+    await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim")
+    assert session.state is S.AGUARDANDO_PAGAMENTO
+    pedido_criado = session.active_order_id
+    assert pedido_criado is not None
+
+    await run(deps, session, plano(op(Action.CANCEL_ORDER)), "cancela meu pedido")
+
+    assert session.state is S.CANCELADO
+    assert cancelados == [pedido_criado]
+
+
+@pytest.mark.asyncio
+async def test_trocar_entrega_na_mesma_mensagem_do_fechamento_nao_cobra_com_taxa_antiga() -> None:
+    """"mudei de ideia, quero entrega, fecha" não pode cobrar com a forma de
+    recebimento ANTIGA.
+
+    `place_order` rodava antes de `set_fulfillment` ser aplicado, porque o
+    gate de confirmação só olhava para operações de ITEM — a troca de entrega
+    ficava de fora da conta, e o pedido era criado e cobrado com a forma de
+    recebimento de antes da troca.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
+        "pode fechar, vou retirar",
+    )
+    assert session.state is S.CONFIRMANDO_PEDIDO
+    assert fulfillment_of(session) is FulfillmentType.RETIRADA
+
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="entrega"), op(Action.CLOSE_ORDER)),
+        "mudei de ideia, quero entrega, fecha",
+    )
+
+    assert session.state is not S.AGUARDANDO_PAGAMENTO, "cobrou antes de aplicar a troca"
+    assert session.active_order_id is None
+    assert fulfillment_of(session) is FulfillmentType.ENTREGA, "a troca em si tem que ter valido"
+
+
+@pytest.mark.asyncio
+async def test_editar_carrinho_apos_pix_falhar_descarta_o_pedido_velho() -> None:
+    """Pix falhou (provedor fora do ar); o cliente edita o carrinho antes de
+    tentar de novo — a nova tentativa não pode reaproveitar o pedido velho.
+
+    Sem isto, a confirmação seguinte gerava o Pix para os itens/total de
+    ANTES da edição, e o cliente pagava um valor que não batia com o que
+    tinha acabado de pedir.
+    """
+    from types import SimpleNamespace
+
+    pedidos_criados: list[str] = []
+    pix_deveria_falhar = True
+    cancelados: list[UUID] = []
+
+    async def _create_order(db, **kwargs):
+        pedido = SimpleNamespace(
+            id=uuid4(), code=f"MP-{len(pedidos_criados) + 1:04d}", total=Decimal("32.00")
+        )
+        pedidos_criados.append(str(pedido.id))
+        return pedido
+
+    async def _create_pix(db, order_id):
+        nonlocal pix_deveria_falhar
+        if pix_deveria_falhar:
+            pix_deveria_falhar = False
+            raise RuntimeError("provedor fora do ar")
+        return SimpleNamespace(qr_code="PIX-NOVO", provider_payment_id="novo-1")
+
+    async def _cancel_order(db, order_id):
+        cancelados.append(order_id)
+
+    deps, session = build_deps(), build_session()
+    deps.create_order = _create_order
+    deps.create_pix = _create_pix
+    deps.cancel_order = _cancel_order
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
+        "pode fechar, vou retirar",
+    )
+    await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim")  # Pix falha aqui
+
+    assert session.state is S.CONFIRMANDO_PEDIDO, "não podia ter avançado com o Pix falho"
+    pedido_antigo = session.slots.get("pending_order_id")
+    assert pedido_antigo == pedidos_criados[0]
+
+    await run(
+        deps,
+        session,
+        plano(op(Action.ADD_ITEM, product_name="Casquinha")),
+        "bota uma casquinha",
+    )
+
+    assert session.slots.get("pending_order_id") is None, "o pedido velho tinha que sair do slot"
+    assert cancelados == [UUID(pedido_antigo)]
+
+    await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim")
+
+    assert session.state is S.AGUARDANDO_PAGAMENTO
+    assert len(pedidos_criados) == 2, "tinha que ter criado um pedido NOVO, não reaproveitado o velho"
+
+
+@pytest.mark.asyncio
+async def test_editar_por_nome_com_dois_itens_iguais_respeita_o_ordinal() -> None:
+    """"tira o pistache do PRIMEIRO pote" não pode sempre acertar o último.
+
+    Com dois itens do mesmo produto no carrinho, o código só tinha um jeito
+    de desempatar (o último) — mesmo quando o cliente disse qual dos dois.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(deps, session, plano(op(Action.DUPLICATE_ITEM)), "quero outro igual")
+    assert len(session.cart.items) == 2
+
+    await run(
+        deps,
+        session,
+        plano(op(Action.UPDATE_QUANTITY, item_index=2, quantity=5)),
+        "no segundo, coloca 5",
+    )
+    assert session.cart.items[1].quantity == 5
+
+    await run(
+        deps,
+        session,
+        plano(op(Action.REMOVE_ITEM, product_name="Pote 500ml")),
+        "tira o primeiro pote",
+    )
+
+    assert len(session.cart.items) == 1
+    assert session.cart.items[0].quantity == 5, "removeu o item errado"
+
+
+@pytest.mark.asyncio
+async def test_duas_remocoes_pelo_mesmo_indice_no_mesmo_turno_nao_apaga_dois() -> None:
+    """"tira o primeiro, tira o primeiro de novo" não pode remover dois itens.
+
+    O segundo `remove_item(item_index=1)` é sobre o carrinho que o cliente
+    VIU (2 itens) — não sobre o carrinho já encolhido pela primeira remoção
+    do mesmo plano.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(
+        deps, session, plano(op(Action.ADD_ITEM, product_name="Casquinha")), "e uma casquinha"
+    )
+    assert len(session.cart.items) == 2
+
+    await run(
+        deps,
+        session,
+        plano(
+            op(Action.REMOVE_ITEM, item_index=1),
+            op(Action.REMOVE_ITEM, item_index=1),
+        ),
+        "tira o primeiro, tira o primeiro de novo",
+    )
+
+    assert len(session.cart.items) == 1
+    assert session.cart.items[0].product_name == "Casquinha"
