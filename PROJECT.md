@@ -173,7 +173,20 @@ webhook lento é reentregue, e reentrega vira pedido duplicado.
 
 **2. Espera o cliente parar de digitar.** Quem pede pelo WhatsApp escreve
 picado: "quero um pote" / "G" / "de pistache". `inbox.py` segura por
-`WA_DEBOUNCE_SECONDS` e junta tudo num texto só.
+`WA_DEBOUNCE_SECONDS` e junta tudo num texto só. Um cadeado por telefone (na
+mesma seção) garante que o turno de UM cliente nunca rode duas vezes ao mesmo
+tempo — sem isso, uma mensagem que chega enquanto o turno anterior ainda está
+salvando o estado dispararia um segundo `handle_inbound` sobre a mesma
+conversa, e um dos dois apagaria o que o outro escreveu.
+
+**2b. Nota de voz também vira texto.** Se a mensagem é um áudio
+(`audioMessage`), o agente baixa o conteúdo pela Evolution API
+(`getBase64FromMediaMessage`) e transcreve com a OpenAI antes de seguir — daí
+em diante é um turno normal, como se o cliente tivesse escrito. Áudio longo
+demais (`AUDIO_MAX_SECONDS`) ou que não deu para transcrever (Evolution fora
+do ar, sem chave da OpenAI) não conta como "não entendi": o bot avisa que não
+conseguiu ouvir e pede para o cliente escrever, sem gastar uma chamada de IA
+nem consumir o contador de reparo progressivo.
 
 **3. Já vimos essa mensagem?** `session.already_seen()` consulta o id da
 mensagem no provedor. Se já foi atendida, o turno para aqui.
@@ -307,8 +320,8 @@ Outros detalhes que evitam surpresa:
 
 | Serviço | Para quê | Sem ele |
 |---|---|---|
-| **Evolution API** | Mandar e receber WhatsApp. Gateway self-hosted; pareia por QR code, não exige conta comercial aprovada. | Com `FAKE_MODE=true` as mensagens vão para um canal em memória. |
-| **OpenAI** | Traduzir a mensagem em operações. | Com `FAKE_MODE=true` entra o `llm_fake.py`. |
+| **Evolution API** | Mandar e receber WhatsApp, e baixar o conteúdo de uma nota de voz recebida. Gateway self-hosted; pareia por QR code, não exige conta comercial aprovada. | Com `FAKE_MODE=true` as mensagens vão para um canal em memória. |
+| **OpenAI** | Traduzir a mensagem em operações, e transcrever nota de voz do cliente. | Com `FAKE_MODE=true` entra o `llm_fake.py`; a transcrição usa `FakeAudioTranscriber`, que só decodifica os bytes recebidos como texto (não reconhece voz de verdade). |
 | **Mercado Pago** | Emitir o Pix e avisar quando cai. | Com `FAKE_MODE=true` entra o `FakePaymentProvider`. |
 
 **Com `FAKE_MODE=true` o sistema inteiro roda sem uma única chave.** É assim

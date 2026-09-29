@@ -62,6 +62,18 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     llm_max_tokens: int = 1024
     llm_timeout_seconds: float = 20.0
+    #: Retentativas automáticas do SDK da OpenAI (chat e transcrição) diante de
+    #: erro passageiro — timeout, 429, 5xx. O próprio SDK já faz o backoff
+    #: exponencial; este número só liga e ajusta quantas vezes ele tenta.
+    llm_max_retries: int = 2
+    #: Modelo de transcrição de áudio (nota de voz do cliente no WhatsApp).
+    #: Separado do modelo de chat porque a OpenAI evolui os dois em ritmos
+    #: diferentes — trocar um não deve exigir trocar o outro.
+    openai_transcribe_model: str = "gpt-4o-mini-transcribe"
+    #: Teto de duração de uma nota de voz para valer a pena transcrever.
+    #: Ninguém dita um pedido de gelato num áudio de minutos — acima disso é
+    #: sinal de áudio errado (ou de abuso), e custa dinheiro tentar mesmo assim.
+    audio_max_seconds: int = 120
 
     # --- WhatsApp via Evolution API (gateway self-hosted): não exige app nem
     # número comercial aprovado, basta parear um QR code.

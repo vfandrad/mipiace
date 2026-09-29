@@ -579,6 +579,19 @@ def oferecer_atendente() -> str:
     )
 
 
+def audio_nao_transcrito() -> str:
+    """Áudio que a gente não conseguiu ouvir — falha nossa, não do cliente.
+
+    Não conta como "não entendi": o problema é da transcrição (Evolution fora
+    do ar, áudio longo demais, chave da OpenAI ausente), não de o cliente ter
+    falado algo confuso.
+    """
+    return (
+        "Não consegui ouvir seu áudio agora. 🙈 "
+        "Pode escrever ou tentar mandar de novo?"
+    )
+
+
 def chamou_atendente() -> str:
     return (
         f"Já chamei uma pessoa do time da {_loja()} pra falar com você. 👋\n"

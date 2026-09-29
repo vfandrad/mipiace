@@ -21,6 +21,7 @@ O que o cliente lê não está aqui — está em `textos.py`.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import random
@@ -1381,6 +1382,10 @@ class OpenAILLMClient:
             self._client = AsyncOpenAI(
                 api_key=self._settings.openai_api_key,
                 timeout=self._settings.llm_timeout_seconds,
+                # O próprio SDK tenta de novo com backoff exponencial em erro
+                # passageiro (timeout, 429, 5xx) — não precisamos reescrever
+                # esse laço, só dizer quantas vezes vale a pena tentar.
+                max_retries=self._settings.llm_max_retries,
             )
         return self._client
 
@@ -1405,6 +1410,7 @@ class OpenAILLMClient:
         message: str,
         situation: str = "",
     ) -> AgentPlan:
+        inicio = time.monotonic()
         try:
             client = self._ensure_client()
             response = await client.chat.completions.create(
@@ -1420,6 +1426,8 @@ class OpenAILLMClient:
             # Timeout, rate limit, chave inválida: a conversa continua viva.
             logger.exception("falha ao chamar o LLM; plano vazio")
             return AgentPlan(model=self._settings.openai_model)
+        finally:
+            logger.info("LLM (%s) respondeu em %.2fs", self._settings.openai_model, time.monotonic() - inicio)
 
         return self._to_plan(response)
 
@@ -1892,6 +1900,10 @@ class InboundMessage(BaseModel):
     #: celular, ou eco do que o bot mandou). Não passa pela IA/máquina de
     #: estados — só é registrada no histórico para o painel espelhar o chat.
     from_me: bool = False
+    #: "audio" quando esta mensagem é uma nota de voz sem texto ainda — `text`
+    #: vem vazio e `resolve_audio_message` o preenche com a transcrição. None
+    #: em qualquer outro caso (é a maioria).
+    media_type: str | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1996,6 +2008,66 @@ class EvolutionAdapter:
             logger.exception("falha ao conectar com Evolution API para %s: %s", to, str(e))
             raise
 
+    async def fetch_media_base64(
+        self, message_key: dict[str, Any]
+    ) -> tuple[bytes, str] | None:
+        """Baixa o conteúdo de uma mídia (áudio, por ora) a partir da chave da mensagem.
+
+        A Evolution não manda o arquivo dentro do webhook, só os metadados e a
+        chave (`key`) que identifica a mensagem — é essa chave que se devolve
+        para pedir o conteúdo. Nunca levanta: Evolution fora do ar não pode
+        derrubar o turno, só faz o áudio virar "não consegui ouvir".
+
+        Uma tentativa extra depois de 1s: é uma chamada de rede a mais que a
+        Evolution não fazia antes (baixar mídia, e não só mandar texto), e uma
+        falha passageira aqui custaria uma nota de voz inteira sem resposta.
+        """
+        if not self._settings.evolution_api_key:
+            logger.warning("Evolution API não configurada; não é possível baixar mídia")
+            return None
+
+        base = self._settings.evolution_api_url.rstrip("/")
+        url = f"{base}/chat/getBase64FromMediaMessage/{self._settings.evolution_instance}"
+        headers = {
+            "apikey": self._settings.evolution_api_key,
+            "Content-Type": "application/json; charset=utf-8",
+        }
+        payload = {"message": {"key": message_key}, "convertToMp4": False}
+
+        data: dict[str, Any] | None = None
+        for tentativa in range(2):
+            try:
+                if self._client is not None:
+                    response = await self._client.post(url, json=payload, headers=headers)
+                else:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        response = await client.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+                break
+            except Exception:
+                if tentativa == 0:
+                    await asyncio.sleep(1.0)
+                    continue
+                logger.exception("falha ao baixar mídia da Evolution API")
+                return None
+
+        raw_b64 = (data or {}).get("base64")
+        if not raw_b64:
+            logger.warning("Evolution API não devolveu base64 para a mídia")
+            return None
+        if raw_b64.startswith("data:") and "," in raw_b64:
+            raw_b64 = raw_b64.split(",", 1)[1]  # já visto vir como data URI
+
+        try:
+            audio_bytes = base64.b64decode(raw_b64)
+        except (ValueError, TypeError):
+            logger.warning("base64 inválido devolvido pela Evolution API")
+            return None
+
+        mimetype = data.get("mimetype") or "audio/ogg"
+        return audio_bytes, mimetype
+
     # -- webhook -----------------------------------------------------------
 
     def parse_webhook(self, payload: dict[str, Any]) -> list[InboundMessage]:
@@ -2035,14 +2107,22 @@ class EvolutionAdapter:
         if not phone:
             return None
 
+        message_body = raw.get("message") or {}
         text = EvolutionAdapter._text_of(raw)
+        media_type = None
         if not text:
-            logger.info("mensagem sem texto ignorada (jid=%s)", key.get("remoteJid"))
-            return None
+            if EvolutionAdapter._is_audio(message_body):
+                # Sem texto, mas é uma nota de voz: `resolve_audio_message`
+                # baixa e transcreve antes do turno seguir — não se ignora.
+                media_type = "audio"
+            else:
+                logger.info("mensagem sem texto ignorada (jid=%s)", key.get("remoteJid"))
+                return None
 
         return InboundMessage(
             phone=phone,
-            text=text,
+            text=text or "",
+            media_type=media_type,
             provider_message_id=key.get("id"),
             profile_name=raw.get("pushName"),
             timestamp=EvolutionAdapter._timestamp(raw.get("messageTimestamp")),
@@ -2074,11 +2154,152 @@ class EvolutionAdapter:
         return list_reply.get("title") or single_select.get("selectedRowId")
 
     @staticmethod
+    def _is_audio(message: dict[str, Any]) -> bool:
+        """Nota de voz e áudio enviado como arquivo chegam os dois em `audioMessage`."""
+        return bool(message.get("audioMessage"))
+
+    @staticmethod
     def _timestamp(raw: Any) -> datetime | None:
         try:
             return datetime.fromtimestamp(int(raw), tz=timezone.utc)
         except (TypeError, ValueError):
             return None
+
+
+# ---------------------------------------------------------------------------
+# Áudio: ouvir a nota de voz do cliente
+# ---------------------------------------------------------------------------
+
+logger = logging.getLogger(__name__)
+
+
+class AudioTranscriber(Protocol):
+    """Implementado por OpenAIAudioTranscriber e FakeAudioTranscriber."""
+
+    name: str
+
+    async def transcribe(self, *, audio: bytes, mimetype: str) -> str | None:
+        """O que foi dito no áudio, ou None se não deu para transcrever."""
+        ...
+
+
+class OpenAIAudioTranscriber:
+    """Implementa `AudioTranscriber` chamando a API de transcrição da OpenAI."""
+
+    name = "openai"
+
+    def __init__(self, settings: Settings | None = None, client: Any | None = None) -> None:
+        self._settings = settings or get_settings()
+        self._client = client  # injetável em teste
+
+    def _ensure_client(self) -> Any:
+        if self._client is None:
+            from openai import AsyncOpenAI  # noqa: PLC0415 (import tardio)
+
+            if not self._settings.openai_api_key:
+                raise RuntimeError("OPENAI_API_KEY não configurada")
+            self._client = AsyncOpenAI(
+                api_key=self._settings.openai_api_key,
+                timeout=self._settings.llm_timeout_seconds,
+                # Mesmo backoff automático do cliente de chat — ver o
+                # comentário em OpenAILLMClient._ensure_client.
+                max_retries=self._settings.llm_max_retries,
+            )
+        return self._client
+
+    async def transcribe(self, *, audio: bytes, mimetype: str) -> str | None:
+        inicio = time.monotonic()
+        try:
+            client = self._ensure_client()
+            response = await client.audio.transcriptions.create(
+                model=self._settings.openai_transcribe_model,
+                # O nome do arquivo é sempre "audio.ogg", e não o que a
+                # Evolution reportou: nota de voz do WhatsApp é ogg/opus, e a
+                # extensão real (.oga) já foi vista sendo rejeitada por
+                # modelos de transcrição mais novos com um 400 que não tem
+                # nada a ver com o conteúdo do áudio.
+                file=("audio.ogg", audio, "audio/ogg"),
+            )
+        except Exception:
+            logger.exception("falha ao transcrever áudio")
+            return None
+        finally:
+            logger.info("transcrição de áudio em %.2fs", time.monotonic() - inicio)
+        texto = getattr(response, "text", None)
+        return texto.strip() if texto else None
+
+
+class FakeAudioTranscriber:
+    """Implementa `AudioTranscriber` sem rede: decodifica os bytes como texto.
+
+    Em FAKE_MODE e nos testes, "gravar um áudio" É escrever a frase e mandar
+    os bytes dela — não existe voz de verdade para reconhecer, e não faz
+    sentido fingir que existe.
+    """
+
+    name = "fake"
+
+    async def transcribe(self, *, audio: bytes, mimetype: str) -> str | None:
+        try:
+            texto = audio.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            return None
+        return texto or None
+
+
+@lru_cache
+def get_audio_transcriber() -> AudioTranscriber | None:
+    """Transcritor do processo, ou None quando não há como ouvir áudio.
+
+    Espelha `get_llm_client`: em FAKE_MODE usa o falso; sem chave em produção
+    devolve None — o áudio simplesmente não é ouvido, e quem decide o que
+    dizer ao cliente é `handle_inbound`, nunca esta função tentando decodificar
+    bytes de voz de verdade como se fossem texto.
+    """
+    settings = get_settings()
+    if settings.fake_mode:
+        return FakeAudioTranscriber()
+    if settings.openai_api_key:
+        return OpenAIAudioTranscriber(settings)
+    logger.warning(
+        "FAKE_MODE=false mas OPENAI_API_KEY não está configurada; "
+        "áudio do cliente não será transcrito."
+    )
+    return None
+
+
+async def resolve_audio_message(
+    message: InboundMessage,
+    *,
+    adapter: EvolutionAdapter,
+    transcriber: AudioTranscriber | None,
+) -> InboundMessage:
+    """Baixa e transcreve uma nota de voz; texto vazio quando não foi possível.
+
+    Nunca levanta: Evolution fora do ar, chave da OpenAI ausente, áudio longo
+    demais ou corrompido viram texto vazio — e quem decide o que fazer com
+    isso é `handle_inbound`. Esta função nunca inventa uma transcrição.
+    """
+    if transcriber is None:
+        return message.model_copy(update={"text": ""})
+
+    audio_message = ((message.raw.get("message") or {}).get("audioMessage")) or {}
+    duracao = audio_message.get("seconds")
+    limite = get_settings().audio_max_seconds
+    if isinstance(duracao, (int, float)) and duracao > limite:
+        logger.info(
+            "áudio de %ss acima do limite de %ss; não transcrito", duracao, limite
+        )
+        return message.model_copy(update={"text": ""})
+
+    fetched = await adapter.fetch_media_base64(message.raw.get("key") or {})
+    if fetched is None:
+        return message.model_copy(update={"text": ""})
+
+    audio, mimetype = fetched
+    texto = await transcriber.transcribe(audio=audio, mimetype=mimetype)
+    return message.model_copy(update={"text": texto or ""})
+
 
 # ---------------------------------------------------------------------------
 # Canal em memória (FAKE_MODE, simulador, CLI e testes)
@@ -2161,6 +2382,34 @@ _buffers: dict[str, _Buffer] = {}
 #: recolher uma task em voo e o cliente fica sem resposta.
 _tasks: set[asyncio.Task[None]] = set()
 
+#: Um cadeado por telefone: o turno de UM cliente nunca roda duas vezes ao
+#: mesmo tempo. Sem isto, uma mensagem que chega depois que a janela de
+#: agrupamento fechou mas ANTES do turno anterior terminar (a chamada ao LLM
+#: mais a espera do ritmo de envio somam fácil mais que os 3s padrão de
+#: `WA_DEBOUNCE_SECONDS`) dispara um SEGUNDO `handle_inbound` sobre a MESMA
+#: conversa — os dois leem o mesmo estado do banco, e quem salva por último
+#: apaga silenciosamente o que o outro mudou.
+_phone_locks: dict[str, asyncio.Lock] = {}
+#: Teto de memória, no mesmo espírito do `_last_by_phone` do `Throttle`: o
+#: processo fica no ar por meses e atende milhares de números ao longo do tempo.
+_MAX_PHONE_LOCKS = 2_000
+
+
+def _lock_for(phone: str) -> asyncio.Lock:
+    """O cadeado deste telefone, criando se for a primeira vez."""
+    lock = _phone_locks.get(phone)
+    if lock is not None:
+        return lock
+    if len(_phone_locks) >= _MAX_PHONE_LOCKS:
+        # Só descarta cadeados livres — um em uso não pode desaparecer
+        # debaixo de quem já está esperando por ele.
+        livres = [p for p, cadeado in _phone_locks.items() if not cadeado.locked()]
+        for p in livres[: len(_phone_locks) - _MAX_PHONE_LOCKS + 1]:
+            del _phone_locks[p]
+    lock = asyncio.Lock()
+    _phone_locks[phone] = lock
+    return lock
+
 
 def _merged(buffer: _Buffer) -> InboundMessage:
     """Os balões viram um texto só, guardando o id da ÚLTIMA mensagem.
@@ -2176,7 +2425,8 @@ async def submit(message: InboundMessage, handler: Handler) -> None:
     """Enfileira a mensagem; o handler roda quando o cliente parar de digitar."""
     window = get_settings().wa_debounce_seconds
     if window <= 0:  # agrupamento desligado: comportamento antigo, turno a turno
-        await handler(message)
+        async with _lock_for(message.phone):
+            await handler(message)
         return
 
     buffer = _buffers.get(message.phone)
@@ -2208,11 +2458,12 @@ async def _process_when_idle(phone: str, handler: Handler) -> None:
     if buffer is None:
         return
 
-    try:
-        await handler(_merged(buffer))
-    except Exception:
-        # Um turno com problema não pode derrubar a task nem calar o próximo.
-        logger.exception("falha ao processar turno de %s", phone)
+    async with _lock_for(phone):
+        try:
+            await handler(_merged(buffer))
+        except Exception:
+            # Um turno com problema não pode derrubar a task nem calar o próximo.
+            logger.exception("falha ao processar turno de %s", phone)
 
 
 async def drain() -> None:
@@ -3882,6 +4133,7 @@ _RETOMAVEL_DO_HANDOFF: frozenset[S] = frozenset(
 
 
 def to_human(session: ConversationSession) -> list[str]:
+    logger.info("atendimento humano acionado para %s (estava em %s)", session.phone, session.state.value)
     if not can_transition(session.state, S.ATENDIMENTO_HUMANO):
         _go(session, S.CONVERSANDO)
     if session.state is not S.ATENDIMENTO_HUMANO:
@@ -4614,6 +4866,7 @@ def _fallback(
     humano (e no silêncio). Três perguntas banais bastavam.
     """
     session.fail_count += 1
+    logger.info("fallback (não entendi) para %s, tentativa %s", session.phone, session.fail_count)
     retomada = _resume_prompt(deps, session)
 
     if session.fail_count == 1:
@@ -4677,11 +4930,36 @@ async def handle_inbound(
         )
         return []
 
+    if message.media_type == "audio" and not message.text:
+        message = await resolve_audio_message(
+            message,
+            adapter=EvolutionAdapter(get_settings()),
+            transcriber=get_audio_transcriber(),
+        )
+
     conversation = await load_or_create(session, message.phone, channel_name)
     state_before = conversation.state
 
     if message.profile_name and "customer_name" not in conversation.slots:
         conversation.slots["customer_name"] = message.profile_name
+
+    if message.media_type == "audio" and not message.text.strip():
+        # Não deu para ouvir (Evolution fora do ar, sem chave da OpenAI, áudio
+        # longo ou corrompido). Isto não é "não entendi" do cliente — é falha
+        # nossa — então não consome o contador de reparo progressivo nem
+        # gasta uma chamada de LLM com uma mensagem que sabemos vazia.
+        await log_message(
+            session,
+            conversation_id=conversation.id,
+            direction=MessageDirection.ENTRADA,
+            content="[áudio não transcrito]",
+            state_before=state_before,
+            state_after=conversation.state,
+            provider_message_id=message.provider_message_id,
+        )
+        replies = [r.audio_nao_transcrito()]
+        await _deliver(session, conversation, replies, channel_name)
+        return replies
 
     catalog = await _fetch_catalog(session)
     deps = await _build_deps(session, catalog, conversation)

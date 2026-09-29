@@ -103,3 +103,36 @@ async def test_janela_zero_processa_na_hora(monkeypatch) -> None:
     await inbox.submit(msg("oi"), handler)
     assert turnos == ["oi"]  # sem drain: já rodou
     assert not asyncio.all_tasks() - {asyncio.current_task()}
+
+
+@pytest.mark.asyncio
+async def test_mesmo_telefone_nao_roda_dois_turnos_ao_mesmo_tempo(janela_curta) -> None:
+    """Um turno lento (LLM, ritmo de envio) não pode ser pisado por outro.
+
+    Sem a trava por telefone, uma mensagem que chega depois que a janela de
+    agrupamento fechou mas antes do turno anterior salvar o estado dispararia
+    um segundo `handle_inbound` sobre a MESMA conversa — os dois leriam o
+    mesmo estado do banco, e quem salvasse por último apagaria o que o outro
+    mudou.
+    """
+    em_andamento = 0
+    pico_de_concorrencia = 0
+    ordem: list[str] = []
+
+    async def handler(message: InboundMessage) -> None:
+        nonlocal em_andamento, pico_de_concorrencia
+        em_andamento += 1
+        pico_de_concorrencia = max(pico_de_concorrencia, em_andamento)
+        try:
+            await asyncio.sleep(0.1)  # mais lento que a janela de debounce (0.05s)
+            ordem.append(message.text)
+        finally:
+            em_andamento -= 1
+
+    await inbox.submit(msg("primeiro turno", id_="m1"), handler)
+    await asyncio.sleep(0.08)  # a janela do primeiro turno já fechou, ele está rodando
+    await inbox.submit(msg("segundo turno", id_="m2"), handler)
+    await inbox.drain()
+
+    assert pico_de_concorrencia == 1
+    assert ordem == ["primeiro turno", "segundo turno"]
