@@ -120,6 +120,15 @@ class Settings(BaseSettings):
     #: Passado isso sem resposta humana, ele reassume em vez de deixar o cliente
     #: falando sozinho — escalar para humano só ajuda se houver humano.
     handoff_return_minutes: int = 15
+    #: Minutos de Pix pendente até o primeiro e o segundo lembrete de pagamento.
+    #: O segundo fica perto de `pix_expiration_minutes` de propósito — é a
+    #: última chance antes do código expirar sozinho no provedor.
+    pix_reminder_minutes_1: int = 10
+    pix_reminder_minutes_2: int = 25
+    #: De quanto em quanto tempo o laço em background confere pedidos com Pix
+    #: pendente. Não é um cron: é uma tarefa asyncio dentro do próprio processo
+    #: do backend (só há uma instância rodando, então isso basta).
+    pix_reminder_check_seconds: int = 60
 
     # --- Dados da loja -------------------------------------------------------
     # É AQUI que uma segunda empresa é configurada. A Mi Piace é o primeiro caso

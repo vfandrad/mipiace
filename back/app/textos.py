@@ -580,6 +580,28 @@ def situacao_do_pedido(summary: Any) -> str:
     return "\n".join(linhas)
 
 
+def pix_lembrete(*, order_code: str, qr_code: str | None, minutos_restantes: int) -> list[str]:
+    """Lembrete de Pix pendente, para o cliente que some no meio do pagamento.
+
+    Igual ao Pix original: código sozinho na própria mensagem, sem nenhuma
+    linha junto, senão o toque longo + *Copiar* pega a bolha inteira.
+    """
+    urgente = minutos_restantes <= 10
+    if urgente:
+        abertura = f"Faltam só {minutos_restantes} minutos para o Pix do pedido *{order_code}* expirar! ⏰"
+    else:
+        abertura = f"Psst, vi que o Pix do pedido *{order_code}* ainda não caiu. 😉"
+    linhas = [abertura]
+    if not urgente:
+        linhas.append(f"Ainda dá tempo — ele vale por mais {minutos_restantes} minutos.")
+    if qr_code:
+        linhas.append("")
+        linhas.append("Segue o código de novo, copia e cola direto no seu banco:")
+        return ["\n".join(linhas), qr_code]
+    linhas.append("Me chama se precisar de ajuda para pagar. 😊")
+    return ["\n".join(linhas)]
+
+
 def pagamento_confirmado(order_code: str) -> str:
     return (
         f"Pagamento confirmado! ✅ Pedido *{order_code}* já foi para a produção.\n"

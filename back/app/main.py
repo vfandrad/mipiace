@@ -14,6 +14,7 @@ o que o uvicorn carrega) e a conversa pelo terminal, no fim do arquivo:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sys
 from collections.abc import AsyncIterator
@@ -30,6 +31,7 @@ from app.agente import (
     handle_inbound,
     load_or_create,
     reset_session,
+    send_pending_pix_reminders,
     settings_snapshot,
 )
 from app.api import (
@@ -49,6 +51,25 @@ from app.textos import em_reais
 logger = get_logger(__name__)
 
 
+async def _pix_reminder_loop(settings: Any) -> None:
+    """Confere pedidos com Pix pendente e manda lembrete, de tempos em tempos.
+
+    Roda até ser cancelada no shutdown. Erro de uma volta não pode matar as
+    seguintes — o cliente perder um lembrete é bem menos grave que o laço
+    parar de rodar pro resto dos clientes.
+    """
+    from app.banco import get_sessionmaker  # noqa: PLC0415
+
+    sessionmaker = get_sessionmaker()
+    while True:
+        await asyncio.sleep(settings.pix_reminder_check_seconds)
+        try:
+            async with sessionmaker() as db:
+                await send_pending_pix_reminders(db)
+        except Exception:
+            logger.exception("falha na varredura de lembretes de Pix pendente")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
@@ -58,7 +79,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.environment,
         settings.fake_mode,
     )
+    reminder_task = asyncio.create_task(_pix_reminder_loop(settings))
     yield
+    reminder_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await reminder_task
+
     from app.banco import dispose_engine  # noqa: PLC0415
 
     await dispose_engine()

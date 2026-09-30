@@ -68,6 +68,7 @@ from app.servicos import (
     create_pix_for_order,
     get_catalog_snapshot,
     get_order_summary,
+    get_pending_payment,
     update_order_status,
 )
 
@@ -5286,6 +5287,83 @@ async def _order_code(db: Any, order_id: UUID) -> str:
         logger.warning("não foi possível ler o pedido %s", order_id, exc_info=True)
         summary = None
     return getattr(summary, "code", None) or str(order_id)[:8]
+
+
+# ---------------------------------------------------------------------------
+# Lembrete de Pix pendente
+# ---------------------------------------------------------------------------
+
+#: Chave em `slots` com os minutos de lembrete já disparados para o Pix atual.
+#: Some sozinha quando `place_order` limpa os slots de um pedido novo, então
+#: um segundo Pix do mesmo cliente sempre começa sem lembrete nenhum marcado.
+_PIX_REMINDER_SENT_KEY = "pix_reminders_sent"
+
+
+async def _maybe_remind_pending_pix(db: Any, conversation: ConversationSession) -> None:
+    """Manda o lembrete de Pix pendente se o tempo certo já passou.
+
+    A cobrança pendente vem de `payments` (a mesma tabela que o webhook do
+    Mercado Pago usa) e não da memória da conversa — só existe lembrete para
+    Pix que ainda está mesmo pendente, nunca para um já pago/expirado/cancelado
+    que a conversa não teve chance de perceber ainda.
+    """
+    if conversation.handoff or conversation.active_order_id is None:
+        return
+
+    payment = await get_pending_payment(db, conversation.active_order_id)
+    if payment is None:
+        return
+
+    settings = get_settings()
+    created_at = payment.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    elapsed_minutes = (datetime.now(timezone.utc) - created_at).total_seconds() / 60.0
+
+    already_sent = conversation.slots.get(_PIX_REMINDER_SENT_KEY, [])
+    milestone = None
+    if (
+        elapsed_minutes >= settings.pix_reminder_minutes_2
+        and settings.pix_reminder_minutes_2 not in already_sent
+    ):
+        milestone = settings.pix_reminder_minutes_2
+    elif (
+        elapsed_minutes >= settings.pix_reminder_minutes_1
+        and settings.pix_reminder_minutes_1 not in already_sent
+    ):
+        milestone = settings.pix_reminder_minutes_1
+    if milestone is None:
+        return
+
+    minutos_restantes = max(1, round(settings.pix_expiration_minutes - elapsed_minutes))
+    order_code = await _order_code(db, conversation.active_order_id)
+    replies = r.pix_lembrete(
+        order_code=order_code, qr_code=payment.qr_code, minutos_restantes=minutos_restantes
+    )
+
+    conversation.slots[_PIX_REMINDER_SENT_KEY] = [*already_sent, milestone]
+    await save_session(db, conversation)
+    await _deliver(db, conversation, replies, conversation.channel)
+
+
+async def send_pending_pix_reminders(db: Any) -> None:
+    """Varre as conversas esperando Pix e lembra quem já esperou demais.
+
+    Chamada pelo laço periódico do `main.py`: não há fila nem cron — é uma
+    tarefa asyncio dentro do próprio processo do backend, que é só o que este
+    tamanho de sistema precisa (uma instância só).
+    """
+    result = await db.execute(
+        text(_SELECT + " WHERE state = :state AND channel = 'whatsapp'"),
+        {"state": S.AGUARDANDO_PAGAMENTO.value},
+    )
+    conversations = [_row_to_session(row) for row in result]
+    for conversation in conversations:
+        try:
+            await _maybe_remind_pending_pix(db, conversation)
+        except Exception:
+            logger.exception("falha ao lembrar Pix pendente de %s", conversation.phone)
+    await db.commit()
 
 
 def settings_snapshot() -> dict[str, Any]:
