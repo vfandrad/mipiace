@@ -57,6 +57,7 @@ from app.dominio import (
     MessageDirection,
     OrderChannel,
     OrderStatus,
+    PaymentStatus,
     normalize,
     parse_state,
 )
@@ -4328,6 +4329,27 @@ async def cancel(deps: AgentDeps, session: ConversationSession) -> list[str]:
     return [r.pedido_cancelado()]
 
 
+async def _pix_ainda_pendente(deps: AgentDeps, session: ConversationSession) -> bool:
+    """A cobrança do pedido atual ainda está pendente de verdade no banco.
+
+    Lê o resumo do pedido — a mesma fonte que o webhook do Mercado Pago
+    mantém atualizada — porque a conversa sozinha não tem como saber que um
+    Pix expirou ou foi cancelado no provedor sem essa checagem. Falha ao ler
+    (ou pedido não encontrado) assume que ainda está pendente: é o lado seguro
+    do erro — o pior caso vira "espera mais um pouco", não "perde o pedido".
+    """
+    if session.active_order_id is None:
+        return False
+    try:
+        summary = await deps.order_summary(deps.db, session.active_order_id)
+    except Exception:
+        logger.exception("não deu para checar o Pix pendente do pedido %s", session.active_order_id)
+        return True
+    if summary is None:
+        return True
+    return summary.payment_status == PaymentStatus.PENDENTE
+
+
 # ---------------------------------------------------------------------------
 # A máquina: um turno de conversa do começo ao fim
 # ---------------------------------------------------------------------------
@@ -4781,7 +4803,16 @@ async def run(
         #
         # A garantia é da máquina de estados: pagamento pendente congela o
         # pedido. Perguntar, cancelar e chamar gente continuam funcionando.
-        return [r.pedido_aguardando_pagamento()]
+        if await _pix_ainda_pendente(deps, session):
+            return [r.pedido_aguardando_pagamento()]
+        # Mas se o Pix daquele pedido já morreu (expirou sozinho, ou foi
+        # cancelado no provedor) não há mais nada para congelar: travar um
+        # pedido novo atrás de uma cobrança que não existe mais só confundia o
+        # cliente sem necessidade. Cancela o pedido de verdade (para não ficar
+        # "novo" parado no Kanban para sempre) e libera a conversa do zero,
+        # deixando o resto do turno tratar o que o cliente pediu.
+        await cancel(deps, session)
+        _go(session, S.CONVERSANDO)
 
     if plan.customer_name and "customer_name" not in session.slots:
         session.slots["customer_name"] = plan.customer_name

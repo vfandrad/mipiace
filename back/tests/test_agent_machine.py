@@ -1003,6 +1003,52 @@ async def test_pix_pendente_congela_o_pedido() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pix_expirado_libera_pedido_novo() -> None:
+    """Pix que já morreu não pode travar um pedido novo atrás dele para sempre.
+
+    Diferente do teste acima: aqui o Pix não está mais pendente de verdade
+    (expirou no provedor) — travar o cliente numa cobrança morta, oferecendo
+    só "chamar alguém do time", é pior do que deixar montar o pedido de novo.
+    """
+    from types import SimpleNamespace
+
+    cancelados: list[UUID] = []
+
+    async def _cancel_order(db, order_id):
+        cancelados.append(order_id)
+
+    async def _summary(db, order_id):
+        return SimpleNamespace(code="MP-0009", payment_status="expirado")
+
+    deps, session = build_deps(), build_session()
+    deps.cancel_order = _cancel_order
+    deps.order_summary = _summary
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
+        "pode fechar, vou retirar",
+    )
+    await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim, confirmo")
+    assert session.state is S.AGUARDANDO_PAGAMENTO
+    pedido_morto = session.active_order_id
+    assert pedido_morto is not None
+
+    respostas = await run(
+        deps,
+        session,
+        plano(op(Action.ADD_ITEM, product_name="Casquinha")),
+        "quero uma casquinha",
+    )
+
+    assert cancelados == [pedido_morto]
+    assert not session.cart.is_empty, "o pedido novo não foi montado"
+    assert session.active_order_id != pedido_morto
+    assert not any("esperando o pagamento" in resposta.lower() for resposta in respostas), respostas
+
+
+@pytest.mark.asyncio
 async def test_com_pix_pendente_ainda_da_para_cancelar_e_perguntar() -> None:
     """O congelamento vale para o PEDIDO, não para a conversa."""
     deps, session = build_deps(), build_session()
