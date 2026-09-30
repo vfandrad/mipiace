@@ -110,7 +110,7 @@ def _bloco_de_sabores(flavors: Sequence[Any], titulo: str = "Sabores de hoje") -
             # rolar rápido, não o texto mais discreto da mensagem.
             linhas.append(f"*{categoria}* ({len(nomes)})")
         for grupo in _em_grupos(nomes, _SABORES_POR_LINHA):
-            linhas.append(", ".join(grupo))
+            linhas.append("▫ " + ", ".join(grupo))
     return linhas
 
 
@@ -131,7 +131,7 @@ def cardapio(catalog: CatalogSnapshot) -> str:
     # A mensagem inteira do título em negrito, não só o nome da loja: numa
     # tela de WhatsApp, é essa linha que precisa ser reconhecida como
     # cabeçalho num piscar de olhos, antes de o cliente ler qualquer coisa.
-    linhas = [f"*{_emoji()}{_loja()} — cardápio de hoje*", ""]
+    linhas = [f"*{_emoji()}{_loja()} — cardápio de hoje*", "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", ""]
     for product in products:
         linhas.append(f"• *{product.name}* — {em_reais(product.base_price)}")
         if product.description:
@@ -326,7 +326,7 @@ def resumo_do_pedido(cart: Cart, *, pending: int | None = None) -> str:
     linhas = ["*Seu pedido*"]
     for index, item in enumerate(cart.items, start=1):
         linhas.append(_linha_do_item(index, item, montando=pending == index - 1))
-    linhas.append(f"\nSubtotal: *{em_reais(cart.subtotal)}*")
+    linhas.append(f"\n• Subtotal: *{em_reais(cart.subtotal)}*")
     return "\n".join(linhas)
 
 
@@ -392,9 +392,9 @@ def resposta_do_total(
         return "\n".join(linhas)
     total = cart.total(Decimal("0") if is_pickup else delivery_fee)
     if is_pickup:
-        linhas.append("Retirada na loja — sem taxa.")
+        linhas.append("• Retirada na loja — sem taxa.")
     elif delivery_fee > 0:
-        linhas.append(f"Taxa de entrega: {em_reais(delivery_fee)}")
+        linhas.append(f"• Taxa de entrega: {em_reais(delivery_fee)}")
     linhas.append(f"*Total: {em_reais(total)}*")
     return "\n".join(linhas)
 
@@ -477,13 +477,13 @@ def resumo_final(
     for index, item in enumerate(cart.items, start=1):
         linhas.append(_linha_do_item(index, item))
     linhas.append("")
-    linhas.append(f"Subtotal: {em_reais(cart.subtotal)}")
+    linhas.append(f"• Subtotal: {em_reais(cart.subtotal)}")
     if is_pickup:
-        linhas.append("Retirada na loja — sem taxa de entrega")
+        linhas.append("• Retirada na loja — sem taxa de entrega")
         total = cart.total(Decimal("0"))
     else:
-        linhas.append(f"Taxa de entrega: {em_reais(delivery_fee)}")
-        linhas.append(f"Entregar em: {formatar_endereco(address)}")
+        linhas.append(f"• Taxa de entrega: {em_reais(delivery_fee)}")
+        linhas.append(f"• Entregar em: {formatar_endereco(address)}")
         total = cart.total(delivery_fee)
     linhas.append(f"*Total: {em_reais(total)}*")
     linhas.append("")
@@ -507,21 +507,30 @@ def mensagem_do_pix(
     total: Decimal,
     qr_code: str | None,
     expires_minutes: int | None = None,
-) -> str:
+) -> list[str]:
+    """Confirmação numa mensagem, o código Pix sozinho na próxima.
+
+    Copia e cola só funciona bem no WhatsApp quando a bolha tem SÓ o código:
+    com qualquer linha de texto junto (valor, prazo, "pague com o Pix
+    abaixo"), o toque longo + *Copiar* seleciona a mensagem inteira, e o
+    cliente tem que apagar o resto à mão antes de colar no banco.
+    """
     linhas = [
-        f"Pedido *{order_code}* registrado! 🎉",
-        f"Valor: *{em_reais(total)}*",
+        f"🎉 *Pedido {order_code} registrado!*",
         "",
-        "Pague com o Pix copia e cola abaixo:",
+        f"• Valor: *{em_reais(total)}*",
     ]
-    if qr_code:
-        linhas.append("")
-        linhas.append(qr_code)
-        linhas.append("")
     if expires_minutes:
-        linhas.append(f"_O código vale por {expires_minutes} minutos._")
+        linhas.append(f"• O código Pix vale por {expires_minutes} minutos")
+    linhas.append("")
+    if qr_code:
+        linhas.append(
+            "Pague com o código da próxima mensagem — copia e cola direto no "
+            "seu banco. Assim que cair, eu te aviso por aqui. 😉"
+        )
+        return ["\n".join(linhas), qr_code]
     linhas.append("Assim que o pagamento cair, eu te aviso por aqui. 😉")
-    return "\n".join(linhas)
+    return ["\n".join(linhas)]
 
 
 def pix_falhou() -> str:

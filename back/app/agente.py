@@ -3080,14 +3080,12 @@ async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str
     session.slots.pop("awaiting_confirm", None)
     session.fail_count = 0
     advance(session, S.AGUARDANDO_PAGAMENTO)
-    return [
-        r.mensagem_do_pix(
-            order_code=order_code,
-            total=order_total,
-            qr_code=charge.qr_code,
-            expires_minutes=deps.settings.pix_expiration_minutes,
-        )
-    ]
+    return r.mensagem_do_pix(
+        order_code=order_code,
+        total=order_total,
+        qr_code=charge.qr_code,
+        expires_minutes=deps.settings.pix_expiration_minutes,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -4625,11 +4623,11 @@ _RE_LOGRADOURO = re.compile(
     re.IGNORECASE,
 )
 
-#: Enfeites antes do endereço: "meu endereço é", "já falei,", "anota aí".
-#: Removidos em laço porque vêm empilhados ("meu endereco eh av brasil...").
-_LIXO_NA_FRENTE = re.compile(
-    r"^(?:meu|endereco|endereço|e|eh|é|ja|já|falei|anota|ai|aí|o|pode|anotar)"
-    r"\b[\s:,.\-]*",
+#: "aqui no", "ali na", "lá no", "aí no" antes do bairro — jeito de falar, não
+#: parte do nome ("aqui no Jardim Clodoaldo" tem que virar só "Jardim
+#: Clodoaldo"). Sem isto o enfeite falado entrava no bairro salvo.
+_RE_ENFEITE_DE_LUGAR = re.compile(
+    r"^(?:aqui|ali|l[aá]|a[ií])\s+(?:mesmo\s+)?(?:no|na|em)?\s*",
     re.IGNORECASE,
 )
 
@@ -4648,22 +4646,24 @@ def _endereco_do_texto(mensagem: str) -> Address | None:
     isso a leitura aqui é determinística. E conservadora: exige um nome de
     logradouro E um número, senão desiste e deixa o fluxo normal perguntar de
     novo. Preencher errado é pior do que perguntar mais uma vez.
+
+    A rua começa exatamente na palavra do logradouro ("rua", "avenida", ...),
+    nunca no início da frase. É o que impede um enfeite falado antes dela —
+    "cara, é avenida Guaporé, 4202" transcrito com ruído (áudio real: um
+    "cara," virou "Carena," na transcrição) — de grudar no nome da rua. Ler
+    do início da frase até o número, como este código fazia antes, aceitava
+    qualquer coisa dita ali como se fosse endereço.
     """
     texto = mensagem.strip()
-    if not _RE_LOGRADOURO.search(texto):
+    logradouro = _RE_LOGRADOURO.search(texto)
+    if not logradouro:
         return None
 
-    while True:
-        limpo = _LIXO_NA_FRENTE.sub("", texto).strip(" ,.")
-        if limpo == texto or not limpo:
-            break
-        texto = limpo
-
-    numero = _RE_NUMERO.search(texto)
+    numero = _RE_NUMERO.search(texto, logradouro.end())
     if not numero:
         return None
 
-    rua = texto[: numero.start()].strip(" ,.-")
+    rua = texto[logradouro.start() : numero.start()].strip(" ,.-")
     resto = texto[numero.end():].strip(" ,.-")
     if not rua:
         return None
@@ -4674,6 +4674,8 @@ def _endereco_do_texto(mensagem: str) -> Address | None:
     resto = _RE_COMPLEMENTO.sub(" ", resto).strip(" ,.-")
 
     # "bairro santa rita" / "b. centro" — a palavra é dica, não exigência.
+    # "aqui no santa rita" — o enfeite de lugar sai antes de olhar pra isso.
+    resto = _RE_ENFEITE_DE_LUGAR.sub("", resto).strip(" ,.-")
     bairro = re.sub(r"^(?:bairro|b\.)\s*", "", resto, flags=re.IGNORECASE)
     bairro = bairro.strip(" ,.-")
     # Sobrou mais de um pedaço separado por vírgula: o bairro é o último.

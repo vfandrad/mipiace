@@ -286,7 +286,8 @@ async def test_fluxo_feliz_ate_o_pix(flow) -> None:
     # 6. Confirmação cria o pedido, gera o Pix e trava em AGUARDANDO_PAGAMENTO.
     replies = await flow.say("sim")
     assert flow.state is S.AGUARDANDO_PAGAMENTO
-    assert "PIX-COPIA-E-COLA-MIPIACE" in replies[0]
+    # O código Pix vem numa bolha só dele, para dar pra copiar sem mais nada.
+    assert "PIX-COPIA-E-COLA-MIPIACE" in replies[-1]
     assert "MP-1042" in replies[0]
     assert flow.conversation.cart.is_empty
     order = flow.created["order"]
@@ -390,4 +391,4 @@ async def test_fluxo_de_retirada_nao_cobra_taxa(flow) -> None:
 
     replies = await flow.say("sim")
     assert flow.state is S.AGUARDANDO_PAGAMENTO
-    assert "PIX-COPIA-E-COLA-MIPIACE" in replies[0]
+    assert "PIX-COPIA-E-COLA-MIPIACE" in replies[-1]

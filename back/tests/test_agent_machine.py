@@ -506,7 +506,7 @@ async def test_confirmar_depois_do_resumo_gera_o_pix() -> None:
     replies = await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim")
 
     assert session.state is S.AGUARDANDO_PAGAMENTO
-    assert "PIX-COPIA-E-COLA" in replies[0]
+    assert replies[-1] == "PIX-COPIA-E-COLA"
     assert session.cart.is_empty
 
 
@@ -532,7 +532,7 @@ async def test_fechar_informal_com_resumo_na_tela_confirma() -> None:
     replies = await run(deps, session, plano(op(Action.CLOSE_ORDER)), "fechou mano, pode mandar")
 
     assert session.state is S.AGUARDANDO_PAGAMENTO
-    assert "PIX-COPIA-E-COLA" in replies[0]
+    assert replies[-1] == "PIX-COPIA-E-COLA"
 
 
 @pytest.mark.asyncio
@@ -938,6 +938,23 @@ async def test_endereco_que_o_cliente_disse_entra_mesmo_com_erro_de_digitacao() 
     endereco = session.slots.get("address", {})
     assert endereco.get("rua") == "Rua das Flores"
     assert endereco.get("bairro") == "Centro"
+
+
+def test_endereco_do_texto_ignora_enfeite_falado_antes_da_rua() -> None:
+    """Áudio real: "cara, é avenida Guaporé, 4202" saiu da transcrição com
+    "cara," virado em "Carena," — e a leitura antiga colava esse ruído na rua
+    porque lia do início da frase até o número, não da palavra do logradouro.
+    """
+    from app.agente import _endereco_do_texto  # noqa: PLC0415
+
+    endereco = _endereco_do_texto(
+        "carena, avenida guapore, 4202, aqui no jardim clodoaldo"
+    )
+
+    assert endereco is not None
+    assert endereco.rua == "avenida guapore"
+    assert endereco.numero == "4202"
+    assert endereco.bairro == "jardim clodoaldo"
 
 
 @pytest.mark.asyncio
