@@ -797,14 +797,30 @@ async def test_cardapio_nao_repete_quando_carrinho_esvazia() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cardapio_completo_quando_pedido_de_proposito() -> None:
-    """show_menu continua mostrando a lista inteira, a qualquer momento da conversa."""
+async def test_cardapio_completo_na_primeira_vez_que_e_pedido() -> None:
+    """show_menu mostra a lista inteira quando ela ainda não saiu na conversa."""
     deps, session = build_deps(), build_session()
-    await run(deps, session, AgentPlan(), "oi")  # já mostrou uma vez
 
     replies = await run(deps, session, plano(op(Action.SHOW_MENU)), "me manda o cardapio")
 
     assert any("cardápio de hoje" in reply for reply in replies)
+
+
+@pytest.mark.asyncio
+async def test_cardapio_nao_repete_mesmo_quando_pedido_de_novo() -> None:
+    """Pedir o cardápio de novo não manda a parede de texto inteira outra vez.
+
+    Antes, `show_menu` reenviava a lista inteira (tamanhos + 30 e tantos
+    sabores) toda vez que o cliente pedia — várias vezes na mesma conversa
+    virava spam. Continua respondendo ao pedido, só que sem repetir tudo.
+    """
+    deps, session = build_deps(), build_session()
+    await run(deps, session, plano(op(Action.SHOW_MENU)), "me manda o cardapio")
+
+    replies = await run(deps, session, plano(op(Action.SHOW_MENU)), "manda de novo o cardapio")
+
+    assert not any("cardápio de hoje" in reply for reply in replies)
+    assert replies
 
 
 @pytest.mark.asyncio

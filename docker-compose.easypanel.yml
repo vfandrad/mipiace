@@ -47,9 +47,10 @@ services:
       ]
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # Aplicados só no primeiro boot do volume, em ordem alfabética.
+      # Aplicado só no primeiro boot do volume. Sem seed.sql de propósito: o
+      # banco de produção nasce só com o schema — nenhum produto pré-cadastrado
+      # imposto a um cliente novo. Quem cadastra o cardápio é a tela Produtos.
       - ./back/db/schema.sql:/docker-entrypoint-initdb.d/init-scripts/01-schema.sql:ro
-      - ./back/db/seed.sql:/docker-entrypoint-initdb.d/init-scripts/02-seed.sql:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
       interval: 5s

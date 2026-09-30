@@ -105,7 +105,10 @@ def _bloco_de_sabores(flavors: Sequence[Any], titulo: str = "Sabores de hoje") -
     varias_categorias = len(por_categoria) > 1
     for categoria, nomes in por_categoria.items():
         if varias_categorias:
-            linhas.append(f"_{categoria}_ ({len(nomes)})")
+            # Negrito, não itálico: é um cabeçalho de seção, e itálico some na
+            # tela pequena do WhatsApp — precisa ser o que salta aos olhos ao
+            # rolar rápido, não o texto mais discreto da mensagem.
+            linhas.append(f"*{categoria}* ({len(nomes)})")
         for grupo in _em_grupos(nomes, _SABORES_POR_LINHA):
             linhas.append(", ".join(grupo))
     return linhas
@@ -125,7 +128,10 @@ def cardapio(catalog: CatalogSnapshot) -> str:
     # lista numerada convida a responder "2" — que é justamente a muleta que
     # este agente não deveria precisar. A ordem continua existindo para quem
     # responder assim mesmo; ela só não é mais a interface.
-    linhas = [f"{_emoji()}*{_loja()}* — cardápio de hoje", ""]
+    # A mensagem inteira do título em negrito, não só o nome da loja: numa
+    # tela de WhatsApp, é essa linha que precisa ser reconhecida como
+    # cabeçalho num piscar de olhos, antes de o cliente ler qualquer coisa.
+    linhas = [f"*{_emoji()}{_loja()} — cardápio de hoje*", ""]
     for product in products:
         linhas.append(f"• *{product.name}* — {em_reais(product.base_price)}")
         if product.description:
@@ -146,6 +152,15 @@ def cardapio(catalog: CatalogSnapshot) -> str:
     linhas.append("")
     linhas.append("É só me dizer o que você quer que eu monto pra você. 😊")
     return "\n".join(linhas)
+
+
+def cardapio_ja_mostrado() -> str:
+    """O cardápio inteiro já saiu nesta conversa — mandar tudo de novo é spam.
+
+    Não ignora o pedido do cliente: convida a perguntar algo específico (um
+    sabor, um tamanho) em vez de repetir a parede de texto inteira.
+    """
+    return "Já te mandei o cardápio aqui em cima! 😊 Quer que eu repita algum sabor ou tamanho específico?"
 
 
 def lista_de_sabores(flavors: Sequence[Any], titulo: str = "Sabores de hoje") -> str:

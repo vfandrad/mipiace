@@ -3101,6 +3101,7 @@ CLOSING = "closing"                    # o cliente já disse que quer fechar
 AWAITING_CONFIRM = "awaiting_confirm"  # resumo final na tela, esperando "sim"
 LAST_OFFER = "last_offer"              # a última lista numerada que mostramos
 LEGACY_DRAFT = "draft"                 # conversas antigas (ver `adopt_legacy_draft`)
+CARDAPIO_MOSTRADO = "cardapio_mostrado"  # o cardápio inteiro já saiu nesta conversa
 
 
 @dataclass
@@ -3638,7 +3639,13 @@ async def apply(
         _merge_address(session, op.address, turn, mensagem)
 
     elif action is Action.SHOW_MENU:
-        turn.say(menu(deps, session))
+        # O cardápio inteiro (tamanhos + os 30 e tantos sabores) já saiu uma
+        # vez nesta conversa: repetir tudo de novo a cada "manda o cardápio
+        # de novo" é a parede de texto que este arquivo existe para evitar.
+        if session.slots.get(CARDAPIO_MOSTRADO):
+            turn.say(r.cardapio_ja_mostrado())
+        else:
+            turn.say(menu(deps, session))
         turn.answered = True
 
     elif action is Action.SHOW_CART:
@@ -4178,6 +4185,7 @@ def _op_duplicate(
 
 def menu(deps: AgentDeps, session: ConversationSession) -> str:
     session.slots[LAST_OFFER] = [p.name for p in deps.catalog.available_products]
+    session.slots[CARDAPIO_MOSTRADO] = True
     return r.cardapio(deps.catalog)
 
 
