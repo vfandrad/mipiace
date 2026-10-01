@@ -692,6 +692,66 @@ async def test_varredura_de_sabores_nao_readiciona_o_que_foi_removido() -> None:
 
 
 @pytest.mark.asyncio
+async def test_varios_itens_na_mesma_frase_nao_mistura_sabores() -> None:
+    """"M de frutas vermelhas, G de chocolate e GG de morango" numa frase só.
+
+    Achado em conversa real: os três potes saíam todos com a MESMA mistura dos
+    três sabores. Cada grupo de sabores aceita de 1 até N escolhas (min=1): um
+    sabor só já é um pedido válido, não "incompleto". Mas a varredura do texto
+    cru que recupera listas sem vírgula (`_sabores_ditos`) olhava a mensagem
+    inteira, achava os três sabores (um de cada item) e os enfiava em CADA
+    item, achando que o modelo tinha "esquecido" os outros dois.
+    """
+    sabores_id = uuid4()
+    complementos = [
+        CatalogComplement(id=uuid4(), group_id=sabores_id, name="Frutas vermelhas"),
+        CatalogComplement(id=uuid4(), group_id=sabores_id, name="Chocolate"),
+        CatalogComplement(id=uuid4(), group_id=sabores_id, name="Morango"),
+    ]
+
+    def produto(nome: str, max_choices: int) -> CatalogProduct:
+        return CatalogProduct(
+            id=uuid4(),
+            name=nome,
+            base_price=Decimal("30.00"),
+            groups=[
+                CatalogGroup(
+                    id=uuid4(),
+                    name="Sabores",
+                    min_choices=1,
+                    max_choices=max_choices,
+                    is_required=True,
+                    complements=complementos,
+                )
+            ],
+        )
+
+    catalog = CatalogSnapshot(
+        products=[produto("M - 240ml", 2), produto("G - 500ml", 3), produto("GG - 1000ml", 6)]
+    )
+    deps, session = build_deps(catalog), build_session()
+
+    mensagem = "quero um M de frutas vermelhas, um G de chocolate e um GG de morango"
+    await run(
+        deps,
+        session,
+        plano(
+            op(Action.ADD_ITEM, product_name="M - 240ml", add_flavors=["Frutas vermelhas"]),
+            op(Action.ADD_ITEM, product_name="G - 500ml", add_flavors=["Chocolate"]),
+            op(Action.ADD_ITEM, product_name="GG - 1000ml", add_flavors=["Morango"]),
+        ),
+        mensagem,
+    )
+
+    sabores_por_item = {
+        item.product_name: {c.name for c in item.complements} for item in session.cart.items
+    }
+    assert sabores_por_item["M - 240ml"] == {"Frutas vermelhas"}, sabores_por_item
+    assert sabores_por_item["G - 500ml"] == {"Chocolate"}, sabores_por_item
+    assert sabores_por_item["GG - 1000ml"] == {"Morango"}, sabores_por_item
+
+
+@pytest.mark.asyncio
 async def test_retirada_nao_pede_endereco() -> None:
     deps, session = build_deps(), build_session()
     await montar_pote(deps, session)

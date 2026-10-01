@@ -3127,6 +3127,11 @@ class Turno:
     #: o carrinho já encolhido pela primeira — o número que o cliente viu era
     #: sobre ESTA lista, não sobre a lista depois de mexida. Ver `_target`.
     cart_no_inicio_do_turno: list[CartItem] | None = None
+    #: Mais de um item sendo criado/mexido na MESMA mensagem — ver `_flavors_into`.
+    #: Com só um item em jogo, varrer o texto inteiro atrás de sabores esquecidos
+    #: pelo modelo é seguro. Com mais de um, a mesma varredura pega sabores que
+    #: eram de OUTRO item da frase; melhor confiar só no que o modelo separou.
+    varios_itens_no_plano: bool = False
 
     def say(self, *texts: str) -> None:
         """Acrescenta falas, sem repetir a mesma no mesmo turno.
@@ -3507,8 +3512,11 @@ def _flavors_into(
 
     # O modelo acertou o sabor, mas pode ter perdido o resto da lista. Se o
     # texto do cliente cita MAIS sabores deste grupo do que ele devolveu, o
-    # texto manda — tirando os que o próprio plano pediu para remover.
-    if achados and mensagem:
+    # texto manda — tirando os que o próprio plano pediu para remover. Mas só
+    # com UM item em jogo: com mais de um, os sabores "a mais" encontrados no
+    # texto inteiro costumam ser de OUTRO item da mesma frase (ver
+    # `Turno.varios_itens_no_plano`), e usá-los aqui mistura os pedidos.
+    if achados and mensagem and not turn.varios_itens_no_plano:
         removendo = {normalize(n) for n in op.remove_flavors}
         pelo_texto = [
             c for c in _sabores_ditos(group, mensagem)
@@ -4499,6 +4507,18 @@ _EDITAM_OS_ITENS = frozenset(
     }
 )
 
+#: Ações que podem receber sabor vindo da varredura do texto cru em
+#: `_flavors_into`. Ver `Turno.varios_itens_no_plano`: mais de uma destas na
+#: mesma mensagem é o sinal de que há mais de um item na frase.
+_RECEBEM_SABORES_DO_TEXTO = frozenset(
+    {
+        Action.ADD_ITEM,
+        Action.UPDATE_ITEM,
+        Action.REPLACE_ITEM,
+        Action.DUPLICATE_ITEM,
+    }
+)
+
 _MEXEM_NO_PEDIDO = _EDITAM_OS_ITENS | frozenset(
     {Action.CLOSE_ORDER, Action.CONFIRM_ORDER}
 )
@@ -4822,6 +4842,16 @@ async def run(
 
     turn = Turno()
     turn.cart_no_inicio_do_turno = list(session.cart.items)
+    # "um M de frutas vermelhas, um G de chocolate e um GG de morango" tem TRÊS
+    # itens na mesma frase. `_flavors_into` varrendo o texto inteiro atrás de
+    # sabores do grupo juntava os três sabores em cada um dos três potes —
+    # achado em conversa real, o cliente viu os três potes saírem com a mesma
+    # mistura de sabores que não pediu. Com mais de um item em jogo, a
+    # varredura de texto cru fica desligada; só com um item ela continua
+    # recuperando o que o modelo às vezes derruba de uma lista sem vírgula.
+    turn.varios_itens_no_plano = (
+        sum(1 for op in plan.operations if op.action in _RECEBEM_SABORES_DO_TEXTO) > 1
+    )
 
     # A confirmação é a única operação que mexe em dinheiro: ela sai da fila e
     # só vale se houver um resumo na tela esperando resposta.
