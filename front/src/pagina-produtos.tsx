@@ -45,23 +45,27 @@ export const ProductsHeader = ({ onNewProduct, onManageCategories, onRefresh }: 
     title="Produtos"
     subtitle="Gerencie o cardápio e complementos"
     actions={
-      <>
-        <RefreshButton onRefresh={onRefresh} />
-        <Button
-          variant="outline"
-          onClick={onManageCategories}
-          className="min-h-11 sm:min-h-10"
-        >
-          <Tags className="mr-2 h-4 w-4" />
-          <span className="hidden sm:inline">Categorias de item</span>
-          <span className="sm:hidden">Categorias</span>
-        </Button>
-        {/* Botão principal da tela: ocupa o resto da faixa no celular. */}
-        <Button onClick={onNewProduct} className="min-h-11 flex-1 sm:min-h-10 sm:flex-none">
+      // Três botões de largura normal nunca cabem numa faixa de 390px — "Novo
+      // Produto" era o que estourava a tela. No celular viram duas linhas:
+      // as ações secundárias dividindo uma faixa, a principal cheia embaixo.
+      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+        <div className="flex gap-2">
+          <RefreshButton onRefresh={onRefresh} className="flex-1 sm:flex-none" />
+          <Button
+            variant="outline"
+            onClick={onManageCategories}
+            className="min-h-11 flex-1 sm:min-h-10 sm:flex-none"
+          >
+            <Tags className="mr-2 h-4 w-4" />
+            <span className="hidden sm:inline">Categorias de item</span>
+            <span className="sm:hidden">Categorias</span>
+          </Button>
+        </div>
+        <Button onClick={onNewProduct} className="min-h-11 w-full sm:min-h-10 sm:w-auto">
           <Plus className="mr-2 h-4 w-4" />
           Novo Produto
         </Button>
-      </>
+      </div>
     }
   />
 );
@@ -516,7 +520,9 @@ export const ComplementCategoriesDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto">
+      {/* dvh, não vh: no Safari do iOS a barra de endereço muda de altura, e
+          vh fixo cortava o rodapé do diálogo atrás dela. */}
+      <DialogContent className="max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Categorias de complemento</DialogTitle>
         </DialogHeader>
