@@ -59,7 +59,7 @@ class Settings(BaseSettings):
 
     # --- LLM (OpenAI) --------------------------------------------------------
     openai_api_key: str | None = None
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-4o"
     llm_max_tokens: int = 1024
     llm_timeout_seconds: float = 20.0
     #: Retentativas automáticas do SDK da OpenAI (chat e transcrição) diante de

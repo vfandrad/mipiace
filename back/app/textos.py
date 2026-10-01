@@ -364,6 +364,25 @@ def sabores_perdidos_na_troca(nomes: list[str]) -> str:
     return f"O tamanho novo não cabe todos os sabores — tirei {lista}. 😉"
 
 
+def sabores_a_confirmar(itens: Sequence[CartItem], sem_dono: Sequence[str]) -> str:
+    """Vários itens na mesma mensagem, e sobrou sabor sem item certo.
+
+    Mesmo acidente que a trava em `_flavors_into` evita ao ignorar o texto
+    cru quando há vários itens em jogo — só que aqui é o sabor sobrando no
+    texto que precisa de dono. Em vez de adivinhar (ou pior, repetir em todo
+    mundo), pergunta.
+    """
+    linhas = ["Só pra confirmar, porque veio tudo numa mensagem só:"]
+    for index, item in enumerate(itens, start=1):
+        sabores = ", ".join(c.name for c in item.complements) or "sem sabor ainda"
+        linhas.append(f"{index}. {item.quantity}x {item.product_name} — {sabores}")
+    linhas.append("")
+    lista = ", ".join(f"*{nome}*" for nome in sem_dono)
+    verbo = "é" if len(sem_dono) == 1 else "são"
+    linhas.append(f"{lista} {verbo} de qual item?")
+    return "\n".join(linhas)
+
+
 def perguntar_se_quer_mais_curto() -> str:
     """A pergunta sozinha, para quando o carrinho já está na tela."""
     return "Quer mais alguma coisa ou já posso fechar? 😊"

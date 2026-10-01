@@ -1175,6 +1175,13 @@ pedido (a casquinha) e uma PERGUNTA (disponibilidade do maracujá). É \
 add_item + answer_question, os dois — a pergunta não é decoração da frase, é \
 um pedaço com operação própria, e sumiu em testes reais quando só o pedido \
 foi registrado.
+2b. VÁRIOS ITENS NA MESMA FRASE, CADA UM COM SEU PRÓPRIO SABOR: "um M de \
+frutas vermelhas, um G de chocolate e um GG de morango" são 3 pedaços, cada \
+um com produto E sabor próprios — 3 operações add_item, cada uma com \
+add_flavors contendo SÓ o sabor daquele pedaço (M: ["Frutas vermelhas"], G: \
+["Chocolate"], GG: ["Morango"]). NUNCA junte os três sabores em cada item, \
+nem repita o mesmo sabor nos três potes: cada sabor pertence ao pedaço onde \
+foi dito, não aos outros.
 3. Use a SITUAÇÃO ATUAL para resolver o implícito. A situação traz os itens \
 do pedido NUMERADOS — é essa numeração que vai em item_index, e ela inclui o \
 item que ainda está sendo montado. "tira o médio" é remove_item com o número \
@@ -3132,6 +3139,16 @@ class Turno:
     #: pelo modelo é seguro. Com mais de um, a mesma varredura pega sabores que
     #: eram de OUTRO item da frase; melhor confiar só no que o modelo separou.
     varios_itens_no_plano: bool = False
+    #: (grupo, item, sabores aplicados a ELE) — um registro por item tocado
+    #: neste turno, só preenchido quando `varios_itens_no_plano` é True. É a
+    #: matéria-prima de `_sabores_sem_dono`: em vez de espalhar no item errado
+    #: um sabor que sobrou no texto (o acidente que a trava acima evita),
+    #: pergunta de qual item ele é.
+    sabores_atribuidos_no_turno: list[tuple[CatalogGroup, CartItem, set[str]]] = field(
+        default_factory=list
+    )
+    #: `_sabores_sem_dono` achou sabor dito sem item certo — ver `_next_step`.
+    sabor_a_esclarecer: bool = False
 
     def say(self, *texts: str) -> None:
         """Acrescenta falas, sem repetir a mesma no mesmo turno.
@@ -3510,6 +3527,11 @@ def _flavors_into(
         return
     achados, problemas = _find_flavors(group, op.add_flavors)
 
+    if turn.varios_itens_no_plano:
+        turn.sabores_atribuidos_no_turno.append(
+            (group, item, {normalize(c.name) for c in achados})
+        )
+
     # O modelo acertou o sabor, mas pode ter perdido o resto da lista. Se o
     # texto do cliente cita MAIS sabores deste grupo do que ele devolveu, o
     # texto manda — tirando os que o próprio plano pediu para remover. Mas só
@@ -3534,6 +3556,33 @@ def _flavors_into(
         # entendi" — que APAGA a explicação real e ainda soma uma falha por
         # algo que o sistema entendeu perfeitamente.
         turn.answered = True
+
+
+def _sabores_sem_dono(turn: Turno, mensagem: str) -> list[str]:
+    """Sabores que o cliente disse nesta mensagem mas não caíram em NENHUM item.
+
+    Só tem o que examinar quando `varios_itens_no_plano` é True (é o único caso
+    em que `_flavors_into` preenche `sabores_atribuidos_no_turno`). Antes desta
+    checagem, o sabor que sobrava nessas mensagens era espalhado por TODOS os
+    itens do turno (o próprio bug que `varios_itens_no_plano` existe para
+    evitar, só que pelo lado do texto): aqui ele só é apontado, nunca aplicado.
+    """
+    if not mensagem or not turn.sabores_atribuidos_no_turno:
+        return []
+    grupos: dict[Any, CatalogGroup] = {}
+    aplicados_por_grupo: dict[Any, set[str]] = {}
+    for group, _item, aplicados in turn.sabores_atribuidos_no_turno:
+        grupos[group.id] = group
+        aplicados_por_grupo.setdefault(group.id, set()).update(aplicados)
+
+    faltando: list[str] = []
+    for group_id, group in grupos.items():
+        aplicados = aplicados_por_grupo[group_id]
+        faltando.extend(
+            c.name for c in _sabores_ditos(group, mensagem)
+            if normalize(c.name) not in aplicados
+        )
+    return faltando
 
 
 #: ---------------------------------------------------------------------------
@@ -4922,6 +4971,18 @@ async def run(
         # itens ANTIGOS, descartando a edição em silêncio.
         await _abandon_pending_order(deps, session)
 
+    if turn.varios_itens_no_plano:
+        perdidos = _sabores_sem_dono(turn, text)
+        if perdidos:
+            afetados: list[CartItem] = []
+            vistos = set()
+            for _group, item, _aplicados in turn.sabores_atribuidos_no_turno:
+                if id(item) not in vistos:
+                    vistos.add(id(item))
+                    afetados.append(item)
+            turn.say(r.sabores_a_confirmar(afetados, perdidos))
+            turn.sabor_a_esclarecer = True
+
     replies = await _next_step(deps, session, plan, turn, primeira_vez=primeira_vez)
     if voltou_do_humano and replies:
         replies = [r.voltou_do_atendente()] + replies
@@ -4957,6 +5018,13 @@ async def _next_step(
         ja_mostrou = any("*Seu pedido*" in nota for nota in turn.notes)
         retomada = _resume_prompt(deps, session, carrinho_na_tela=ja_mostrou)
         return turn.notes + ([retomada] if retomada else [])
+
+    # 1b. Mais de um item veio na mesma mensagem e sobrou sabor dito pelo
+    #     cliente sem item certo — ver `_sabores_sem_dono`. Pergunta de qual
+    #     item é, em vez de adivinhar (ou pior, repetir em todo mundo).
+    if turn.sabor_a_esclarecer:
+        session.fail_count = 0
+        return turn.notes
 
     # 2. Tem item em montagem: falta escolher sabor. Vale mesmo que ele tenha
     #    pedido para fechar — não se fecha pedido pela metade.

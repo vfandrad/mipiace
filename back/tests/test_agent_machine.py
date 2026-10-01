@@ -752,6 +752,69 @@ async def test_varios_itens_na_mesma_frase_nao_mistura_sabores() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sabor_sem_dono_em_varios_itens_pergunta_em_vez_de_adivinhar() -> None:
+    """O modelo erra a atribuição (não só a quantidade) em várias itens na mesma frase.
+
+    Mesma mensagem do teste acima, mas aqui o plano (como o modelo às vezes
+    devolve de verdade) repete "Frutas vermelhas" no G em vez de "Chocolate" —
+    sobra "Chocolate" dito no texto sem pousar em nenhum item. Antes desta
+    checagem, nada acusava isso: o item ficava com o sabor errado em silêncio.
+    Agora o bot pergunta de qual item é, sem mexer no que já foi aplicado.
+    """
+    sabores_id = uuid4()
+    complementos = [
+        CatalogComplement(id=uuid4(), group_id=sabores_id, name="Frutas vermelhas"),
+        CatalogComplement(id=uuid4(), group_id=sabores_id, name="Chocolate"),
+        CatalogComplement(id=uuid4(), group_id=sabores_id, name="Morango"),
+    ]
+
+    def produto(nome: str, max_choices: int) -> CatalogProduct:
+        return CatalogProduct(
+            id=uuid4(),
+            name=nome,
+            base_price=Decimal("30.00"),
+            groups=[
+                CatalogGroup(
+                    id=uuid4(),
+                    name="Sabores",
+                    min_choices=1,
+                    max_choices=max_choices,
+                    is_required=True,
+                    complements=complementos,
+                )
+            ],
+        )
+
+    catalog = CatalogSnapshot(
+        products=[produto("M - 240ml", 2), produto("G - 500ml", 3), produto("GG - 1000ml", 6)]
+    )
+    deps, session = build_deps(catalog), build_session()
+
+    mensagem = "quero um M de frutas vermelhas, um G de chocolate e um GG de morango"
+    replies = await run(
+        deps,
+        session,
+        plano(
+            op(Action.ADD_ITEM, product_name="M - 240ml", add_flavors=["Frutas vermelhas"]),
+            # Errado de propósito: devia ser "Chocolate".
+            op(Action.ADD_ITEM, product_name="G - 500ml", add_flavors=["Frutas vermelhas"]),
+            op(Action.ADD_ITEM, product_name="GG - 1000ml", add_flavors=["Morango"]),
+        ),
+        mensagem,
+    )
+
+    resposta = " ".join(replies)
+    assert "Chocolate" in resposta, replies
+    assert "qual item" in resposta.lower(), replies
+
+    sabores_por_item = {
+        item.product_name: {c.name for c in item.complements} for item in session.cart.items
+    }
+    # Pergunta, não corrige sozinho: o G continua com o sabor errado do plano.
+    assert sabores_por_item["G - 500ml"] == {"Frutas vermelhas"}, sabores_por_item
+
+
+@pytest.mark.asyncio
 async def test_retirada_nao_pede_endereco() -> None:
     deps, session = build_deps(), build_session()
     await montar_pote(deps, session)
