@@ -1084,7 +1084,12 @@ export const GroupCard = ({
                     !complement.is_available && 'bg-muted/30',
                   )}
                 >
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                  {/* Sem truncate/flex-1: um nome que não cabe ao lado do preço e
+                      dos controles empurra os dois para a linha de baixo, em vez
+                      de espremer o próprio nome até sumir. Nome curto continua
+                      numa linha só; nome comprido só quebra as PALAVRAS se nem
+                      sozinho couber nos 390px. */}
+                  <div className="flex items-center gap-2">
                     {podeArrastar && handle}
                     {modoSelecionar && (
                       <input
@@ -1097,7 +1102,7 @@ export const GroupCard = ({
                     )}
                     <span
                       className={cn(
-                        'truncate text-sm font-medium',
+                        'text-sm font-medium',
                         !complement.is_available && 'text-muted-foreground line-through',
                       )}
                     >
