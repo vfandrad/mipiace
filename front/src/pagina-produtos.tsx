@@ -6,7 +6,7 @@
  */
 
 import { Button } from '@/ui';
-import { Plus, Tags, Pencil, Trash2, X, ChevronRight, FolderPlus, CheckCircle2, Search, XCircle } from 'lucide-react';
+import { Plus, Tags, Pencil, Trash2, X, ChevronRight, FolderPlus, CheckCircle2, Search, XCircle, ListChecks, GripVertical } from 'lucide-react';
 import { PageTitle, Page } from '@/comuns';
 import { RefreshButton } from '@/comuns';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/ui';
@@ -959,9 +959,26 @@ export const GroupCard = ({
   const ids = group.complements.map((c) => c.id);
   const marcadosAqui = ids.filter((id) => selecionados.has(id)).length;
   const todosMarcados = total > 0 && marcadosAqui === total;
+
+  // Caixa de marcar e alça de arrastar somem por padrão: com 31 sabores, dois
+  // controles que servem só de vez em quando (selecionar em massa, reordenar)
+  // sempre visíveis em CADA linha forçavam a quebra em duas linhas por item e
+  // deixavam a lista pesada de rolar. Agora são um modo que se liga quando
+  // precisa — o resto do tempo a linha é só nome, preço, disponibilidade e
+  // editar/excluir.
+  const [modoSelecionar, setModoSelecionar] = useState(false);
+  const [modoReordenar, setModoReordenar] = useState(false);
+
+  const alternarModoSelecionar = () => {
+    // Saindo do modo: limpa o que estava marcado NESTE grupo, para a barra de
+    // seleção em massa não ficar com itens marcados que o cliente não vê mais.
+    if (modoSelecionar) onSelecionarGrupo(ids, false);
+    setModoSelecionar((atual) => !atual);
+  };
+
   // Arrastar com a busca ativa reordenaria uma lista PARCIAL: a posição
   // gravada seria a das linhas visíveis, não a real.
-  const podeArrastar = !filtro;
+  const podeArrastar = !filtro && modoReordenar;
 
   return (
     <Card className="overflow-hidden">
@@ -1019,6 +1036,36 @@ export const GroupCard = ({
           {group.is_required ? 'Obrigatório' : 'Opcional'} · {regraDeEscolha(group)}
         </p>
 
+        {total > 0 && (
+          // Liga/desliga a caixa de marcar e a alça de arrastar em cada linha —
+          // ver o comentário em cima de `modoSelecionar`. "Reordenar" começa
+          // desligado mesmo sem busca ativa: arrastar sem querer ao rolar a
+          // lista era o jeito mais fácil de bagunçar a ordem dos 31 sabores.
+          <div className="flex items-center gap-2 border-t border-border bg-muted/10 px-2 py-1.5 sm:px-4">
+            <Button
+              type="button"
+              variant={modoSelecionar ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-8 gap-1.5 text-xs"
+              onClick={alternarModoSelecionar}
+            >
+              <ListChecks className="h-3.5 w-3.5" />
+              Selecionar
+            </Button>
+            <Button
+              type="button"
+              variant={modoReordenar ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-8 gap-1.5 text-xs"
+              disabled={Boolean(filtro)}
+              onClick={() => setModoReordenar((atual) => !atual)}
+            >
+              <GripVertical className="h-3.5 w-3.5" />
+              Reordenar
+            </Button>
+          </div>
+        )}
+
         <div className="border-t border-border">
           {total === 0 ? (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">
@@ -1037,18 +1084,17 @@ export const GroupCard = ({
                     !complement.is_available && 'bg-muted/30',
                   )}
                 >
-                  {/* basis-full no celular: o nome ocupa a primeira linha
-                      inteira e os controles descem para a segunda, em vez de
-                      espremerem tudo numa faixa de 390px. */}
-                  <div className="flex min-w-0 basis-full items-center gap-2 sm:flex-1 sm:basis-auto">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
                     {podeArrastar && handle}
-                    <input
-                      type="checkbox"
-                      checked={selecionados.has(complement.id)}
-                      onChange={() => onToggleSelecao(complement.id)}
-                      aria-label={`Selecionar ${complement.name}`}
-                      className="h-5 w-5 shrink-0 cursor-pointer accent-[hsl(var(--primary))]"
-                    />
+                    {modoSelecionar && (
+                      <input
+                        type="checkbox"
+                        checked={selecionados.has(complement.id)}
+                        onChange={() => onToggleSelecao(complement.id)}
+                        aria-label={`Selecionar ${complement.name}`}
+                        className="h-5 w-5 shrink-0 cursor-pointer accent-[hsl(var(--primary))]"
+                      />
+                    )}
                     <span
                       className={cn(
                         'truncate text-sm font-medium',
@@ -1104,7 +1150,7 @@ export const GroupCard = ({
           )}
 
           <div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted/20 px-4 py-3">
-            {total > 0 && (
+            {modoSelecionar && total > 0 && (
               <Button
                 variant="ghost"
                 size="sm"
