@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app import textos as r
 from app.agente import (
     TRANSITIONS,
     Action,
@@ -108,7 +109,7 @@ class _FakePix:
     provider_payment_id = "fake-1"
 
 
-def build_deps(catalog: CatalogSnapshot | None = None) -> AgentDeps:
+def build_deps(catalog: CatalogSnapshot | None = None, *, returning_customer: bool = False) -> AgentDeps:
     async def _create_order(db, **kwargs):
         return _FakeOrder()
 
@@ -121,6 +122,9 @@ def build_deps(catalog: CatalogSnapshot | None = None) -> AgentDeps:
     async def _saved_address():
         return None
 
+    async def _returning_customer():
+        return returning_customer
+
     return AgentDeps(
         db=None,
         catalog=catalog or build_catalog(),
@@ -129,6 +133,7 @@ def build_deps(catalog: CatalogSnapshot | None = None) -> AgentDeps:
         create_pix=_create_pix,
         order_summary=_summary,
         saved_address=_saved_address,
+        returning_customer=_returning_customer,
     )
 
 
@@ -623,6 +628,43 @@ async def test_cancelar_de_verdade_no_atendimento_humano_continua_valendo() -> N
     assert session.cart.is_empty
 
 
+# ---------------------------------------------------------------------------
+# Frustração clara: oferece atendente sem esperar a escada de fallback
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_frustracao_clara_oferece_atendente_mesmo_sem_o_modelo_pedir() -> None:
+    """O modelo não classificou como request_human, mas o texto é inequívoco."""
+    deps, session = build_deps(), build_session()
+
+    await run(deps, session, plano(op(Action.NO_ACTION)), "atendimento pessimo, vou reclamar")
+
+    assert session.state is S.ATENDIMENTO_HUMANO
+
+
+@pytest.mark.asyncio
+async def test_reclamacao_de_produto_nao_e_tratada_como_frustracao_com_o_atendimento() -> None:
+    """"não gostei do sabor" é feedback de produto, não motivo pra chamar gente."""
+    deps, session = build_deps(), build_session()
+
+    await run(deps, session, plano(op(Action.NO_ACTION)), "nao gostei do sabor do pistache")
+
+    assert session.state is not S.ATENDIMENTO_HUMANO
+
+
+@pytest.mark.asyncio
+async def test_frustracao_nao_dobra_pedido_de_humano_ja_feito_pelo_modelo() -> None:
+    """O modelo já pediu humano: não duplica a operação por conta do texto."""
+    deps, session = build_deps(), build_session()
+
+    replies = await run(
+        deps, session, plano(op(Action.REQUEST_HUMAN)), "atendimento pessimo, quero cancelar tudo"
+    )
+
+    assert session.state is S.ATENDIMENTO_HUMANO
+    assert replies.count(replies[0]) == 1  # uma oferta de atendente, não duas
+
+
 @pytest.mark.asyncio
 async def test_pedir_pra_tirar_a_taxa_nao_oferece_apagar_produto() -> None:
     """"tira essa taxa aí" não é pedido para apagar um pote de R$ 50.
@@ -880,8 +922,10 @@ async def test_fallback_progressivo_nunca_cala_o_bot() -> None:
     segunda = await run(deps, session, AgentPlan(), "382 xjskd")
     terceira = await run(deps, session, AgentPlan(), "??")
 
-    assert "não peguei" in primeira[0].lower()
-    assert "ainda não consegui" in segunda[0].lower()
+    # O texto varia por conversa (ver `textos._NAO_ENTENDI`) — o que importa
+    # aqui é que cada rodada é um pedido para reformular, não o texto exato.
+    assert primeira[0] == r.nao_entendi(session.id)
+    assert segunda[0] == r.nao_entendi_de_novo(session.id)
     assert "time" in terceira[0].lower()
     assert session.state is S.CONVERSANDO  # não escalou sozinho
     assert session.handoff is False
@@ -917,6 +961,31 @@ async def test_cardapio_nao_repete_quando_carrinho_esvazia() -> None:
 
     assert not any("cardápio de hoje" in reply for reply in replies)
     assert replies
+
+
+@pytest.mark.asyncio
+async def test_saudacao_calorosa_para_quem_ja_pagou_pedido_antes() -> None:
+    """Cliente com pedido pago anterior ouve uma saudação mais calorosa."""
+    deps = build_deps(returning_customer=True)
+    session = build_session()
+    session.slots["customer_name"] = "Marina"
+
+    replies = await run(deps, session, plano(op(Action.SHOW_MENU)), "oi")
+
+    assert "Marina" in replies[0]
+    assert "de novo" in replies[0]
+
+
+@pytest.mark.asyncio
+async def test_saudacao_generica_para_quem_nunca_pagou_mesmo_com_nome_conhecido() -> None:
+    """Conhecer o nome (profile_name do WhatsApp) não é o mesmo que já ter pedido."""
+    deps = build_deps(returning_customer=False)
+    session = build_session()
+    session.slots["customer_name"] = "Marina"
+
+    replies = await run(deps, session, plano(op(Action.SHOW_MENU)), "oi")
+
+    assert "de novo" not in replies[0]
 
 
 @pytest.mark.asyncio

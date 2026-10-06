@@ -19,6 +19,7 @@ from app.agente import (
     EvolutionAdapter,
     FakeAudioTranscriber,
     InboundMessage,
+    OpenAIAudioTranscriber,
     get_audio_transcriber,
     resolve_audio_message,
 )
@@ -158,6 +159,40 @@ async def test_fetch_media_base64_sem_base64_na_resposta_devolve_none(com_chave)
 # ---------------------------------------------------------------------------
 # Transcrição
 # ---------------------------------------------------------------------------
+
+class _TranscricaoFalsa:
+    def __init__(self, texto: str) -> None:
+        self.text = texto
+
+
+class _ClienteOpenAIQueFalhaUmaVez:
+    """Mesma ideia de `_ClienteQueFalhaUmaVez` do download: 1ª chamada explode."""
+
+    def __init__(self, texto: str) -> None:
+        self.chamadas = 0
+        self._texto = texto
+        self.audio = self
+        self.transcriptions = self
+
+    async def create(self, **kwargs: Any) -> _TranscricaoFalsa:
+        self.chamadas += 1
+        if self.chamadas == 1:
+            raise ConnectionError("OpenAI instável")
+        return _TranscricaoFalsa(self._texto)
+
+
+@pytest.mark.asyncio
+async def test_transcricao_tenta_de_novo_apos_falha_passageira() -> None:
+    """Mesmo padrão de `fetch_media_base64`: 1ª chamada falha, 2ª funciona."""
+    settings = get_settings()
+    cliente = _ClienteOpenAIQueFalhaUmaVez("quero um pote grande")
+    transcriber = OpenAIAudioTranscriber(settings, client=cliente)
+
+    texto = await transcriber.transcribe(audio=b"...", mimetype="audio/ogg")
+
+    assert texto == "quero um pote grande"
+    assert cliente.chamadas == 2
+
 
 @pytest.mark.asyncio
 async def test_fake_transcriber_decodifica_os_bytes_como_texto() -> None:

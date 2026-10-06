@@ -184,6 +184,16 @@ class AgentPlan(BaseModel):
     confidence: float = 0.0
     customer_name: str | None = None
 
+    #: Erro de infraestrutura (timeout, rate limit, chave inválida) — não é o
+    #: cliente que "não se fez entender", é o sistema que falhou. Usado só
+    #: para escolher o texto do fallback; nunca para decisão de negócio.
+    llm_unavailable: bool = False
+
+    #: O modelo respondeu, mas sem nada aproveitável (sem tool call, JSON
+    #: fora do contrato) — diferente de um `NO_ACTION` deliberado. Dá direito
+    #: a uma segunda tentativa antes de cair na escada de fallback.
+    malformed: bool = False
+
     # Metadados de auditoria/custo (gravados em conversation_messages).
     model: str | None = None
     usage: dict | None = None
@@ -1442,7 +1452,7 @@ class OpenAILLMClient:
         except Exception:
             # Timeout, rate limit, chave inválida: a conversa continua viva.
             logger.exception("falha ao chamar o LLM; plano vazio")
-            return AgentPlan(model=self._settings.openai_model)
+            return AgentPlan(model=self._settings.openai_model, llm_unavailable=True)
         finally:
             logger.info("LLM (%s) respondeu em %.2fs", self._settings.openai_model, time.monotonic() - inicio)
 
@@ -1459,7 +1469,7 @@ class OpenAILLMClient:
             logger.warning(
                 "resposta do LLM sem tool call: %r", getattr(response, "id", None)
             )
-            return AgentPlan(model=model, usage=usage)
+            return AgentPlan(model=model, usage=usage, malformed=True)
 
         try:
             operations = [
@@ -1474,7 +1484,7 @@ class OpenAILLMClient:
             )
         except Exception:
             logger.exception("input da tool fora do contrato: %r", payload)
-            return AgentPlan(model=model, usage=usage)
+            return AgentPlan(model=model, usage=usage, malformed=True)
 
         plan.model = model
         plan.usage = usage
@@ -2231,23 +2241,34 @@ class OpenAIAudioTranscriber:
         return self._client
 
     async def transcribe(self, *, audio: bytes, mimetype: str) -> str | None:
+        """Transcreve o áudio, com uma tentativa extra depois de 1s.
+
+        Mesmo padrão de `EvolutionAdapter.fetch_media_base64`: uma falha
+        passageira aqui custaria uma nota de voz inteira sem resposta.
+        """
         inicio = time.monotonic()
-        try:
-            client = self._ensure_client()
-            response = await client.audio.transcriptions.create(
-                model=self._settings.openai_transcribe_model,
-                # O nome do arquivo é sempre "audio.ogg", e não o que a
-                # Evolution reportou: nota de voz do WhatsApp é ogg/opus, e a
-                # extensão real (.oga) já foi vista sendo rejeitada por
-                # modelos de transcrição mais novos com um 400 que não tem
-                # nada a ver com o conteúdo do áudio.
-                file=("audio.ogg", audio, "audio/ogg"),
-            )
-        except Exception:
-            logger.exception("falha ao transcrever áudio")
-            return None
-        finally:
-            logger.info("transcrição de áudio em %.2fs", time.monotonic() - inicio)
+        response: Any = None
+        for tentativa in range(2):
+            try:
+                client = self._ensure_client()
+                response = await client.audio.transcriptions.create(
+                    model=self._settings.openai_transcribe_model,
+                    # O nome do arquivo é sempre "audio.ogg", e não o que a
+                    # Evolution reportou: nota de voz do WhatsApp é ogg/opus, e
+                    # a extensão real (.oga) já foi vista sendo rejeitada por
+                    # modelos de transcrição mais novos com um 400 que não tem
+                    # nada a ver com o conteúdo do áudio.
+                    file=("audio.ogg", audio, "audio/ogg"),
+                )
+                break
+            except Exception:
+                if tentativa == 0:
+                    await asyncio.sleep(1.0)
+                    continue
+                logger.exception("falha ao transcrever áudio")
+                logger.info("transcrição de áudio em %.2fs", time.monotonic() - inicio)
+                return None
+        logger.info("transcrição de áudio em %.2fs", time.monotonic() - inicio)
         texto = getattr(response, "text", None)
         return texto.strip() if texto else None
 
@@ -2922,6 +2943,33 @@ async def get_saved_address(db: Any, phone: str) -> dict[str, Any] | None:
     }
 
 
+async def has_paid_order(db: Any, phone: str) -> bool:
+    """Já existe pelo menos um pedido PAGO deste telefone?
+
+    Só `payment_status = 'pago'` conta — um pedido com Pix emitido e nunca
+    pago (cliente desistiu, Pix expirou) não é "já pediu antes", é carrinho
+    abandonado. Usado só para escolher a saudação; nunca para decisão de
+    negócio.
+    """
+    try:
+        result = await db.execute(
+            text(
+                """
+                SELECT 1
+                FROM orders o
+                JOIN customers c ON c.id = o.customer_id
+                WHERE c.phone = :phone AND o.payment_status = 'pago'
+                LIMIT 1
+                """
+            ),
+            {"phone": phone},
+        )
+        return result.first() is not None
+    except Exception:  # cliente novo, tabela vazia ou banco de teste
+        logger.debug("não foi possível checar pedido anterior", exc_info=True)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Fechamento: endereço, pedido e Pix
 # ---------------------------------------------------------------------------
@@ -2946,6 +2994,7 @@ class AgentDeps:
     order_summary: OrderSummaryFn
     cancel_order: CancelOrderFn | None = None
     saved_address: Callable[[], Awaitable[dict[str, Any] | None]] | None = None
+    returning_customer: Callable[[], Awaitable[bool]] | None = None
     channel: OrderChannel = OrderChannel.WHATSAPP
 
 
@@ -2963,6 +3012,11 @@ async def build_deps(
             return None
         return await get_saved_address(db, phone)
 
+    async def _returning_customer() -> bool:
+        if phone is None:
+            return False
+        return await has_paid_order(db, phone)
+
     async def _cancel_order(db: Any, order_id: UUID) -> Any:
         return await update_order_status(db, order_id, OrderStatus.CANCELADO)
 
@@ -2975,6 +3029,7 @@ async def build_deps(
         order_summary=get_order_summary,
         cancel_order=_cancel_order,
         saved_address=_saved_address,
+        returning_customer=_returning_customer,
         channel=channel,
     )
 
@@ -4811,6 +4866,30 @@ def _quantidade_dita(mensagem: str) -> int | None:
     return None
 
 
+#: Sinais claros de frustração com o ATENDIMENTO — não com o produto. "não
+#: gostei do sabor" é feedback; "atendimento péssimo" é o cliente perdendo a
+#: paciência com o bot. Lista curta e conservadora de propósito: o custo de
+#: um falso positivo (oferecer gente sem precisar) é baixo, mas uma lista
+#: ampla demais ia oferecer atendente para qualquer reclamação de produto.
+_SINAIS_FRUSTRACAO = (
+    "atendimento pessimo", "atendimento horrivel", "que absurdo",
+    "isso e um absurdo", "quero cancelar tudo", "vou reclamar",
+    "va reclamar", "nunca mais compro", "nunca mais peco", "que saco",
+    "ridiculo isso", "falar com um humano", "quero falar com gente de verdade",
+)
+
+
+def _frustracao_no_texto(mensagem: str) -> bool:
+    """O texto cru decide — mesma lógica de `_assunto`, aplicada à paciência.
+
+    Oferece atendente no mesmo turno em vez de gastar as três rodadas da
+    escada de reparo progressivo com um cliente que já está claramente
+    impaciente com o bot.
+    """
+    texto = normalize(mensagem)
+    return any(sinal in texto for sinal in _SINAIS_FRUSTRACAO)
+
+
 def _esperando_endereco(session: ConversationSession) -> bool:
     return (
         fulfillment_of(session) is FulfillmentType.ENTREGA
@@ -4845,6 +4924,17 @@ async def run(
             plan.operations.append(
                 Operation(action=Action.UPDATE_QUANTITY, quantity=quantos)
             )
+
+    # Frustração clara com o atendimento: oferece gente já neste turno, sem
+    # esperar as três rodadas da escada. Já em handoff isso seria redundante
+    # (o cliente já está esperando alguém).
+    if (
+        not session.handoff
+        and session.state is not S.ATENDIMENTO_HUMANO
+        and not plan.has(Action.REQUEST_HUMAN)
+        and _frustracao_no_texto(text)
+    ):
+        plan.operations.append(Operation(action=Action.REQUEST_HUMAN))
 
     voltou_do_humano = False
     if session.handoff or session.state is S.ATENDIMENTO_HUMANO:
@@ -4987,8 +5077,13 @@ async def run(
     if voltou_do_humano and replies:
         replies = [r.voltou_do_atendente()] + replies
     if primeira_vez and replies:
-        # Bom dia uma vez só, no começo da conversa — como gente faz.
-        replies = [r.saudacao()] + replies
+        # Bom dia uma vez só, no começo da conversa — como gente faz. Quem já
+        # pagou um pedido antes ouve uma saudação mais calorosa, sem citar o
+        # pedido anterior (não há como saber se é o que ele quer de novo).
+        nome = session.slots.get("customer_name")
+        ja_e_cliente = bool(nome) and deps.returning_customer is not None and await deps.returning_customer()
+        abertura = r.saudacao_retorno(nome) if ja_e_cliente else r.saudacao()
+        replies = [abertura] + replies
     return [reply for reply in replies if reply]
 
 
@@ -5145,7 +5240,7 @@ def _resume_prompt(
         return r.perguntar_entrega_ou_retirada()
     if not session.cart.is_empty:
         return (
-            r.perguntar_se_quer_mais_curto()
+            r.perguntar_se_quer_mais_curto(session.id)
             if carrinho_na_tela
             else r.perguntar_se_quer_mais(session.cart)
         )
@@ -5164,10 +5259,19 @@ def _fallback(
     logger.info("fallback (não entendi) para %s, tentativa %s", session.phone, session.fail_count)
     retomada = _resume_prompt(deps, session)
 
+    # Sistema fora do ar é um problema nosso, não do cliente que "não se fez
+    # entender" — mentir isso com "não peguei essa" esconde o que de fato
+    # aconteceu e faz o cliente reformular algo que já estava claro.
+    primeira, segunda = (
+        (r.instabilidade, r.instabilidade_de_novo)
+        if plan.llm_unavailable
+        else (r.nao_entendi, r.nao_entendi_de_novo)
+    )
+
     if session.fail_count == 1:
-        return [r.nao_entendi(), *([retomada] if retomada else [])]
+        return [primeira(session.id), *([retomada] if retomada else [])]
     if session.fail_count == 2:
-        return [r.nao_entendi_de_novo(), *([retomada] if retomada else [])]
+        return [segunda(session.id), *([retomada] if retomada else [])]
 
     session.fail_count = 0
     return [r.oferecer_atendente(), *([retomada] if retomada else [])]
@@ -5325,7 +5429,7 @@ async def _interpret(
         history = []
 
     try:
-        return await get_llm_client().interpret(
+        plan = await get_llm_client().interpret(
             catalog=catalog,
             history=history,
             message=text,
@@ -5334,7 +5438,31 @@ async def _interpret(
     except Exception:
         # O cliente real já trata os próprios erros; isto é o cinto de segurança.
         logger.exception("cliente de LLM levantou exceção inesperada")
-        return AgentPlan()
+        return AgentPlan(llm_unavailable=True)
+
+    if plan.malformed:
+        # O modelo respondeu, mas sem nada aproveitável (sem tool call, JSON
+        # fora do contrato) — diferente de um cliente confuso. Vale uma
+        # segunda tentativa, com um empurrão curto, antes de gastar uma
+        # rodada da escada de reparo progressivo com isso.
+        logger.info("plano malformado para %s; tentando reparo uma vez", conversation.phone)
+        reparo = situation + (
+            "\n\n[A resposta anterior não gerou nenhuma operação válida. "
+            "Confira o cardápio e tente de novo.]"
+        )
+        try:
+            segunda = await get_llm_client().interpret(
+                catalog=catalog,
+                history=history,
+                message=text,
+                situation=reparo,
+            )
+        except Exception:
+            logger.exception("cliente de LLM levantou exceção inesperada no reparo")
+            return AgentPlan(llm_unavailable=True)
+        return segunda
+
+    return plan
 
 
 def _first_action(plan: AgentPlan) -> str | None:

@@ -56,6 +56,11 @@ def saudacao() -> str:
     return f"Oi! {_emoji()}Aqui é a *{_loja()}*."
 
 
+def saudacao_retorno(nome: str) -> str:
+    """Para quem já pagou um pedido antes — sem citar o que pediu, só o tom."""
+    return f"Oi, {nome}! {_emoji()}Que bom te ver de novo por aqui. 😊"
+
+
 def perguntar_o_que_quer() -> str:
     return "O que você vai querer hoje? 😊"
 
@@ -383,9 +388,23 @@ def sabores_a_confirmar(itens: Sequence[CartItem], sem_dono: Sequence[str]) -> s
     return "\n".join(linhas)
 
 
-def perguntar_se_quer_mais_curto() -> str:
+#: Mesmo sentido, ditas de um jeito um pouco diferente — para o mesmo cliente
+#: não ouvir sempre a frase idêntica. A escolha é determinística por conversa
+#: (nunca aleatória de verdade), então o mesmo `seed` sempre devolve a mesma
+#: variante e o teste continua previsível.
+_QUER_MAIS_CURTO = (
+    "Quer mais alguma coisa ou já posso fechar? 😊",
+    "Mais alguma coisa, ou já fechamos esse? 😊",
+)
+
+
+def _variante(seed: Any, variantes: Sequence[str]) -> str:
+    return variantes[hash(seed) % len(variantes)]
+
+
+def perguntar_se_quer_mais_curto(seed: Any) -> str:
     """A pergunta sozinha, para quando o carrinho já está na tela."""
-    return "Quer mais alguma coisa ou já posso fechar? 😊"
+    return _variante(seed, _QUER_MAIS_CURTO)
 
 
 def perguntar_se_quer_mais(cart: Cart, *, pending: int | None = None) -> str:
@@ -634,13 +653,43 @@ def pagamento_confirmado(order_code: str) -> str:
 # Reparo e atendimento humano
 # ---------------------------------------------------------------------------
 
-def nao_entendi() -> str:
+_NAO_ENTENDI = (
+    "Desculpa, não peguei essa. 😅 Me explica de outro jeito?",
+    "Hmm, essa eu não entendi bem. 🙈 Pode me contar de outro jeito?",
+)
+
+_NAO_ENTENDI_DE_NOVO = (
+    "Ainda não consegui entender direito. 🙈 Me diz com outras palavras?",
+    "Continuo sem entender certinho. 😅 Tenta me explicar de um jeito diferente?",
+)
+
+_INSTABILIDADE = (
+    "Opa, tive uma instabilidade aqui do meu lado. 😕 Me manda de novo, só um instante?",
+    "Deu uma falha aqui no meu sistema, não foi você. 😕 Pode repetir?",
+)
+
+_INSTABILIDADE_DE_NOVO = (
+    "Ainda com instabilidade por aqui. 🙈 Pode tentar de novo em um minutinho?",
+    "Continua instável do meu lado, desculpa. 🙈 Tenta mais uma vez?",
+)
+
+
+def nao_entendi(seed: Any) -> str:
     """Primeira tentativa: pede de outro jeito, sem despejar o cardápio."""
-    return "Desculpa, não peguei essa. 😅 Me explica de outro jeito?"
+    return _variante(seed, _NAO_ENTENDI)
 
 
-def nao_entendi_de_novo() -> str:
-    return "Ainda não consegui entender direito. 🙈 Me diz com outras palavras?"
+def nao_entendi_de_novo(seed: Any) -> str:
+    return _variante(seed, _NAO_ENTENDI_DE_NOVO)
+
+
+def instabilidade(seed: Any) -> str:
+    """Primeira tentativa quando a falha é nossa (LLM fora do ar), não do cliente."""
+    return _variante(seed, _INSTABILIDADE)
+
+
+def instabilidade_de_novo(seed: Any) -> str:
+    return _variante(seed, _INSTABILIDADE_DE_NOVO)
 
 
 def oferecer_atendente() -> str:
