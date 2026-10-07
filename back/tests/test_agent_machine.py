@@ -1060,6 +1060,27 @@ async def test_fallback_progressivo_nunca_cala_o_bot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_conversa_fiada_com_pedido_em_andamento_nao_e_nao_entendi() -> None:
+    """"você ainda está aí?" com o pedido em andamento não gasta a escada de reparo.
+
+    Achado em simulação de conversa real: o modelo acerta `no_action` (não é
+    erro de interpretação nenhum — é só o cliente conversando), mas o
+    executor só tinha resposta amigável pronta para `no_action` com o
+    carrinho VAZIO. Com item no carrinho, caía no fallback de "não entendi",
+    gastando uma tentativa da escada de reparo progressivo por uma mensagem
+    que o sistema já tinha entendido perfeitamente.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    replies = await run(deps, session, plano(op(Action.NO_ACTION)), "voce ainda esta ai?")
+
+    assert replies[0] == r.ainda_por_aqui()
+    assert not any("não entendi" in reply.lower() or "não peguei" in reply.lower() for reply in replies)
+    assert session.fail_count == 0
+
+
+@pytest.mark.asyncio
 async def test_cardapio_completo_so_na_primeira_mensagem() -> None:
     """A lista inteira de sabores só sai para quem chega sem saber o que tem.
 

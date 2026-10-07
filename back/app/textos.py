@@ -65,6 +65,15 @@ def perguntar_o_que_quer() -> str:
     return "O que você vai querer hoje? 😊"
 
 
+def ainda_por_aqui() -> str:
+    """Conversa fiada com o pedido em andamento ("você ainda está aí?", um emoji).
+
+    Não é "não entendi" — o sistema entendeu perfeitamente que não tinha
+    operação nenhuma ali. Só confirma presença antes de retomar o pedido.
+    """
+    return "Tô aqui sim! 😊"
+
+
 # ---------------------------------------------------------------------------
 # Cardápio — uma mensagem só, organizada
 # ---------------------------------------------------------------------------

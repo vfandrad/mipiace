@@ -5263,6 +5263,16 @@ async def _next_step(
             return turn.notes + [menu(deps, session)]
         return turn.notes + [r.perguntar_o_que_quer()]
 
+    # 5b. Mesma conversa fiada, mas com item no carrinho ("você ainda está
+    # aí?", "kkkk", um elogio qualquer): o modelo acerta NO_ACTION — não é
+    # "não entendi" nenhum, é o cliente só conversando. Sem este passo isso
+    # caía no fallback de reparo progressivo (gastando uma tentativa da
+    # escada) por uma mensagem que o sistema já entendeu perfeitamente.
+    if plan.has(Action.NO_ACTION) and not session.cart.is_empty:
+        session.fail_count = 0
+        retomada = _resume_prompt(deps, session)
+        return turn.notes + [r.ainda_por_aqui()] + ([retomada] if retomada else [])
+
     # 6. Nada aconteceu mesmo: reparo progressivo, sem cardápio na cara dele.
     return _fallback(deps, session, plan)
 
