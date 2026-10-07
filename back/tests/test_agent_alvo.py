@@ -96,6 +96,43 @@ async def test_remover_produto_que_nao_esta_no_pedido_nao_chuta_o_que_esta() -> 
 
 
 @pytest.mark.asyncio
+async def test_item_index_que_nao_existe_mais_nao_apaga_o_unico_item() -> None:
+    """Achado simulando conversa real contra a OpenAI de verdade.
+
+    O cliente tinha só UM item no carrinho (já tinha removido o segundo num
+    turno anterior) e disse "pode fechar, vou retirar" — nada sobre remover
+    coisa nenhuma. O modelo, confuso pelo histórico, repetiu um
+    `remove_item(item_index=2)` de um turno anterior (quando o carrinho
+    ainda tinha 2 itens). `_target` tem uma regra de "índice fora da faixa
+    com um item só no carrinho: ele quis dizer esse" — pensada para outro
+    caso — e sem esta guarda ela apagava o único item do pedido bem na hora
+    em que o cliente tentava fechar.
+    """
+    deps, session = build_deps(), build_session()
+    await run(
+        deps,
+        session,
+        plano(op(Action.ADD_ITEM, product_name="Pote 500ml", add_flavors=["Pistache", "Morango"])),
+        "pote grande de pistache e morango",
+    )
+    assert len(session.cart.items) == 1
+
+    await run(
+        deps,
+        session,
+        plano(
+            op(Action.REMOVE_ITEM, item_index=2),
+            op(Action.SET_FULFILLMENT, fulfillment="retirada"),
+            op(Action.CLOSE_ORDER),
+        ),
+        "pode fechar, vou retirar",
+    )
+
+    assert len(session.cart.items) == 1, "o único item não podia desaparecer"
+    assert session.cart.items[0].product_name == "Pote 500ml"
+
+
+@pytest.mark.asyncio
 async def test_adicionar_outro_produto_no_meio_da_montagem_cria_item_novo() -> None:
     """"põe também um médio" não pode virar sabor do pote que está aberto."""
     deps, session = build_deps(), build_session()

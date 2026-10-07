@@ -581,6 +581,41 @@ async def test_confirmar_depois_do_resumo_gera_o_pix() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pergunta_sobre_pagamento_com_pix_pendente_nao_e_a_resposta_generica() -> None:
+    """"já caiu o pagamento?" com o Pix já emitido não é pergunta de FAQ genérico.
+
+    Achado em simulação de conversa real contra a OpenAI de verdade: o
+    modelo classifica isso como `answer_question(topic=pagamento)`, e a
+    resposta genérica do catálogo ("o pagamento é no Pix, mando o código
+    quando você fechar") ignora a pergunta de verdade — o cliente JÁ fechou
+    e JÁ tem o código, só quer saber se caiu.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada"), op(Action.CLOSE_ORDER)),
+        "vou buscar, pode fechar",
+    )
+    await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim")
+    assert session.state is S.AGUARDANDO_PAGAMENTO
+
+    replies = await run(
+        deps,
+        session,
+        plano(
+            op(Action.ANSWER_QUESTION, question_topic="pagamento", question_text="ja caiu o pagamento?")
+        ),
+        "ja caiu o pagamento?",
+    )
+
+    resposta = " ".join(replies).lower()
+    assert "mando o código para copiar e colar" not in resposta
+    assert "aguardando" in resposta or "pix" in resposta
+
+
+@pytest.mark.asyncio
 async def test_fechar_informal_com_resumo_na_tela_confirma() -> None:
     """"fechou mano, pode mandar" veio como close_order, não confirm_order.
 

@@ -3709,8 +3709,16 @@ def _cancelamento_claro(text: str) -> bool:
 
 
 def _remocao_dita(text: str) -> bool:
+    """"vou retirar" não é "tira isso": por substring solta, "retirar" e
+
+    "tirar" batiam com "tira"/"retira" da lista — e todo cliente que ia
+    buscar o pedido na loja ("vou retirar") acionava sinal de remoção por
+    coincidência de letras. Mesma lição que `_tem` já documenta para a lista
+    de palavras do LLM falso; aqui ela valia só pra aquele caminho, não para
+    o executor de verdade. `_tem` casa por palavra inteira.
+    """
     limpo = normalize(text)
-    return any(sinal in limpo for sinal in _SINAIS_REMOVER)
+    return _tem(limpo, _SINAIS_REMOVER)
 
 
 # ---------------------------------------------------------------------------
@@ -3790,7 +3798,16 @@ async def apply(
         turn.answered = True
 
     elif action is Action.ANSWER_QUESTION:
-        turn.say(_answer_question(deps, session, op))
+        if op.question_topic == "pagamento" and session.active_order_id is not None:
+            # "já caiu o pagamento?" com um Pix pendente é pergunta sobre
+            # ESTE pedido, não sobre como se paga em geral. Achado em
+            # simulação de conversa real: o FAQ genérico respondia "o
+            # pagamento é no Pix, mando o código quando você fechar" para
+            # quem JÁ tinha fechado e JÁ tinha o código na mão — uma resposta
+            # que ignora a pergunta de verdade.
+            turn.say(await pending_order_status(deps, session))
+        else:
+            turn.say(_answer_question(deps, session, op))
         turn.answered = True
 
     elif action in (Action.CLOSE_ORDER, Action.CONFIRM_ORDER):
@@ -4174,6 +4191,25 @@ def _op_remove_item(
     sem_alvo = op.item_index is None and not op.product_name and not op.remove_flavors
     if sem_alvo and mensagem and not _remocao_dita(mensagem):
         logger.info("remove_item descartado, sem sinal em %r", mensagem)
+        return
+
+    # Número que não existe mais no carrinho (sobra de um turno anterior — o
+    # modelo às vezes repete um `item_index` de uma mensagem passada mesmo
+    # quando o cliente só disse "pode fechar, vou retirar", sem pedir nada
+    # removido). Com um item só no carrinho, `_target` tem uma regra de
+    # "chutar esse item" justamente para número fora da faixa — e sem esta
+    # guarda ela apagava o único item do pedido numa mensagem que não falava
+    # de remover coisa nenhuma. Achado em simulação de conversa real: o
+    # pedido inteiro desaparecia bem na hora de fechar.
+    numero_nao_existe = (
+        op.item_index is not None
+        and not (1 <= op.item_index <= len(session.cart.items))
+    )
+    if numero_nao_existe and mensagem and not _remocao_dita(mensagem):
+        logger.info(
+            "remove_item descartado: item_index=%s não existe e sem sinal em %r",
+            op.item_index, mensagem,
+        )
         return
 
     index = _target(deps, session, op, mensagem, turn=turn)
