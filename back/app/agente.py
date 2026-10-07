@@ -3621,8 +3621,19 @@ def _sabores_sem_dono(turn: Turno, mensagem: str) -> list[str]:
     checagem, o sabor que sobrava nessas mensagens era espalhado por TODOS os
     itens do turno (o próprio bug que `varios_itens_no_plano` existe para
     evitar, só que pelo lado do texto): aqui ele só é apontado, nunca aplicado.
+
+    Só é ambiguidade de verdade com DUAS OU MAIS instâncias de item COM GRUPO
+    DE SABOR no turno — é o "qual dos dois potes" real. Com uma só, um nome
+    de sabor válido que ficou sem dono quase sempre é modificador de OUTRO
+    produto da mesma frase que não tem grupo de sabor nenhum ("uma casquinha
+    de chocolate" — a casquinha não escolhe sabor, e "Chocolate" só por
+    coincidência existe no cardápio do pote). Achado em conversa real: "pote
+    grande de pistache e morango e uma casquinha de chocolate" perguntava
+    "chocolate é de qual item?" sem nenhuma ambiguidade de verdade — só havia
+    UM item com grupo de sabor no turno, a casquinha não entra nesta lista
+    (`_flavors_into` só adiciona aqui quando o item tem grupo).
     """
-    if not mensagem or not turn.sabores_atribuidos_no_turno:
+    if not mensagem or len(turn.sabores_atribuidos_no_turno) < 2:
         return []
     grupos: dict[Any, CatalogGroup] = {}
     aplicados_por_grupo: dict[Any, set[str]] = {}

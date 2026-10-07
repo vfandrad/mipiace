@@ -481,6 +481,40 @@ async def test_pergunta_de_preco_sai_do_catalogo() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Sabor sem dono: só é ambiguidade com 2+ itens do MESMO grupo no turno
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_sabor_de_produto_sem_grupo_nao_pergunta_qual_item() -> None:
+    """Achado simulando conversa real contra a OpenAI de verdade.
+
+    "quero um pote grande de pistache e morango e uma casquinha de chocolate"
+    tem dois itens na mesma mensagem, mas só UM deles (o pote) tem grupo de
+    sabor — "chocolate" é modificador da casquinha, que não escolhe sabor.
+    Antes, `_sabores_sem_dono` varria o texto inteiro atrás de qualquer nome
+    válido do grupo do pote que não tivesse sido escolhido, achava
+    "chocolate" (que por coincidência também é sabor do pote) e perguntava
+    "chocolate é de qual item?" — uma pergunta sem ambiguidade real, já que
+    havia só um item com grupo de sabor no turno.
+    """
+    deps, session = build_deps(), build_session()
+
+    replies = await run(
+        deps,
+        session,
+        plano(
+            op(Action.ADD_ITEM, product_name="Pote 500ml", add_flavors=["Pistache", "Morango"]),
+            op(Action.ADD_ITEM, product_name="Casquinha"),
+        ),
+        "quero um pote grande de pistache e morango e uma casquinha de chocolate",
+    )
+
+    assert not any("de qual item" in r.lower() for r in replies), replies
+    assert len(session.cart.items) == 2
+    assert [c.name for c in session.cart.items[0].complements] == ["Pistache", "Morango"]
+
+
+# ---------------------------------------------------------------------------
 # Dinheiro
 # ---------------------------------------------------------------------------
 
