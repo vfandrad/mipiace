@@ -78,23 +78,17 @@ def _sabores_do_produto(product: CatalogProduct) -> list[Any]:
     return list(vistos.values())
 
 
-#: Quantos sabores cabem numa linha antes de quebrar. Um cardápio de
-#: gelateria de verdade passa de 30 sabores — tudo numa linha corrida vira
-#: parede que o WhatsApp quebra onde bem entende, e ilegível é ilegível dos
-#: dois jeitos (uma linha gigante ou 30 linhas de uma palavra só).
-_SABORES_POR_LINHA = 4
+def _bloco_de_sabores(
+    flavors: Sequence[Any], titulo: str | None = "Sabores de hoje"
+) -> list[str]:
+    """Sabores agrupados por categoria, um por linha — fácil de ler e de escolher.
 
-
-def _em_grupos(itens: Sequence[str], tamanho: int) -> list[list[str]]:
-    return [list(itens[i : i + tamanho]) for i in range(0, len(itens), tamanho)]
-
-
-def _bloco_de_sabores(flavors: Sequence[Any], titulo: str = "Sabores de hoje") -> list[str]:
-    """Sabores agrupados por categoria, em linhas curtas e escaneáveis.
-
-    Agrupados por "Sem lactose" / "Com lactose" (quando existe mais de uma
-    categoria) e quebrados de poucos em poucos por linha — cabe na tela do
-    celular sem rolagem horizontal e sem virar uma lista infinita vertical.
+    Um sabor por linha em vez de vários espremidos e separados por vírgula:
+    numa lista de 30 e tantos sabores, "Pistache, Morango, Chocolate..." é
+    rápido de escrever mas lento de ler no celular — o olho perde a linha no
+    meio da vírgula. Agrupado por "Sem lactose" / "Com lactose" quando existe
+    mais de uma categoria. Sem `titulo`, não escreve cabeçalho nenhum: usado
+    quando a pergunta que vem antes já deixou claro o que é a lista.
     """
     if not flavors:
         return []
@@ -106,16 +100,15 @@ def _bloco_de_sabores(flavors: Sequence[Any], titulo: str = "Sabores de hoje") -
             _com_preco(flavor.name, flavor.extra_price)
         )
 
-    linhas = [f"*{titulo}* ({len(flavors)})"]
+    linhas = [f"*{titulo}* 🍨"] if titulo else []
     varias_categorias = len(por_categoria) > 1
     for categoria, nomes in por_categoria.items():
         if varias_categorias:
             # Negrito, não itálico: é um cabeçalho de seção, e itálico some na
             # tela pequena do WhatsApp — precisa ser o que salta aos olhos ao
             # rolar rápido, não o texto mais discreto da mensagem.
-            linhas.append(f"*{categoria}* ({len(nomes)})")
-        for grupo in _em_grupos(nomes, _SABORES_POR_LINHA):
-            linhas.append("▫ " + ", ".join(grupo))
+            linhas.append(f"✦ *{categoria}*")
+        linhas.extend(f"▫ {nome}" for nome in nomes)
     return linhas
 
 
@@ -138,7 +131,7 @@ def cardapio(catalog: CatalogSnapshot) -> str:
     # cabeçalho num piscar de olhos, antes de o cliente ler qualquer coisa.
     linhas = [f"*{_emoji()}{_loja()} — cardápio de hoje*", "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬", ""]
     for product in products:
-        linhas.append(f"• *{product.name}* — {em_reais(product.base_price)}")
+        linhas.append(f"🍦 *{product.name}* — {em_reais(product.base_price)}")
         if product.description:
             linhas.append(f"   _{product.description}_")
         if not sabores_iguais and por_produto[product.name]:
@@ -152,6 +145,7 @@ def cardapio(catalog: CatalogSnapshot) -> str:
         comuns = next((v for v in por_produto.values() if v), [])
         if comuns:
             linhas.append("")
+            linhas.append("🍧 ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ 🍧")
             linhas.extend(_bloco_de_sabores(comuns))
 
     linhas.append("")
@@ -252,8 +246,10 @@ def perguntar_sabores(
             )
         )
 
+    # Sem título aqui: a `cabeca` já disse "me diz o sabor" — repetir
+    # "Opções" embaixo só enche a tela sem acrescentar nada.
     linhas = [cabeca, ""]
-    linhas.extend(_bloco_de_sabores(disponiveis, titulo="Opções"))
+    linhas.extend(_bloco_de_sabores(disponiveis, titulo=None))
     return "\n".join(linhas)
 
 
