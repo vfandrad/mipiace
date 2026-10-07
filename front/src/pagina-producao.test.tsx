@@ -73,4 +73,11 @@ describe('OrderCard', () => {
     renderCard({ status: 'finalizado' });
     expect(screen.queryByRole('button', { name: /cancelar pedido/i })).not.toBeInTheDocument();
   });
+
+  it('não mostra o botão de imprimir sem VITE_PRINTER_IP configurado', () => {
+    // Sem impressora configurada (o padrão dos testes), o botão nem aparece —
+    // ele não serviria pra nada além de um clique que sempre falha.
+    renderCard();
+    expect(screen.queryByRole('button', { name: /imprimir ficha/i })).not.toBeInTheDocument();
+  });
 });

@@ -6,7 +6,7 @@
  */
 
 import type { Complement, ComplementGroup, ComplementInput, ComplementCategoryInput, ComplementCategory, GroupInput, GroupLibraryEntry, Product, ProductInput, ProductListResponse, ReorderKind } from '@/tipos';
-import type { Order, OrderStatus } from '@/tipos';
+import type { Order, OrderCreateInput, OrderStatus } from '@/tipos';
 import type { DailySales, HourlySales, MetricsRange, MetricsSummary, ProductSales } from '@/tipos';
 import type { Conversation, ConversationMessage } from '@/tipos';
 
@@ -39,6 +39,9 @@ export const ADMIN_API_KEY = readEnv('VITE_ADMIN_API_KEY', 'dev-local-key');
  */
 export const STORE_NAME = readEnv('VITE_STORE_NAME', 'Mi Piace Gelateria');
 export const STORE_LOGO_URL = readEnv('VITE_STORE_LOGO_URL', '/logo-mipiace.png');
+
+/** IP da impressora de fichas na rede do balcão. Vazio = impressão desativada. */
+export const PRINTER_IP = readEnv('VITE_PRINTER_IP', '');
 
 // ---------------------------------------------------------------
 // api
@@ -327,6 +330,11 @@ export function updateOrderStatus(id: string, status: OrderStatus): Promise<Orde
     method: 'PATCH',
     body: { status },
   });
+}
+
+/** Lançamento manual — fallback para quando o agente de IA está fora do ar. */
+export function createOrder(data: OrderCreateInput): Promise<Order> {
+  return request<Order>('/api/orders', { method: 'POST', body: data });
 }
 
 // ============================================================================

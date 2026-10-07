@@ -5,16 +5,19 @@
  * cache, recarregamento e do aviso na tela quando algo falha.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { createComplement, createComplementCategory, createGroup, createProduct, deleteComplement, deleteComplementCategory, deleteGroup, deleteProduct, fetchComplementCategories, errorDescription as describe, fetchProducts, listGroups, reorderCatalog, updateComplement, updateComplementCategory, updateGroup, updateProduct, errorDescription, fetchOrders, updateOrderStatus, fetchConversationMessages, fetchConversations, setConversationHandoff, fetchDailySales, fetchHourlySales, fetchMetricsSummary, fetchProductSales } from '@/api';
+import { createComplement, createComplementCategory, createGroup, createOrder, createProduct, deleteComplement, deleteComplementCategory, deleteGroup, deleteProduct, fetchComplementCategories, errorDescription as describe, fetchProducts, listGroups, reorderCatalog, updateComplement, updateComplementCategory, updateGroup, updateProduct, errorDescription, fetchOrders, updateOrderStatus, fetchConversationMessages, fetchConversations, setConversationHandoff, fetchDailySales, fetchHourlySales, fetchMetricsSummary, fetchProductSales } from '@/api';
 import type { CatalogEntity, Complement, ComplementInput, ComplementCategoryInput, GroupInput, GroupLibraryEntry, Product, ProductInput, ReorderKind } from '@/tipos';
 import { toOrder, RANGE_TO_DAYS, toHourlyPoints, toProductPoints, toSalesPoints } from '@/formato';
-import type { Order, OrderStatus } from '@/tipos';
+import type { Order, OrderCreateInput, OrderStatus } from '@/tipos';
 import { toMillis } from '@/formato';
 import type { Conversation } from '@/tipos';
 import type { MetricsRange } from '@/tipos';
+import { tocarNotificacaoDePedidoNovo } from '@/som';
+import { printOrder, PrinterError } from '@/impressora';
+import { PRINTER_IP } from '@/api';
 
 // ---------------------------------------------------------------
 // use-async-submit
@@ -341,6 +344,51 @@ export function useOrders() {
     refetchInterval: 15000,
   });
 
+  // Toca um som e manda a ficha pra impressora quando um pedido "nasce" pro
+  // balcão — ou seja, deixa de ser `novo` (Pix pendente) ou já chega direto
+  // em `preparando` (lançamento manual). `null` no ref é "ainda não carregou
+  // a primeira vez"; sem essa distinção, TODO pedido já existente tocava o
+  // som de novo só por o painel ter sido aberto/recarregado.
+  const idsConhecidos = useRef<Set<string> | null>(null);
+
+  useEffect(() => {
+    const orders = query.data ?? [];
+    const acionaveis = orders.filter((order) => order.status !== 'novo');
+
+    if (idsConhecidos.current === null) {
+      idsConhecidos.current = new Set(acionaveis.map((order) => order.id));
+      return;
+    }
+
+    const vistos = idsConhecidos.current;
+    const novos = acionaveis.filter((order) => !vistos.has(order.id));
+    if (novos.length === 0) return;
+
+    for (const order of novos) vistos.add(order.id);
+    tocarNotificacaoDePedidoNovo();
+
+    if (PRINTER_IP) {
+      for (const order of novos) {
+        printOrder(order).catch((error: unknown) => {
+          toast.error(`Não consegui imprimir a ficha do pedido ${order.code}`, {
+            description: error instanceof PrinterError ? error.message : undefined,
+          });
+        });
+      }
+    }
+  }, [query.data]);
+
+  const createMutation = useMutation({
+    mutationFn: (data: OrderCreateInput) => createOrder(data),
+    onSuccess: () => {
+      toast.success('Pedido registrado');
+      queryClient.invalidateQueries({ queryKey: ORDERS_QUERY_KEY });
+    },
+    onError: (error) => {
+      toast.error('Não foi possível registrar o pedido', { description: errorDescription(error) });
+    },
+  });
+
   const mutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: OrderStatus }) =>
       updateOrderStatus(id, status),
@@ -372,6 +420,8 @@ export function useOrders() {
     error: query.error,
     refetch: query.refetch,
     changeStatus: (id: string, status: OrderStatus) => mutation.mutate({ id, status }),
+    createManualOrder: (data: OrderCreateInput) => createMutation.mutateAsync(data),
+    isCreatingOrder: createMutation.isPending,
   };
 }
 

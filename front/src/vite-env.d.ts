@@ -9,6 +9,8 @@ interface ImportMetaEnv {
   readonly VITE_STORE_NAME?: string;
   /** URL do logo. Vazio = mostra o nome da loja em texto. */
   readonly VITE_STORE_LOGO_URL?: string;
+  /** IP da impressora de fichas (EPSON, ePOS-Print) na rede do balcão. Vazio = impressão desativada. */
+  readonly VITE_PRINTER_IP?: string;
 }
 
 interface ImportMeta {

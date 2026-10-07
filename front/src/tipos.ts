@@ -189,6 +189,29 @@ export interface OrderAddress {
  * dele: converter dinheiro que chega como string, e conciliar o cliente que o
  * backend manda ora aninhado, ora achatado.
  */
+/** Um item do lançamento manual: produto e complementos pelo `id` do cardápio. */
+export interface OrderItemInput {
+  product_id: string;
+  quantity: number;
+  complement_ids: string[];
+}
+
+/**
+ * Payload de `POST /api/orders` — lançamento manual pelo painel.
+ *
+ * Fallback para quando o agente de WhatsApp está fora do ar: o lojista monta
+ * o pedido pelo mesmo cardápio, e ele entra direto em "preparando".
+ */
+export interface OrderCreateInput {
+  items: OrderItemInput[];
+  customer_name?: string | null;
+  phone: string;
+  fulfillment_type: FulfillmentType;
+  address?: OrderAddress | null;
+  payment_status: PaymentStatus;
+  notes?: string | null;
+}
+
 export interface Order {
   id: string;
   code: string;
