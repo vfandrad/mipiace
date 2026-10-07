@@ -9,7 +9,18 @@ from uuid import uuid4
 import pytest
 
 from app import servicos as orders_service
-from app.dominio import Cart, CartItem, FulfillmentType, OrderChannel, OrderStatus
+from app.dominio import (
+    Cart,
+    CartItem,
+    CatalogComplement,
+    CatalogGroup,
+    CatalogProduct,
+    CatalogSnapshot,
+    FulfillmentType,
+    OrderChannel,
+    OrderStatus,
+)
+from app.esquemas import OrderItemInput
 
 S = OrderStatus
 
@@ -134,6 +145,123 @@ def test_entrega_sem_endereco_completo_e_recusada(monkeypatch):
                 channel=OrderChannel.WHATSAPP,
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# Lançamento manual (painel) — fallback com o agente fora do ar
+# ---------------------------------------------------------------------------
+
+
+def _catalogo_para_lancamento_manual() -> CatalogSnapshot:
+    group_id = uuid4()
+    disponivel_id, esgotado_id = uuid4(), uuid4()
+    produto = CatalogProduct(
+        id=uuid4(),
+        name="Pote 500ml",
+        base_price=Decimal("32.00"),
+        groups=[
+            CatalogGroup(
+                id=group_id,
+                name="Sabores",
+                min_choices=1,
+                max_choices=2,
+                is_required=True,
+                complements=[
+                    CatalogComplement(id=disponivel_id, group_id=group_id, name="Pistache"),
+                    CatalogComplement(
+                        id=esgotado_id, group_id=group_id, name="Maracujá", is_available=False
+                    ),
+                ],
+            )
+        ],
+    )
+    indisponivel = CatalogProduct(
+        id=uuid4(), name="Milkshake", base_price=Decimal("22.00"), is_available=False
+    )
+    return CatalogSnapshot(products=[produto, indisponivel])
+
+
+def test_lancamento_manual_monta_item_com_preco_do_catalogo() -> None:
+    """O painel manda só o id — nome e preço vêm do catálogo, nunca do navegador."""
+    catalogo = _catalogo_para_lancamento_manual()
+    produto = catalogo.products[0]
+    sabor = produto.groups[0].complements[0]
+
+    item = orders_service._cart_item_from_input(
+        catalogo,
+        OrderItemInput(product_id=produto.id, quantity=2, complement_ids=[sabor.id]),
+    )
+
+    assert item.product_name == "Pote 500ml"
+    assert item.unit_base_price == Decimal("32.00")
+    assert item.quantity == 2
+    assert [c.name for c in item.complements] == ["Pistache"]
+
+
+def test_lancamento_manual_recusa_produto_inexistente_ou_indisponivel() -> None:
+    catalogo = _catalogo_para_lancamento_manual()
+    indisponivel = catalogo.products[1]
+
+    with pytest.raises(orders_service.InvalidOrderItemError):
+        orders_service._cart_item_from_input(
+            catalogo, OrderItemInput(product_id=uuid4(), quantity=1)
+        )
+    with pytest.raises(orders_service.InvalidOrderItemError):
+        orders_service._cart_item_from_input(
+            catalogo, OrderItemInput(product_id=indisponivel.id, quantity=1)
+        )
+
+
+def test_lancamento_manual_recusa_sabor_inexistente_ou_esgotado() -> None:
+    catalogo = _catalogo_para_lancamento_manual()
+    produto = catalogo.products[0]
+    esgotado = produto.groups[0].complements[1]
+
+    with pytest.raises(orders_service.InvalidOrderItemError):
+        orders_service._cart_item_from_input(
+            catalogo,
+            OrderItemInput(product_id=produto.id, quantity=1, complement_ids=[uuid4()]),
+        )
+    with pytest.raises(orders_service.InvalidOrderItemError):
+        orders_service._cart_item_from_input(
+            catalogo,
+            OrderItemInput(product_id=produto.id, quantity=1, complement_ids=[esgotado.id]),
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_order_manual_entra_direto_em_preparando(monkeypatch) -> None:
+    """Pulando `NOVO`/Pix: quem lança manualmente já sabe se cobrou ou não."""
+    catalogo = _catalogo_para_lancamento_manual()
+    produto = catalogo.products[0]
+    sabor = produto.groups[0].complements[0]
+
+    chamada: dict[str, object] = {}
+
+    async def _fake_create_order_from_cart(session, **kwargs):
+        chamada.update(kwargs)
+        return "resultado"
+
+    monkeypatch.setattr(
+        orders_service, "create_order_from_cart", _fake_create_order_from_cart
+    )
+
+    resultado = await orders_service.create_order_manual(
+        None,  # type: ignore[arg-type]
+        catalog=catalogo,
+        items=[OrderItemInput(product_id=produto.id, quantity=1, complement_ids=[sabor.id])],
+        phone="5511990000001",
+        customer_name="Balcão",
+        fulfillment_type=FulfillmentType.RETIRADA,
+        address=None,
+        payment_status=orders_service.PaymentStatus.PAGO,
+    )
+
+    assert resultado == "resultado"
+    assert chamada["status"] == orders_service.OrderStatus.PREPARANDO
+    assert chamada["payment_status"] == orders_service.PaymentStatus.PAGO
+    assert chamada["channel"] == OrderChannel.ADMIN
+    assert chamada["cart"].items[0].product_name == "Pote 500ml"
 
 
 # ---------------------------------------------------------------------------

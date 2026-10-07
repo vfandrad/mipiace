@@ -51,6 +51,8 @@ from app.configuracao import get_logger, get_settings
 from app.dominio import (
     ZERO,
     Cart,
+    CartComplement,
+    CartItem,
     CatalogComplement,
     CatalogGroup,
     CatalogProduct,
@@ -72,6 +74,7 @@ from app.esquemas import (
     MetricsSummary,
     Money,
     OrderCreated,
+    OrderItemInput,
     OrderSummary,
     OrderSummaryItem,
     ProductSales,
@@ -1205,6 +1208,10 @@ class MissingAddressError(OrderError):
     pass
 
 
+class InvalidOrderItemError(OrderError):
+    """Produto ou complemento do lançamento manual que não existe no cardápio de hoje."""
+
+
 class OrderNotFoundError(OrderError):
     pass
 
@@ -1283,11 +1290,18 @@ async def create_order_from_cart(
     address: dict | None,
     channel: OrderChannel,
     notes: str | None = None,
+    status: OrderStatus = OrderStatus.NOVO,
+    payment_status: PaymentStatus = PaymentStatus.PENDENTE,
 ) -> OrderCreated:
     """Fecha o carrinho num pedido persistido e devolve o essencial.
 
     Congela nome e preço de produto/complemento em cada item: se o lojista
     mudar a tabela amanhã, o histórico continua contando a verdade.
+
+    `status`/`payment_status` default para o caminho do agente (`NOVO` +
+    `PENDENTE`, esperando o Pix). O lançamento manual pelo painel
+    (`create_order_manual`) é que entra direto em `PREPARANDO`, pulando essa
+    espera — quem digita já sabe se cobrou ou não.
     """
     if cart.is_empty:
         raise EmptyCartError("Carrinho vazio — não há o que fechar.")
@@ -1315,8 +1329,8 @@ async def create_order_from_cart(
         address_id=saved_address.id if saved_address else None,
         fulfillment_type=fulfillment_type,
         channel=channel,
-        status=OrderStatus.NOVO,
-        payment_status=PaymentStatus.PENDENTE,
+        status=status,
+        payment_status=payment_status,
         subtotal=breakdown.subtotal,
         delivery_fee=breakdown.delivery_fee,
         total=breakdown.total,
@@ -1358,6 +1372,81 @@ async def create_order_from_cart(
         total=order.total,
         status=order.status,
         payment_status=order.payment_status,
+    )
+
+
+def _cart_item_from_input(
+    catalog: CatalogSnapshot, item: OrderItemInput
+) -> CartItem:
+    """Confere produto e complementos contra o cardápio de hoje antes de montar o item.
+
+    Mesma regra do agente: o painel manda só o `id`, e nome/preço vêm do
+    catálogo no servidor — nunca do que o navegador mandou.
+    """
+    product = catalog.product_by_id(item.product_id)
+    if product is None or not product.is_available:
+        raise InvalidOrderItemError("Esse produto não está no cardápio de hoje.")
+
+    complementos_do_produto = {
+        complement.id: complement
+        for group in product.groups
+        for complement in group.complements
+    }
+    complementos: list[CartComplement] = []
+    for complement_id in item.complement_ids:
+        complemento = complementos_do_produto.get(complement_id)
+        if complemento is None or not complemento.is_available:
+            raise InvalidOrderItemError(
+                f'Esse sabor não está disponível pro *{product.name}* hoje.'
+            )
+        complementos.append(
+            CartComplement(
+                id=complemento.id,
+                group_id=complemento.group_id,
+                name=complemento.name,
+                extra_price=complemento.extra_price,
+            )
+        )
+
+    return CartItem(
+        product_id=product.id,
+        product_name=product.name,
+        unit_base_price=product.base_price,
+        quantity=item.quantity,
+        complements=complementos,
+    )
+
+
+async def create_order_manual(
+    session: AsyncSession,
+    *,
+    catalog: CatalogSnapshot,
+    items: list[OrderItemInput],
+    phone: str,
+    customer_name: str | None,
+    fulfillment_type: FulfillmentType,
+    address: dict | None,
+    payment_status: PaymentStatus,
+    notes: str | None = None,
+) -> OrderCreated:
+    """Lançamento manual pelo painel — fallback para quando o agente de IA está fora.
+
+    Monta o carrinho a partir do catálogo (nunca confia em nome/preço vindo
+    do navegador) e entra direto em `PREPARANDO`: quem lança já sabe se
+    cobrou ou vai cobrar na entrega, não há Pix para esperar.
+    """
+    cart = Cart(items=[_cart_item_from_input(catalog, item) for item in items])
+    return await create_order_from_cart(
+        session,
+        cart=cart,
+        phone=phone,
+        customer_name=customer_name,
+        fulfillment_type=fulfillment_type,
+        address=address,
+        channel=OrderChannel.ADMIN,
+        notes=notes,
+        status=OrderStatus.PREPARANDO,
+        payment_status=payment_status,
     )
 
 

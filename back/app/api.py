@@ -58,6 +58,7 @@ from app.esquemas import (
     HourlySales,
     MetricsRange,
     MetricsSummary,
+    OrderCreateInput,
     OrderRead,
     OrderStatusUpdate,
     OrderSummary,
@@ -457,6 +458,39 @@ async def list_orders(
         session, status=status, limit=limit, offset=offset
     )
     return [OrderRead.model_validate(order) for order in orders]
+
+
+@rotas_pedidos.post("/orders", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
+async def create_order(payload: OrderCreateInput, session: SessionDep) -> OrderRead:
+    """Lançamento manual pelo painel — fallback para quando o agente de IA está fora.
+
+    Entra direto em `PREPARANDO` (pula `NOVO`/Pix): quem lança já confirmou o
+    pagamento, ou escolheu cobrar na entrega.
+    """
+    catalog_snapshot = await orders_service.get_catalog_snapshot(session)
+    try:
+        created = await orders_service.create_order_manual(
+            session,
+            catalog=catalog_snapshot,
+            items=payload.items,
+            phone=payload.phone,
+            customer_name=payload.customer_name,
+            fulfillment_type=payload.fulfillment_type,
+            address=payload.address.model_dump() if payload.address else None,
+            payment_status=payload.payment_status,
+            notes=payload.notes,
+        )
+    except orders_service.InvalidOrderItemError as exc:
+        raise bad_request(str(exc)) from exc
+    except orders_service.MissingAddressError as exc:
+        raise bad_request(str(exc)) from exc
+    except orders_service.EmptyCartError as exc:
+        raise bad_request(str(exc)) from exc
+    await session.commit()
+    order = await orders_service.get_order(session, created.id)
+    if order is None:  # pragma: no cover - acabou de ser criado na mesma transação
+        raise not_found("Pedido não encontrado.")
+    return OrderRead.model_validate(order)
 
 
 @rotas_pedidos.get("/orders/{order_id}", response_model=OrderRead)

@@ -405,6 +405,50 @@ class OrderStatusUpdate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Criação manual (painel) — fallback para quando o agente de IA está fora
+# ---------------------------------------------------------------------------
+
+
+class OrderItemInput(BaseModel):
+    """Um item do pedido manual: produto e complementos pelo `id` do cardápio.
+
+    O painel manda só os ids — nome e preço vêm do catálogo no servidor,
+    nunca do que o navegador mandou. É a mesma regra do agente: quem decide
+    preço é o backend.
+    """
+
+    product_id: UUID
+    quantity: int = Field(default=1, ge=1, le=50)
+    complement_ids: list[UUID] = Field(default_factory=list)
+
+
+class AddressInput(BaseModel):
+    rua: str
+    numero: str
+    bairro: str
+    complemento: str | None = None
+    referencia: str | None = None
+
+
+class OrderCreateInput(BaseModel):
+    """Corpo de `POST /api/orders` — lançamento manual pelo painel.
+
+    Existe para o lojista continuar registrando pedido (telefone, balcão)
+    quando o agente de WhatsApp está fora do ar. O pedido entra direto em
+    `PREPARANDO`, pulando `NOVO`/Pix: quem lança já confirmou o pagamento (ou
+    decidiu cobrar na entrega) na hora.
+    """
+
+    items: list[OrderItemInput] = Field(min_length=1)
+    customer_name: str | None = None
+    phone: str
+    fulfillment_type: FulfillmentType
+    address: AddressInput | None = None
+    payment_status: PaymentStatus = PaymentStatus.PENDENTE
+    notes: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Conversas — saída
 # ---------------------------------------------------------------------------
 
