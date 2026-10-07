@@ -290,6 +290,39 @@ async def test_endereco_completo_e_repetido_de_volta() -> None:
 
 
 # ---------------------------------------------------------------------------
+# "tira o X" quando o item não tem X — não é pra apagar o item inteiro
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_tirar_sabor_que_o_item_nao_tem_nao_apaga_o_item() -> None:
+    """Achado simulando conversa real contra a OpenAI de verdade.
+
+    "tira o chocolate" num pote que só tem pistache e morango: o modelo
+    devolveu `remove_item(item_index=1)` puro, sem `remove_flavors` — como se
+    o pedido fosse apagar o item inteiro. O pote não tinha chocolate nenhum;
+    o cliente se confundiu ou testou o bot, e o item inteiro não pode
+    desaparecer por isso. Esclarece em vez de apagar.
+    """
+    deps, session = build_deps(), build_session()
+    await run(
+        deps,
+        session,
+        plano(op(Action.ADD_ITEM, product_name="Pote 500ml", add_flavors=["Pistache", "Morango"])),
+        "pote grande de pistache e morango",
+    )
+
+    replies = await run(
+        deps,
+        session,
+        plano(op(Action.REMOVE_ITEM, item_index=1)),
+        "tira o chocolate",
+    )
+
+    assert len(session.cart.items) == 1, "o item não tinha chocolate — não podia ser apagado"
+    assert any("não está" in reply.lower() for reply in replies)
+
+
+# ---------------------------------------------------------------------------
 # Sabor que o modelo pede e tira na mesma frase
 # ---------------------------------------------------------------------------
 

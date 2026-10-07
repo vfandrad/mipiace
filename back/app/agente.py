@@ -4246,6 +4246,29 @@ def _op_remove_item(
         turn.answered = True
         return
 
+    # "tira o chocolate" num pote que não tem chocolate: o modelo às vezes
+    # devolve isso como remove_item num índice puro, sem citar
+    # `remove_flavors` — e o item inteiro sumia por um sabor que nunca
+    # esteve lá. Palavra de sabor do grupo do item resolvido, que o item não
+    # tem, é sinal forte de sabor errado, não de apagar tudo. Achado em
+    # simulação de conversa real.
+    if not op.remove_flavors and not op.product_name and mensagem:
+        item_candidato = session.cart.items[index]
+        group = _group_of(deps, item_candidato)
+        if group is not None:
+            existentes = {normalize(c.name) for c in item_candidato.complements}
+            sabor_ausente = next(
+                (
+                    c for c in _sabores_ditos(group, mensagem)
+                    if normalize(c.name) not in existentes
+                ),
+                None,
+            )
+            if sabor_ausente is not None:
+                turn.say(r.sabor_nao_esta_no_pedido(sabor_ausente.name, item_candidato))
+                turn.answered = True
+                return
+
     item = session.cart.items[index]
 
     # "tira UMA casquinha" com 3 no pedido tira uma, não a linha inteira. O

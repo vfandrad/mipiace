@@ -300,6 +300,15 @@ def complemento_esgotado(name: str) -> str:
     return f"*{name}* acabou hoje. 😔 Escolhe outro pra mim?"
 
 
+def sabor_nao_esta_no_pedido(nome: str, item: CartItem) -> str:
+    """"tira o chocolate" num pote que não tem chocolate — não apaga o item."""
+    atuais = ", ".join(c.name for c in item.complements)
+    return (
+        f"O *{nome}* não está no seu *{item.product_name}* — nele tenho "
+        f"*{atuais}*. 😊 Quer tirar outro sabor, ou é o item inteiro mesmo?"
+    )
+
+
 def grupo_cheio(group: CatalogGroup) -> str:
     return f"Esse item já está completo com {group.max_choices} opções. 😉"
 
