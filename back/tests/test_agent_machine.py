@@ -497,6 +497,37 @@ async def test_confirmar_sem_resumo_na_tela_nao_cobra() -> None:
 
 
 @pytest.mark.asyncio
+async def test_confirm_order_sem_resumo_ainda_fecha_em_vez_de_nao_entendi() -> None:
+    """"sim" direto pra "quer mais alguma coisa ou já posso fechar?" tem que fechar.
+
+    Achado em simulação de conversa real: o cliente nunca disse a palavra
+    "fechar" — só respondeu "sim" depois de montar o pedido, escolher entrega
+    e dar o endereço. O modelo devolveu `confirm_order` (uma leitura tão válida
+    quanto `close_order` para essa resposta), mas o executor só sabia tratar
+    `close_order` como "avança pro fechamento" — `confirm_order` sem resumo na
+    tela não tinha efeito nenhum, e o turno caía na escada de "não entendi"
+    com o pedido pronto na mão. Não é cobrança (resposta não é hedged e o
+    resumo ainda nem foi mostrado) — é só avançar para o resumo, igual
+    `close_order` já fazia.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(op(Action.SET_FULFILLMENT, fulfillment="retirada")),
+        "vou retirar",
+    )
+
+    replies = await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim")
+
+    assert session.state is S.CONFIRMANDO_PEDIDO
+    assert session.active_order_id is None  # ainda não cobrou
+    assert not any("não peguei" in r.lower() or "não entendi" in r.lower() for r in replies)
+    assert any("certo assim" in r.lower() or "confere" in r.lower() for r in replies)
+
+
+@pytest.mark.asyncio
 async def test_confirmar_depois_do_resumo_gera_o_pix() -> None:
     deps, session = build_deps(), build_session()
     await montar_pote(deps, session)
@@ -626,6 +657,34 @@ async def test_cancelar_de_verdade_no_atendimento_humano_continua_valendo() -> N
 
     assert session.state is S.CANCELADO
     assert session.cart.is_empty
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_hallucinado_em_handoff_sem_palavra_de_cancelamento_nao_cancela() -> None:
+    """Achado numa simulação de conversa real contra a OpenAI de verdade.
+
+    O modelo às vezes devolve `cancel_order` sozinho para uma frase que não
+    tem nenhuma palavra de cancelamento ("deixa, quero falar do pistache e
+    morango no pote grande mesmo" — um pedido novo, não desistência). Essa
+    frase também não bate ao pé da letra com `_VOLTAR_PRO_BOT`, e a versão
+    antiga da trava aceitava o cancelamento nesse caso por padrão. O pedido
+    tem que sobreviver: na pior hipótese, o turno só avisa que ainda está
+    esperando o atendente.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(deps, session, plano(op(Action.REQUEST_HUMAN)), "atendimento pessimo")
+
+    replies = await run(
+        deps,
+        session,
+        plano(op(Action.CANCEL_ORDER)),
+        "deixa, quero falar do pistache e morango no pote grande mesmo",
+    )
+
+    assert session.state is S.ATENDIMENTO_HUMANO
+    assert not session.cart.is_empty, "o pedido não pode desaparecer sem o cliente ter pedido"
+    assert replies
 
 
 # ---------------------------------------------------------------------------
@@ -1347,6 +1406,35 @@ async def test_quanto_fica_antes_de_escolher_entrega_nao_inventa_taxa() -> None:
     assert "entrega ou retirada" in resposta.lower(), replies
     assert "Taxa de entrega" not in resposta, replies
     assert "*Total:" not in resposta, replies
+
+
+@pytest.mark.asyncio
+async def test_pergunta_terminada_em_emoji_nao_ganha_segunda_pergunta_emendada() -> None:
+    """"Vai ser entrega ou retirada? 🛵🏠" já é uma pergunta — não emenda "mais alguma coisa?".
+
+    Achado em simulação de conversa real: a checagem de "a resposta já
+    termina em pergunta" usava `texto.endswith("?")`, e quase toda fala do
+    bot termina com emoji DEPOIS da pontuação — então a checagem nunca batia
+    de verdade, e o bot emendava uma segunda pergunta ("Quer mais alguma
+    coisa ou já posso fechar?") logo depois de uma resposta que já perguntava
+    outra coisa. Duas perguntas seguidas no mesmo turno é exatamente o que
+    essa trava existe para evitar.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    replies = await run(deps, session, plano(op(Action.SHOW_TOTAL)), "quanto fica?")
+
+    assert not any("mais alguma coisa" in r.lower() for r in replies), replies
+    assert sum(r.count("?") for r in replies) == 1, replies
+
+
+def test_termina_em_pergunta_ignora_emoji_depois_da_pontuacao() -> None:
+    from app.agente import _termina_em_pergunta
+
+    assert _termina_em_pergunta("Vai ser entrega ou retirada? 🛵🏠")
+    assert not _termina_em_pergunta("Me diz os sabores. 😋")  # sem "?"
+    assert not _termina_em_pergunta("Isso é sem taxa. Com entrega, some R$ 5,00.")
 
 
 @pytest.mark.asyncio

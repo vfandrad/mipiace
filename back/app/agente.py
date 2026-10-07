@@ -3782,7 +3782,13 @@ async def apply(
         turn.say(_answer_question(deps, session, op))
         turn.answered = True
 
-    elif action is Action.CLOSE_ORDER:
+    elif action in (Action.CLOSE_ORDER, Action.CONFIRM_ORDER):
+        # confirm_order sem resumo na tela ainda (`AWAITING_CONFIRM`) é o
+        # cliente respondendo "sim" a "quer mais alguma coisa ou já posso
+        # fechar?" — o modelo tanto devolve close_order quanto confirm_order
+        # para essa mesma resposta. Tratar os dois igual aqui evita que um
+        # "sim" claro vire "não entendi"; a cobrança em si só acontece depois,
+        # com o resumo de verdade na tela (`quer_confirmar`, em `run`).
         session.slots[CLOSING] = True
 
     elif action is Action.CANCEL_ORDER:
@@ -4518,9 +4524,20 @@ async def _handoff_turn(
     # inteiro assim, e ao reclamar ("eu não mandei cancelar nada") ouviu de
     # novo "cancelei o pedido". Quem pede o bot de volta sem dizer "cancela"
     # não está cancelando.
-    cancelou_mesmo = plan.has(Action.CANCEL_ORDER) and (
-        _cancelamento_claro(text) or not _quer_o_bot_de_volta(text)
-    )
+    #
+    # Regressão encontrada em simulação de conversa real: a condição aqui
+    # chegou a ser `_cancelamento_claro(text) or not _quer_o_bot_de_volta(text)`
+    # — ou seja, bastava a fala NÃO bater com a lista curta de "quero o bot de
+    # volta" para o cancelamento ser aceito, mesmo sem nenhuma palavra de
+    # cancelamento. "deixa, quero falar com o pistache e morango no pote
+    # grande mesmo" (claramente um pedido novo, não desistência) não bate com
+    # `_VOLTAR_PRO_BOT` ao pé da letra, e o modelo as vezes devolve
+    # `cancel_order` sozinho para essa frase — o pedido era cancelado de
+    # verdade, sem o cliente ter pedido isso. Confiar só em `_cancelamento_claro`
+    # é mais conservador: na pior hipótese (fala ambígua, nem cancela nem bate
+    # com a lista de volta) o turno cai no aviso de "ainda aguardando", nunca
+    # apaga um pedido que ninguém pediu para apagar.
+    cancelou_mesmo = plan.has(Action.CANCEL_ORDER) and _cancelamento_claro(text)
     if cancelou_mesmo:
         return await cancel(deps, session)
 
@@ -4675,6 +4692,22 @@ def _hedged(text: str) -> bool:
         if pedaco
         for m in _MORNAS
     )
+
+
+#: Um "?" seguido só de espaço/emoji até o fim — não de mais texto.
+_RE_TERMINA_EM_PERGUNTA = re.compile(r"\?[^\w]*$")
+
+
+def _termina_em_pergunta(texto: str) -> bool:
+    """A fala terminou em pergunta, mesmo com emoji depois do "?".
+
+    `texto.endswith("?")` sozinho nunca batia aqui: quase toda fala do bot
+    termina com um emoji depois da pontuação ("...retirada? 🛵🏠"), então a
+    checagem simples deixava passar uma segunda pergunta emendada na mesma
+    resposta — duas perguntas seguidas, que é exatamente o que esta função
+    existe para impedir (ver uso em `_next_step`).
+    """
+    return bool(_RE_TERMINA_EM_PERGUNTA.search(texto.strip()))
 
 
 # ---------------------------------------------------------------------------
@@ -5025,7 +5058,7 @@ async def run(
             return await place_order(deps, session)
 
     for index, op in enumerate(plan.operations):
-        if op.action is Action.CLOSE_ORDER and _hedged(text):
+        if op.action in (Action.CLOSE_ORDER, Action.CONFIRM_ORDER) and _hedged(text):
             # Mesma trava da confirmação final, só que mais cedo: "sei lá,
             # pode ser" respondendo "quer mais alguma coisa ou já posso
             # fechar?" não pode empurrar o pedido para a etapa de fechar
@@ -5108,7 +5141,7 @@ async def _next_step(
         session.fail_count = 0
         # Se a própria resposta já terminou em pergunta, não emendar outra:
         # duas perguntas seguidas soam como formulário.
-        if turn.notes and turn.notes[-1].rstrip().endswith("?"):
+        if turn.notes and _termina_em_pergunta(turn.notes[-1]):
             return turn.notes
         ja_mostrou = any("*Seu pedido*" in nota for nota in turn.notes)
         retomada = _resume_prompt(deps, session, carrinho_na_tela=ja_mostrou)
