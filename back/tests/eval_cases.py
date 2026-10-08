@@ -232,6 +232,11 @@ def escolheu_retirada(deps: Any, session: Any, replies: list[str]) -> None:
     continua_com_um_item(deps, session, replies)
 
 
+def escolheu_cartao(deps: Any, session: Any, replies: list[str]) -> None:
+    assert session.slots.get("payment_method") == "cartao", session.slots
+    continua_com_um_item(deps, session, replies)
+
+
 # ---------------------------------------------------------------------------
 # Os casos
 # ---------------------------------------------------------------------------
@@ -361,6 +366,31 @@ CASES: tuple[EvalCase, ...] = (
         porque="a única operação que gera cobrança",
         preparar=resumo_na_tela,
         acao=Action.CONFIRM_ORDER,
+    ),
+    EvalCase(
+        id="decidir_pagar_no_cartao",
+        mensagem="quero pagar com cartao mesmo",
+        porque="decisão de forma de pagamento, não pergunta — pula o Pix",
+        preparar=pote_montado,
+        acao=Action.SET_PAYMENT_METHOD,
+        campos={"payment_method": "cartao"},
+        verificar=escolheu_cartao,
+    ),
+    EvalCase(
+        id="decidir_pagar_em_dinheiro",
+        mensagem="posso pagar em dinheiro na entrega?",
+        porque="'posso...?' de decisão, não de curiosidade — ver pergunta_sobre_cartao",
+        preparar=pote_montado,
+        acao=Action.SET_PAYMENT_METHOD,
+        tambem=(Action.ANSWER_QUESTION,),
+        campos={"payment_method": "dinheiro"},
+    ),
+    EvalCase(
+        id="pergunta_sobre_cartao",
+        mensagem="vcs aceitam cartao?",
+        porque="SÓ perguntando (sem contexto de pedido) é FAQ, não decisão",
+        acao=Action.ANSWER_QUESTION,
+        campos={"question_topic": "pagamento"},
     ),
     EvalCase(
         id="cancelar",

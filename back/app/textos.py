@@ -19,7 +19,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.configuracao import get_settings
-from app.dominio import Cart, CartItem, CatalogGroup, CatalogProduct, CatalogSnapshot
+from app.dominio import Cart, CartItem, CatalogGroup, CatalogProduct, CatalogSnapshot, PaymentMethod
 
 
 def _loja() -> str:
@@ -473,6 +473,20 @@ def entrega_anotada(kind: Any) -> str:
     return "Anotado: *entrega*. 🛵"
 
 
+def pagamento_anotado(method: PaymentMethod) -> str:
+    """O bot diz que anotou a forma de pagamento — mesma ideia de `entrega_anotada`.
+
+    Sem dizer "na entrega"/"na retirada" aqui: a forma de receber pode ainda
+    nem ter sido decidida nesse ponto da conversa. O resumo final (
+    `resumo_final`) é quem junta as duas coisas.
+    """
+    if method is PaymentMethod.CARTAO:
+        return "Anotado: pagamento em *cartão*. 💳"
+    if method is PaymentMethod.DINHEIRO:
+        return "Anotado: pagamento em *dinheiro*. 💵"
+    return "Anotado: pagamento no *Pix*. 💳"
+
+
 def endereco_salvo(address: dict[str, Any], *, novo_para_entrega: bool = False) -> str:
     inicio = "Perfeito, vou entregar em" if novo_para_entrega else "Endereço anotado"
     return "\n".join([f"{inicio}:", formatar_endereco(address)])
@@ -517,14 +531,23 @@ def formatar_endereco(address: dict[str, Any] | None) -> str:
 # Confirmação, Pix e pós-pagamento
 # ---------------------------------------------------------------------------
 
+#: Como cada forma de pagamento aparece no resumo e no fechamento. Pix não
+#: tem "cobrado em" porque o Pix FECHA o resumo — é a própria pergunta final.
+_NOME_DO_PAGAMENTO = {
+    PaymentMethod.CARTAO: "Cartão",
+    PaymentMethod.DINHEIRO: "Dinheiro",
+}
+
+
 def resumo_final(
     cart: Cart,
     *,
     delivery_fee: Decimal,
     address: dict[str, Any] | None,
     is_pickup: bool = False,
+    payment_method: PaymentMethod = PaymentMethod.PIX,
 ) -> str:
-    """Resumo antes do Pix — a barreira antes de qualquer cobrança."""
+    """Resumo antes de cobrar — a barreira antes de qualquer cobrança."""
     linhas = ["*Confere pra mim?* 📝", ""]
     for index, item in enumerate(cart.items, start=1):
         linhas.append(_linha_do_item(index, item))
@@ -539,18 +562,27 @@ def resumo_final(
         total = cart.total(delivery_fee)
     linhas.append(f"*Total: {em_reais(total)}*")
     linhas.append("")
-    linhas.append("Tá certo assim? Se estiver, eu já mando o Pix. 😊")
+    if payment_method is PaymentMethod.PIX:
+        linhas.append("Tá certo assim? Se estiver, eu já mando o Pix. 😊")
+    else:
+        onde = "na entrega, com o motoboy" if not is_pickup else "na retirada, no balcão"
+        linhas.append(f"• Pagamento: {_NOME_DO_PAGAMENTO[payment_method]} ({onde})")
+        linhas.append("Tá certo assim? Se estiver, eu já confirmo o pedido. 😊")
     return "\n".join(linhas)
 
 
 def confirmar_de_novo() -> str:
-    """Resposta morna na hora de cobrar: pergunta uma vez mais, sem cobrar."""
-    return "Só pra eu ter certeza antes de gerar o Pix: pode confirmar o pedido? 😊"
+    """Resposta morna na hora de cobrar: pergunta uma vez mais, sem cobrar.
+
+    Sem citar Pix: vale igual para cartão/dinheiro na entrega, que não geram
+    cobrança alguma por aqui — só fecham o pedido.
+    """
+    return "Só pra eu ter certeza antes de fechar: pode confirmar o pedido? 😊"
 
 
 def perguntar_confirmacao_curta() -> str:
     """Relembra a confirmação sem reimprimir dez linhas de resumo."""
-    return "Me confirma que está certo que eu mando o Pix. 😊"
+    return "Me confirma que está certo que eu já fecho o pedido. 😊"
 
 
 def mensagem_do_pix(
@@ -583,6 +615,28 @@ def mensagem_do_pix(
         return ["\n".join(linhas), qr_code]
     linhas.append("Assim que o pagamento cair, eu te aviso por aqui. 😉")
     return ["\n".join(linhas)]
+
+
+def pedido_confirmado_pagamento_na_entrega(
+    *,
+    order_code: str,
+    total: Decimal,
+    method: PaymentMethod,
+    is_pickup: bool,
+) -> str:
+    """Fechamento de pedido em cartão/dinheiro — sem Pix, sem código pra copiar.
+
+    Mesmo espírito de `mensagem_do_pix`: confirma o pedido e diz exatamente
+    quem cobra e onde, pra não sobrar dúvida pro motoboy nem pro cliente.
+    """
+    quem = "o motoboy" if not is_pickup else "a loja"
+    onde = "na entrega" if not is_pickup else "na retirada, no balcão"
+    return (
+        f"🎉 *Pedido {order_code} confirmado!*\n\n"
+        f"• Valor: *{em_reais(total)}*\n"
+        f"• Pagamento: {_NOME_DO_PAGAMENTO[method]}, cobrado por {quem} {onde}\n\n"
+        "Já mandei pra cozinha. Até já! 😉"
+    )
 
 
 def pix_falhou() -> str:

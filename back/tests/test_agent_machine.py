@@ -29,6 +29,7 @@ from app.agente import (
     assert_transition,
     can_transition,
     fulfillment_of,
+    payment_method_of,
     run,
 )
 from app.configuracao import get_settings
@@ -38,6 +39,8 @@ from app.dominio import (
     CatalogProduct,
     CatalogSnapshot,
     FulfillmentType,
+    OrderStatus,
+    PaymentMethod,
 )
 from app.dominio import ConversationState as S
 
@@ -578,6 +581,127 @@ async def test_confirmar_depois_do_resumo_gera_o_pix() -> None:
     assert session.state is S.AGUARDANDO_PAGAMENTO
     assert replies[-1] == "PIX-COPIA-E-COLA"
     assert session.cart.is_empty
+
+
+@pytest.mark.asyncio
+async def test_cliente_decide_pagar_no_cartao_e_bot_confirma_na_hora() -> None:
+    """"quero pagar com cartão" é decisão — não é FAQ, é set_payment_method."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    replies = await run(
+        deps,
+        session,
+        plano(op(Action.SET_PAYMENT_METHOD, payment_method="cartao")),
+        "quero pagar com cartao",
+    )
+
+    assert payment_method_of(session) is PaymentMethod.CARTAO
+    assert any("cartão" in reply.lower() for reply in replies)
+
+
+@pytest.mark.asyncio
+async def test_payment_method_sem_sinal_na_fala_e_descartado() -> None:
+    """O modelo alucinou cartão sem o cliente ter dito nada sobre pagamento.
+
+    Mesma trava de `_fulfillment_dito`: payment_method não tem catálogo para
+    contradizer a IA, então a fala crua tem que confirmar a decisão.
+    """
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    await run(
+        deps, session, plano(op(Action.SET_PAYMENT_METHOD, payment_method="cartao")), "bom dia"
+    )
+
+    assert payment_method_of(session) is PaymentMethod.PIX
+
+
+@pytest.mark.asyncio
+async def test_pagamento_em_dinheiro_pula_o_pix_e_vai_direto_pra_cozinha() -> None:
+    """Cartão/dinheiro não têm Pix pra esperar: confirma e já manda pra cozinha."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    chamadas: dict[str, object] = {}
+
+    async def _create_order(db, **kwargs):
+        chamadas["create_order_kwargs"] = kwargs
+        return _FakeOrder()
+
+    async def _register_cod(db, order_id, method):
+        chamadas["cod"] = (order_id, method)
+
+    deps.create_order = _create_order
+    deps.register_cod_payment = _register_cod
+
+    await run(
+        deps,
+        session,
+        plano(
+            op(Action.SET_PAYMENT_METHOD, payment_method="dinheiro"),
+            op(Action.SET_FULFILLMENT, fulfillment="retirada"),
+            op(Action.CLOSE_ORDER),
+        ),
+        "vou pagar em dinheiro, vou retirar, pode fechar",
+    )
+    assert session.state is S.CONFIRMANDO_PEDIDO
+
+    replies = await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim")
+
+    assert session.state is S.CONCLUIDO
+    assert chamadas["create_order_kwargs"]["status"] is OrderStatus.PREPARANDO
+    assert chamadas["cod"][1] is PaymentMethod.DINHEIRO
+    assert session.cart.is_empty
+    assert not any("pix" in reply.lower() for reply in replies)
+
+
+@pytest.mark.asyncio
+async def test_resumo_final_mostra_a_forma_de_pagamento_escolhida() -> None:
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+
+    replies = await run(
+        deps,
+        session,
+        plano(
+            op(Action.SET_PAYMENT_METHOD, payment_method="cartao"),
+            op(Action.SET_FULFILLMENT, fulfillment="retirada"),
+            op(Action.CLOSE_ORDER),
+        ),
+        "vou pagar com cartao, vou retirar, pode fechar",
+    )
+
+    assert session.state is S.CONFIRMANDO_PEDIDO
+    assert any("cartão" in reply.lower() for reply in replies)
+
+
+@pytest.mark.asyncio
+async def test_falha_ao_registrar_pagamento_na_entrega_nao_perde_o_pedido() -> None:
+    """Mesmo cuidado do Pix: erro na hora de registrar não some com o pedido."""
+    deps, session = build_deps(), build_session()
+    await montar_pote(deps, session)
+    await run(
+        deps,
+        session,
+        plano(
+            op(Action.SET_PAYMENT_METHOD, payment_method="dinheiro"),
+            op(Action.SET_FULFILLMENT, fulfillment="retirada"),
+            op(Action.CLOSE_ORDER),
+        ),
+        "vou pagar em dinheiro, vou retirar, pode fechar",
+    )
+
+    async def _explode(db, order_id, method):
+        raise RuntimeError("banco fora do ar")
+
+    deps.register_cod_payment = _explode
+
+    replies = await run(deps, session, plano(op(Action.CONFIRM_ORDER)), "sim")
+
+    assert session.state is S.CONFIRMANDO_PEDIDO
+    assert session.active_order_id is None
+    assert replies
 
 
 @pytest.mark.asyncio
@@ -1795,6 +1919,7 @@ async def test_ancoragem_das_acoes_destrutivas() -> None:
     inocente = "bom dia, tudo bem?"
     argumentos = {
         Action.SET_FULFILLMENT: {"fulfillment": "entrega"},
+        Action.SET_PAYMENT_METHOD: {"payment_method": "cartao"},
         Action.UPDATE_ADDRESS: {
             "address": Address(rua="Rua Inventada", numero="9", bairro="Centro")
         },
@@ -1811,6 +1936,7 @@ async def test_ancoragem_das_acoes_destrutivas() -> None:
         assert session.state is not S.AGUARDANDO_PAGAMENTO, f"{acao.value} cobrou"
         assert session.active_order_id is None, f"{acao.value} criou pedido"
         assert not session.slots.get("fulfillment"), f"{acao.value} escolheu a entrega"
+        assert not session.slots.get("payment_method"), f"{acao.value} escolheu a forma de pagamento"
         assert not session.slots.get("address"), f"{acao.value} inventou endereço"
 
 

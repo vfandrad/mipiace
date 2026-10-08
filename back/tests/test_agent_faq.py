@@ -24,9 +24,11 @@ def cardapio():
     return build_cardapio()
 
 
-def test_pagamento_e_so_pix(cardapio) -> None:
+def test_pagamento_responde_pix_cartao_e_dinheiro(cardapio) -> None:
     resposta = answer(topic="pagamento", question="vcs aceitam cartao?", raw_text=None, catalog=cardapio, settings=get_settings())
     assert resposta and "Pix" in resposta
+    assert "cartão" in resposta.lower()
+    assert "dinheiro" in resposta.lower()
 
 
 def test_taxa_de_entrega_sai_da_configuracao(cardapio) -> None:
@@ -119,6 +121,7 @@ def test_pergunta_de_pagamento_com_topico_errado_ainda_responde_pix(cardapio) ->
 
 
 def test_cartao_recebe_resposta_de_verdade(cardapio) -> None:
+    """Cartão e dinheiro são aceitos (cobrados na entrega/retirada), não só o Pix."""
     resposta = answer(
         topic="outro",
         question="aceitam cartao?",
@@ -127,6 +130,8 @@ def test_cartao_recebe_resposta_de_verdade(cardapio) -> None:
         settings=get_settings(),
     )
     assert "Pix" in resposta
+    assert "cartão" in resposta.lower()
+    assert "dinheiro" in resposta.lower()
     assert "não sei responder" not in resposta
 
 

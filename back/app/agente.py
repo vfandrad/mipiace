@@ -57,6 +57,7 @@ from app.dominio import (
     MessageDirection,
     OrderChannel,
     OrderStatus,
+    PaymentMethod,
     PaymentStatus,
     normalize,
     parse_state,
@@ -70,6 +71,7 @@ from app.servicos import (
     get_catalog_snapshot,
     get_order_summary,
     get_pending_payment,
+    register_cod_payment,
     update_order_status,
 )
 
@@ -92,6 +94,7 @@ class Action(StrEnum):
     UPDATE_QUANTITY = "update_quantity"   # "na verdade só um", "coloca mais dois"
     DUPLICATE_ITEM = "duplicate_item"     # "quero outro igual"
     SET_FULFILLMENT = "set_fulfillment"   # entrega ou retirada
+    SET_PAYMENT_METHOD = "set_payment_method"  # pix (padrão), cartão ou dinheiro na entrega
     UPDATE_ADDRESS = "update_address"     # endereço, inteiro ou aos pedaços
     SHOW_MENU = "show_menu"
     SHOW_CART = "show_cart"
@@ -160,6 +163,10 @@ class Operation(BaseModel):
     fulfillment: str | None = None          # "entrega" | "retirada"
     address: Address | None = None
 
+    #: "pix" (padrão, não precisa dizer) | "cartao" | "dinheiro" — os dois
+    #: últimos são cobrados na entrega (motoboy) ou na retirada (balcão).
+    payment_method: str | None = None
+
     question_topic: str | None = None
     #: A pergunta do cliente, nas palavras dele — para o sistema responder o
     #: que ele perguntou, e não um texto genérico.
@@ -224,7 +231,8 @@ TRANSITIONS: dict[S, set[S]] = {
         S.CANCELADO,
     },
     S.CONFIRMANDO_PEDIDO: {
-        S.AGUARDANDO_PAGAMENTO,  # único caminho para a cobrança
+        S.AGUARDANDO_PAGAMENTO,  # Pix: único caminho para ESPERAR a cobrança
+        S.CONCLUIDO,             # cartão/dinheiro na entrega: não há Pix pra esperar
         S.CONVERSANDO,           # cliente quis mudar algo
         S.CONFIRMANDO_PEDIDO,
         S.ATENDIMENTO_HUMANO,
@@ -583,7 +591,7 @@ def answer(
     assunto = _assunto(topic, texto)
 
     if assunto == "pagamento":
-        return _pagamento(texto)
+        return _pagamento()
 
     if assunto == "taxa_entrega":
         taxa: Decimal = settings.delivery_fee
@@ -642,23 +650,14 @@ def _configurado_ou_nao(valor: str, topic: str, molde: str) -> str:
     return molde.format(valor) if valor else _nao_sei(topic)
 
 
-def _pagamento(texto: str) -> str:
-    """Pix é o único meio que o sistema tem — e dizer isso é melhor que 'não sei'."""
-    outro_meio = any(
-        p in texto
-        for p in ("cartao", "credito", "debito", "dinheiro", "especie", "maquininha", "vr")
+def _pagamento() -> str:
+    """As três formas que o sistema aceita de verdade."""
+    return (
+        "Aceitamos *Pix*, *cartão* ou *dinheiro*. 💳💵\n"
+        "No Pix o código já sai pronto pra copiar e colar quando você fechar. "
+        "Cartão e dinheiro são cobrados na entrega (ou na retirada, se for "
+        "buscar na loja) — só me avisar qual você prefere."
     )
-    base = (
-        "Por aqui o pagamento é no *Pix* 💳\n"
-        "Quando fechar o pedido eu já mando o código para copiar e colar."
-    )
-    if outro_meio:
-        return (
-            "Pelo WhatsApp eu só consigo fechar no *Pix* 💳\n"
-            "Mando o código na hora de fechar. Para outra forma de pagamento, "
-            "posso chamar alguém do time. 😊"
-        )
-    return base
 
 
 def _nao_sei(topic: str) -> str:
@@ -949,6 +948,13 @@ _ACTION_DESCRIPTIONS = {
         'como ele quer receber, dito de qualquer jeito: "manda aqui em casa", '
         '"vou buscar aí", "passo aí pegar", "entrega" -> fulfillment'
     ),
+    Action.SET_PAYMENT_METHOD: (
+        'cliente decidiu pagar em cartão ou dinheiro, cobrado na entrega ou '
+        'na retirada: "posso pagar com cartão?", "vou pagar em dinheiro aí" '
+        '-> payment_method="cartao" ou "dinheiro". Pix é o padrão — NÃO use '
+        "esta ação pra Pix, nem quando ele só PERGUNTAR se aceita cartão "
+        "(isso é answer_question)"
+    ),
     Action.UPDATE_ADDRESS: "mandou endereço, inteiro ou um pedaço dele",
     Action.SHOW_MENU: "quer ver o cardápio/as opções/os sabores",
     Action.SHOW_CART: '"me mostra o carrinho", "o que eu pedi?"',
@@ -1059,6 +1065,14 @@ def tool_schema() -> dict[str, Any]:
                                 "type": ["string", "null"],
                                 "description": 'Exatamente "entrega" ou "retirada".',
                             },
+                            "payment_method": {
+                                "type": ["string", "null"],
+                                "description": (
+                                    'Exatamente "cartao" ou "dinheiro" — só quando '
+                                    "ele DECIDIU pagar assim nesta mensagem. Pix é "
+                                    "o padrão e nunca precisa ser dito aqui."
+                                ),
+                            },
                             "address": {
                                 "type": ["object", "null"],
                                 "description": (
@@ -1120,6 +1134,7 @@ def tool_schema() -> dict[str, Any]:
                             "add_flavors",
                             "remove_flavors",
                             "fulfillment",
+                            "payment_method",
                             "address",
                             "question_topic",
                             "question_text",
@@ -1269,7 +1284,15 @@ não quer mais.
 19. NENHUMA PERGUNTA SOME quando a mensagem também tem uma edição, um \
 pedido de atendente ou qualquer outra coisa. Se ele perguntou "vocês aceitam \
 cartão?" no meio de uma troca de sabor, registre update_item E \
-answer_question — nunca deixe a pergunta de fora do plano."""
+answer_question — nunca deixe a pergunta de fora do plano.
+20. payment_method SÓ ENTRA (set_payment_method, ou junto de outra operação) \
+QUANDO ELE DECIDIU pagar em cartão ou dinheiro NESTA MENSAGEM ("posso pagar \
+com cartão?", "vou pagar em dinheiro", "é na entrega mesmo, dinheiro"). \
+PERGUNTAR se aceita cartão sem dizer que é assim que ele vai pagar é só \
+answer_question, não set_payment_method. Pix é o padrão: nunca registre \
+payment_method="pix" nem repita a escolha de cartão/dinheiro em toda \
+operação seguinte só porque ele já tinha decidido antes — mesma regra do \
+fulfillment, é dado financeiro."""
 
 
 def base_instructions() -> str:
@@ -1500,6 +1523,7 @@ class OpenAILLMClient:
             add_flavors=cls._names(raw.get("add_flavors")),
             remove_flavors=cls._names(raw.get("remove_flavors")),
             fulfillment=cls._fulfillment(raw.get("fulfillment")),
+            payment_method=cls._payment_method(raw.get("payment_method")),
             address=cls._address(raw.get("address")),
             question_topic=cls._topic(raw.get("question_topic")),
             question_text=raw.get("question_text") or None,
@@ -1562,6 +1586,12 @@ class OpenAILLMClient:
         """Só "entrega" ou "retirada" passam; o resto é ruído do modelo."""
         value = str(raw).strip().lower() if raw else ""
         return value if value in {"entrega", "retirada"} else None
+
+    @staticmethod
+    def _payment_method(raw: Any) -> str | None:
+        """Só "cartao" ou "dinheiro" passam; Pix é o padrão e nunca precisa vir daqui."""
+        value = str(raw).strip().lower() if raw else ""
+        return value if value in {"cartao", "dinheiro"} else None
 
     @staticmethod
     def _topic(raw: Any) -> str | None:
@@ -2978,6 +3008,7 @@ logger = logging.getLogger(__name__)
 
 CreateOrder = Callable[..., Awaitable[Any]]
 CreatePix = Callable[..., Awaitable[Any]]
+RegisterCodPayment = Callable[..., Awaitable[Any]]
 OrderSummaryFn = Callable[..., Awaitable[Any]]
 CancelOrderFn = Callable[[Any, UUID], Awaitable[Any]]
 
@@ -2995,6 +3026,9 @@ class AgentDeps:
     cancel_order: CancelOrderFn | None = None
     saved_address: Callable[[], Awaitable[dict[str, Any] | None]] | None = None
     returning_customer: Callable[[], Awaitable[bool]] | None = None
+    #: Cartão/dinheiro cobrados na entrega — `None` só em teste que não usa
+    #: esse caminho; em produção `build_deps` sempre preenche.
+    register_cod_payment: RegisterCodPayment | None = None
     channel: OrderChannel = OrderChannel.WHATSAPP
 
 
@@ -3030,6 +3064,7 @@ async def build_deps(
         cancel_order=_cancel_order,
         saved_address=_saved_address,
         returning_customer=_returning_customer,
+        register_cod_payment=register_cod_payment,
         channel=channel,
     )
 
@@ -3065,12 +3100,32 @@ def set_fulfillment(session: ConversationSession, kind: FulfillmentType) -> None
     session.slots[FULFILLMENT_SLOT] = kind.value
 
 
+#: Slot onde fica a escolha do cliente: "cartao" ou "dinheiro". Ausente = Pix,
+#: o padrão — por isso não há valor "pix" guardado aqui, só a exceção.
+PAYMENT_METHOD_SLOT = "payment_method"
+
+
+def payment_method_of(session: ConversationSession) -> PaymentMethod:
+    """Pix é o padrão: só volta cartão/dinheiro quando o cliente decidiu isso."""
+    raw = session.slots.get(PAYMENT_METHOD_SLOT)
+    if raw in (PaymentMethod.CARTAO, PaymentMethod.CARTAO.value):
+        return PaymentMethod.CARTAO
+    if raw in (PaymentMethod.DINHEIRO, PaymentMethod.DINHEIRO.value):
+        return PaymentMethod.DINHEIRO
+    return PaymentMethod.PIX
+
+
+def set_payment_method(session: ConversationSession, method: PaymentMethod) -> None:
+    session.slots[PAYMENT_METHOD_SLOT] = method.value
+
+
 def final_summary(deps: AgentDeps, session: ConversationSession) -> str:
     return r.resumo_final(
         session.cart,
         delivery_fee=deps.settings.delivery_fee,
         address=address_of(session),
         is_pickup=fulfillment_of(session) is FulfillmentType.RETIRADA,
+        payment_method=payment_method_of(session),
     )
 
 
@@ -3097,14 +3152,20 @@ async def _abandon_pending_order(deps: AgentDeps, session: ConversationSession) 
 
 
 async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str]:
-    """Cria o pedido, gera o Pix e leva para AGUARDANDO_PAGAMENTO.
+    """Cria o pedido e cobra — Pix por aqui, ou cartão/dinheiro na entrega.
 
-    Guarda o id do pedido em `pending_order_id` assim que ele é criado: se o
-    Pix falhar depois (provedor fora do ar, token ausente) e o cliente mandar
-    "sim" de novo, reaproveitamos o mesmo pedido em vez de duplicar a compra.
+    Guarda o id do pedido em `pending_order_id` assim que ele é criado: se a
+    cobrança falhar depois (provedor fora do ar, token ausente) e o cliente
+    mandar "sim" de novo, reaproveitamos o mesmo pedido em vez de duplicar a
+    compra.
+
+    Cartão e dinheiro não têm Pix pra esperar — o pedido já nasce confirmado
+    e vai direto pra cozinha (`status=PREPARANDO`), igual ao lançamento
+    manual do painel quando o agente está fora do ar.
     """
     pending_id = session.slots.get("pending_order_id")
     kind = fulfillment_of(session) or FulfillmentType.ENTREGA
+    method = payment_method_of(session)
     try:
         if pending_id:
             summary = await deps.order_summary(deps.db, UUID(pending_id))
@@ -3114,6 +3175,7 @@ async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str
         if summary is not None:
             order_id, order_code, order_total = UUID(pending_id), summary.code, summary.total
         else:
+            extra = {"status": OrderStatus.PREPARANDO} if method is not PaymentMethod.PIX else {}
             order = await deps.create_order(
                 deps.db,
                 cart=session.cart,
@@ -3125,13 +3187,17 @@ async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str
                 address=address_of(session) if kind is FulfillmentType.ENTREGA else None,
                 channel=deps.channel,
                 notes=session.slots.get("notes"),
+                **extra,
             )
             order_id, order_code, order_total = order.id, order.code, order.total
             session.slots["pending_order_id"] = str(order_id)
 
-        charge = await deps.create_pix(deps.db, order_id)
+        if method is PaymentMethod.PIX:
+            charge = await deps.create_pix(deps.db, order_id)
+        else:
+            await deps.register_cod_payment(deps.db, order_id, method)
     except Exception:
-        logger.exception("falha ao criar pedido/Pix para %s", session.phone)
+        logger.exception("falha ao criar pedido/cobrança para %s", session.phone)
         return [r.pix_falhou()]
 
     session.active_order_id = order_id
@@ -3143,13 +3209,25 @@ async def place_order(deps: AgentDeps, session: ConversationSession) -> list[str
     session.slots.pop("closing", None)
     session.slots.pop("awaiting_confirm", None)
     session.fail_count = 0
-    advance(session, S.AGUARDANDO_PAGAMENTO)
-    return r.mensagem_do_pix(
-        order_code=order_code,
-        total=order_total,
-        qr_code=charge.qr_code,
-        expires_minutes=deps.settings.pix_expiration_minutes,
-    )
+
+    if method is PaymentMethod.PIX:
+        advance(session, S.AGUARDANDO_PAGAMENTO)
+        return r.mensagem_do_pix(
+            order_code=order_code,
+            total=order_total,
+            qr_code=charge.qr_code,
+            expires_minutes=deps.settings.pix_expiration_minutes,
+        )
+
+    advance(session, S.CONCLUIDO)
+    return [
+        r.pedido_confirmado_pagamento_na_entrega(
+            order_code=order_code,
+            total=order_total,
+            method=method,
+            is_pickup=kind is FulfillmentType.RETIRADA,
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -3671,6 +3749,7 @@ _EXIGEM_FALA_DO_CLIENTE = frozenset(
         Action.CLOSE_ORDER,
         Action.CONFIRM_ORDER,
         Action.SET_FULFILLMENT,
+        Action.SET_PAYMENT_METHOD,
         Action.UPDATE_ADDRESS,
     }
 )
@@ -3745,6 +3824,8 @@ async def apply(
     # dedicada, eles se perdiam e o bot perguntava de novo lá na frente.
     if op.fulfillment and action is not Action.SET_FULFILLMENT:
         _set_fulfillment(session, op.fulfillment, turn, mensagem)
+    if op.payment_method and action is not Action.SET_PAYMENT_METHOD:
+        _set_payment_method(session, op.payment_method, turn, mensagem)
     if op.address is not None and action is not Action.UPDATE_ADDRESS:
         _merge_address(session, op.address, turn, mensagem)
 
@@ -3765,6 +3846,9 @@ async def apply(
 
     elif action is Action.SET_FULFILLMENT:
         _set_fulfillment(session, op.fulfillment, turn, mensagem)
+
+    elif action is Action.SET_PAYMENT_METHOD:
+        _set_payment_method(session, op.payment_method, turn, mensagem)
 
     elif action is Action.UPDATE_ADDRESS:
         _merge_address(session, op.address, turn, mensagem)
@@ -3892,6 +3976,52 @@ def _set_fulfillment(
     set_fulfillment(session, kind)
     if mudou:
         turn.say(r.entrega_anotada(kind))
+    turn.changed = True
+
+
+#: Palavras que indicam que o cliente DECIDIU pagar assim — mesma ideia de
+#: `_SINAIS_ENTREGA`/`_SINAIS_RETIRADA`: não são para ENTENDER a fala (isso
+#: continua sendo trabalho da IA), só para confirmar que ela tem alguma base
+#: antes de fixar um dado financeiro que o catálogo não tem como contradizer.
+_SINAIS_CARTAO = ("cartao", "credito", "debito", "maquininha", "maquina")
+_SINAIS_DINHEIRO = ("dinheiro", "especie", "em mao", "na mao")
+
+
+def _payment_method_dito(escolha: str, mensagem: str) -> bool:
+    """O cliente disse mesmo que vai pagar assim, ou o modelo inventou?
+
+    Mesma classe de problema que `_fulfillment_dito`: payment_method não tem
+    catálogo para contradizer a IA, e cartão/dinheiro mudam como o pedido é
+    cobrado (sem Pix, sem esperar o provedor).
+    """
+    limpo = normalize(mensagem)
+    sinais = _SINAIS_CARTAO if escolha == "cartao" else _SINAIS_DINHEIRO
+    return any(sinal in limpo for sinal in sinais)
+
+
+def _set_payment_method(
+    session: ConversationSession, escolha: str | None, turn: Turno, mensagem: str = ""
+) -> None:
+    """Cartão ou dinheiro na entrega/retirada — e o bot DIZ que anotou.
+
+    Pix continua sendo o padrão: esta função só é chamada quando o cliente
+    pediu explicitamente outra forma, nunca para "confirmar" Pix.
+    """
+    if escolha == "cartao":
+        method = PaymentMethod.CARTAO
+    elif escolha == "dinheiro":
+        method = PaymentMethod.DINHEIRO
+    else:
+        return
+    if mensagem and not _payment_method_dito(escolha, mensagem):
+        logger.info(
+            "payment_method=%s descartado, sem sinal na mensagem %r", escolha, mensagem
+        )
+        return
+    mudou = payment_method_of(session) is not method
+    set_payment_method(session, method)
+    if mudou:
+        turn.say(r.pagamento_anotado(method))
     turn.changed = True
 
 
@@ -4714,13 +4844,17 @@ _MEXEM_NO_PEDIDO = _EDITAM_OS_ITENS | frozenset(
     {Action.CLOSE_ORDER, Action.CONFIRM_ORDER}
 )
 
-#: As mesmas ações de `_EDITAM_OS_ITENS`, mais trocar entrega/retirada: junto
-#: com os itens, ela pesa no total (a taxa de R$5) e por isso também não pode
-#: ficar pendente quando o cliente confirma NA MESMA mensagem. Sem isto,
-#: "muda pra entrega e fecha o pedido" cobrava com a forma de recebimento
-#: ANTIGA — `place_order` rodava antes de `set_fulfillment` ser aplicado,
-#: porque o gate de confirmação só olhava para operações de item.
-_ADIAM_A_COBRANCA = _EDITAM_OS_ITENS | frozenset({Action.SET_FULFILLMENT})
+#: As mesmas ações de `_EDITAM_OS_ITENS`, mais trocar entrega/retirada e forma
+#: de pagamento: junto com os itens, elas pesam no total (a taxa de R$5) ou em
+#: COMO ele é cobrado (Pix vs. cartão/dinheiro na entrega), e por isso também
+#: não podem ficar pendentes quando o cliente confirma NA MESMA mensagem. Sem
+#: isto, "muda pra entrega e fecha o pedido" cobrava com a forma de
+#: recebimento ANTIGA — `place_order` rodava antes de `set_fulfillment`/
+#: `set_payment_method` serem aplicados, porque o gate de confirmação só
+#: olhava para operações de item.
+_ADIAM_A_COBRANCA = _EDITAM_OS_ITENS | frozenset(
+    {Action.SET_FULFILLMENT, Action.SET_PAYMENT_METHOD}
+)
 
 
 #: De quanto em quanto tempo o aviso longo de "estou aguardando alguém" se

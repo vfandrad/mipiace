@@ -47,6 +47,15 @@ class FulfillmentType(StrEnum):
     RETIRADA = "retirada"
 
 
+class PaymentMethod(StrEnum):
+    """Como o pedido é pago. Cartão e dinheiro são cobrados na entrega/retirada,
+    não pelo WhatsApp — por isso não têm QR code nem webhook de confirmação."""
+
+    PIX = "pix"
+    CARTAO = "cartao"
+    DINHEIRO = "dinheiro"
+
+
 class OrderChannel(StrEnum):
     WHATSAPP = "whatsapp"
     ADMIN = "admin"

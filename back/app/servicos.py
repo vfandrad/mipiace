@@ -61,6 +61,7 @@ from app.dominio import (
     FulfillmentType,
     OrderChannel,
     OrderStatus,
+    PaymentMethod,
     PaymentStatus,
     arredondar_dinheiro,
     item_unit_price,
@@ -1657,6 +1658,33 @@ async def create_pix_for_order(session: AsyncSession, order_id: UUID) -> PixChar
     await session.flush()
     logger.info("Pix criado para %s (%s)", order.code, charge.provider_payment_id)
     return charge
+
+
+async def register_cod_payment(
+    session: AsyncSession, order_id: UUID, method: PaymentMethod
+) -> Payment:
+    """Registra a cobrança em cartão/dinheiro que o motoboy (ou o balcão, na
+    retirada) faz na hora da entrega.
+
+    Sem provedor por trás — não é o Mercado Pago cobrando, é gente cobrando
+    na mão —, mas o pedido ganha uma linha em `payments` do mesmo jeito que
+    um Pix, pra constar no histórico e nos relatórios. `status` fica
+    `PENDENTE`: só vira `PAGO` quando alguém confirmar que o dinheiro/cartão
+    foi mesmo recebido (hoje, só por fora do sistema).
+    """
+    order = await get_order(session, order_id)
+    if order is None:
+        raise OrderNotFoundError(f"Pedido {order_id} não encontrado.")
+    return await create_payment(
+        session,
+        {
+            "order_id": order.id,
+            "provider": "loja",
+            "method": method.value,
+            "amount": order.total,
+            "status": PaymentStatus.PENDENTE,
+        },
+    )
 
 
 async def apply_payment_result(
