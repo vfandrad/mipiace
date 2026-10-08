@@ -162,8 +162,21 @@ export function OrderCard({ order, onStatusChange }: OrderCardProps) {
       </div>
 
       {/* Pagamento */}
+      {/* Cartão/dinheiro na entrega não têm QR code: sem o selo aqui, um
+          pedido assim fica indistinguível de um Pix morto na tela do balcão
+          (os dois mostram só "Pendente"). */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <PaymentBadge status={order.payment_status} />
+        {order.payment?.method === 'cartao' && (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary text-secondary-foreground">
+            💳 Cartão na entrega
+          </span>
+        )}
+        {order.payment?.method === 'dinheiro' && (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary text-secondary-foreground">
+            💵 Dinheiro na entrega
+          </span>
+        )}
       </div>
 
       {/* Endereço de entrega */}

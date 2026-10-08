@@ -80,4 +80,12 @@ describe('OrderCard', () => {
     renderCard();
     expect(screen.queryByRole('button', { name: /imprimir ficha/i })).not.toBeInTheDocument();
   });
+
+  it('sinaliza cartão/dinheiro na entrega em vez de um "Pendente" ambíguo', () => {
+    // Sem o selo, um pedido pago em dinheiro na entrega parece idêntico a um
+    // Pix morto na tela — os dois mostram só "Pendente".
+    renderCard({ payment: { amount: 50, status: 'pendente', method: 'dinheiro' } });
+    expect(screen.getByText(/dinheiro na entrega/i)).toBeInTheDocument();
+    expect(screen.queryByText('Pix aguardando')).not.toBeInTheDocument();
+  });
 });
