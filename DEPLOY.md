@@ -375,6 +375,20 @@ STORE_LOGO_URL=/logo-mipiace.png
 (`VITE_STORE_NAME`, `VITE_STORE_LOGO_URL`), então **o front precisa ser
 rebuildado** — não basta reiniciar o container.
 
+**Impressora de fichas (opcional).** Pra imprimir a ficha de cada pedido
+numa impressora EPSON (ePOS-Print) ligada na rede do balcão:
+
+```bash
+PRINTER_IP=192.168.0.50   # IP da impressora na rede local do balcão
+```
+
+Mesma regra: vira `VITE_PRINTER_IP` no bundle do painel, então **precisa de
+rebuild do front** pra valer. Sem essa variável, o botão de imprimir some e
+nada tenta imprimir sozinho — o resto do sistema funciona normalmente. O
+painel roda em HTTPS e a impressora só fala HTTP; no Chrome/Edge do
+computador do balcão, abra as configurações do site do painel → Conteúdo
+não seguro → Permitir, uma vez só, senão o navegador bloqueia a chamada.
+
 **Trocar segredos:**
 
 | Segredo | Como |

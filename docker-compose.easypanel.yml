@@ -142,6 +142,9 @@ services:
         # A loja também: o nome e o logo entram no bundle no build.
         VITE_STORE_NAME: ${STORE_NAME:-Mi Piace Gelateria}
         VITE_STORE_LOGO_URL: ${STORE_LOGO_URL:-/logo-mipiace.png}
+        # IP da impressora de fichas (EPSON, ePOS-Print) na rede do balcão.
+        # Vazio = o botão de imprimir some e nada tenta imprimir sozinho.
+        VITE_PRINTER_IP: ${PRINTER_IP:-}
     depends_on:
       backend:
         condition: service_started

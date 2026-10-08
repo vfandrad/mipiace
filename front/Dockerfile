@@ -29,10 +29,14 @@ ARG VITE_ADMIN_API_KEY=dev-local-key
 # imagem com outros args, não editar código.
 ARG VITE_STORE_NAME="Mi Piace Gelateria"
 ARG VITE_STORE_LOGO_URL=/logo-mipiace.png
+# IP da impressora de fichas (EPSON, ePOS-Print) na rede do balcão. Vazio =
+# botão de imprimir escondido, nada tenta imprimir sozinho.
+ARG VITE_PRINTER_IP=
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 ENV VITE_ADMIN_API_KEY=$VITE_ADMIN_API_KEY
 ENV VITE_STORE_NAME=$VITE_STORE_NAME
 ENV VITE_STORE_LOGO_URL=$VITE_STORE_LOGO_URL
+ENV VITE_PRINTER_IP=$VITE_PRINTER_IP
 
 RUN npm run build
 
